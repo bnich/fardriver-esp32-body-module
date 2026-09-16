@@ -21,10 +21,29 @@ def test_no_whitespace_in_emitted_json():
     assert '": ' not in out
 
 
-def test_refuses_to_emit_before_the_gauge_settles_the_encoding():
-    # The whole point of Task 1: guessing silently is the expensive failure.
-    with pytest.raises(EncodingNotSettled):
-        serialize_record(["DOCTYPE", "SCH", "1.0"])
+def test_encoding_is_settled_to_v3_objects():
+    # Settled from the installed editor's own parser: it JSON.parses the
+    # header and reads o.type / o.id / o.ticket -- named fields on an OBJECT.
+    # A V2 array has no .type and is silently dropped.
+    from tools.eprj3 import records
+    assert records.ENCODING == OBJECT
+
+
+def test_default_encoding_now_emits_without_raising():
+    out = serialize_record({"type": "DOCHEAD"}, payload={"docType": "SCH"})
+    assert out == '{"type":"DOCHEAD"}||{"docType":"SCH"}|'
+
+
+def test_the_guard_still_exists_for_an_unset_encoding():
+    # the refusal must survive: temporarily clear it and confirm it bites
+    from tools.eprj3 import records
+    saved = records.ENCODING
+    records.ENCODING = None
+    try:
+        with pytest.raises(EncodingNotSettled):
+            serialize_record({"type": "X"})
+    finally:
+        records.ENCODING = saved
 
 
 def test_rejects_unknown_encoding():

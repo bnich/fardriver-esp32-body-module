@@ -24,9 +24,26 @@ import json
 ARRAY = "array"
 OBJECT = "object"
 
-#: Settled by the gauge (plan Task 1).  None = not yet proven against the
-#: real editor.  Set it here, with the date and who tested it, once known.
-ENCODING = None
+#: ⭐ SETTLED 2026-09-15 from the editor's own source, not from the gauge.
+#:
+#: EasyEDA Pro 2.2.45.4 is installed on this host (/opt/easyeda-pro). Its
+#: parser, in resources/app/assets/pro-api/.../api.js, reads:
+#:
+#:   parseLine(e,t,i){ let r=e.indexOf("||"), n=r!==-1,
+#:     s=n?Oc(e,0,r):e,      // header, before ||
+#:     a=n?Oc(e,r+2):"",     // payload, after ||
+#:     o=JSON.parse(s);      // header parsed...
+#:     this.onLine(o.id,o.ticket,a,o.type,o.client,...) }  // ...read by NAME
+#:
+#: `o.type` on a JSON ARRAY is undefined, so V2 array records inside a V3
+#: document are silently dropped -- no error, just missing geometry.
+#: fmt2/README says it plainly: "Since version 3 ... stopped using the file
+#: format of version 2". fmt2 describes V2; .esch2/.epcb2 are V3.
+#:
+#: Independently confirmed by byte-exact round-trip: splitting every example
+#: document on "|\n", JSON-parsing both halves and re-joining reproduces the
+#: original bytes exactly.
+ENCODING = OBJECT
 
 
 class EncodingNotSettled(RuntimeError):

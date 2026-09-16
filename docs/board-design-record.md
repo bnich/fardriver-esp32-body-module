@@ -343,20 +343,53 @@ assertion that never fires is not a test** — each must be proven against delib
 | every net leaving the box has a TVS at its connector | §4 |
 | board outline ⊆ envelope; every part height ≤ layer ceiling | §0, §4 |
 
-### 7.3 ⚠️ Gauge first
+### 7.3 ⭐ The format is settled from the editor itself
 
-⛔ **The `.eprj3` encoding cannot be verified from this machine** — EasyEDA Pro is a browser
-application. The published example uses JSON objects with a `type` field; the v2 spec shows JSON
-arrays. **Which one the current editor accepts is unknown.**
+⭐ **EasyEDA Pro 2.2.45.4 is installed on this machine** — `/opt/easyeda-pro/`. Its Electron bundle
+ships the editor's own reader/writer, so the format is read out of the application rather than
+inferred from prose.
 
-✅ **So build a gauge: a 5-part, 3-net project, opened in EasyEDA Pro, before generating anything
-real.** This is the project's own gauge-first rule applied to the toolchain, and it is cheap: a wrong
-encoding discovered on a 4-board project costs the whole generator.
+**The two documented encodings are two format GENERATIONS, not alternatives.** `fmt2/README`:
+*"Since version 3, the EasyEDA Pro version has stopped using the file format of version 2."* `fmt2`
+describes **V2** (positional JSON arrays, `.zip`); `.esch2` / `.epcb2` are **V3** (named JSON
+objects). The editor's parser:
 
-Reference material: `easyeda/easyeda-pro-eprj3-format` (project layout, worked example) and
-`easyeda/easyeda-pro-file-format-v2` (85 documents, per-record).
+```js
+parseLine(e,t,i){ let r=e.indexOf("||"), n=r!==-1,
+  s=n?Oc(e,0,r):e,        // header, before ||
+  a=n?Oc(e,r+2):"",       // payload, after ||
+  o=JSON.parse(s);        // header parsed...
+  this.onLine(o.id,o.ticket,a,o.type,o.client,...) }   // ...read BY NAME
+```
 
----
+⛔ **`o.type` on a JSON array is `undefined`, so a V2 record inside a V3 document is silently
+dropped** — no error, just missing geometry. **Emit V3 objects only.**
+
+**Grammar** (from `api.js`, and independently confirmed by a byte-exact round-trip of every example
+document): `file := record ("|\n" record)*`, `record := header_json "||" payload_json`. No trailing
+separator, no trailing newline. Compact JSON, non-ASCII literal.
+
+#### ⛔ V2 → V3 traps — the spec's own examples are V2 and will mislead
+
+| Trap | Consequence if missed |
+|---|---|
+| ⛔ **Y is NEGATED.** V2 is Y-up; **`.esch2` is Y-DOWN** | every symbol mirrored vertically |
+| ⛔ **`PIN.rotation` differs by 180°** | pins point the wrong way, nothing connects |
+| ⛔ **A V3 `WIRE` carries NO geometry** — payload is `{"zIndex":N}`; the geometry is separate `LINE` records | wires invisible, nets empty |
+| ⛔ **`NETLABEL` and `PORT` do not exist** — net labels, power flags and ports are `COMPONENT` placements of special symbols, keyed by numeric `META.docType` | labels silently vanish |
+| **Units differ by 10×** — schematic 0.01 inch, **PCB 1 mil** | board is the wrong size |
+| Pin attr keys are `"Pin Name"` / `"Pin Number"` / `"Pin Type"` | attributes ignored |
+
+⛔ **Connectivity is purely geometric.** `getWireIdOnEndPoint(x,y)`: a pin is on a net iff a `LINE`
+endpoint coincides with the pin's absolute anchor, to 0.01 unit. There is no explicit reference of any
+kind. ✅ **So emit one `WIRE` group per net and put a `LINE` endpoint on every pin anchor**, splitting
+collinear runs at each pin.
+
+⚠️ **What is still unproven: whether the app OPENS a hand-written project.** The format is verified;
+the application's acceptance of it is not, and the installed client needs the owner's JLC account.
+**That is what the gauge is still for** — and the question to answer is not "does it look right" but
+**does the netlist panel show ONE net**, because a file can open perfectly with every wire cosmetic
+and zero connectivity.
 
 ## 8. What must be measured before layout
 
