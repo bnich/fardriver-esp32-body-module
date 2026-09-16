@@ -13,9 +13,14 @@ question wrongly once already.
 """
 
 # ── PARAMETERS ── M18: the cavity ────────────────────────────────────────────
-# ⚠️ OWNER ESTIMATE 2026-09-15, NOT MEASURED. Width is the sensitive axis.
-CAVITY_L, CAVITY_W, CAVITY_H = 200.0, 50.0, 70.0
-WALL, FLOOR, LID = 3.0, 3.0, 3.0
+# ⚠️ The cavity lives in tools/board_params.py -- ONE home, imported by both
+# this budget and the PCB outline emitter, so the number that proves the design
+# fits and the number that gets manufactured cannot drift apart.
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+from tools.board_params import (            # noqa: E402
+    CAVITY_L, CAVITY_W, CAVITY_H, WALL, FLOOR, LID, CAVITY_MEASURED,
+)
 
 # ── PARAMETERS ── M19: heights not yet read off a datasheet ──────────────────
 H_CHOKE = 18.0      # Wurth 7448022010 — ⬜ THE CRITICAL UNKNOWN (§4)
@@ -25,10 +30,8 @@ H_FUSEHOLDER = 12.0 # Schurter FAC 0031.3803 — ⬜
 
 PCB, GAP, PLATE = 1.6, 1.0, 3.0     # PLATE = BD-9 alloy shield / heatspreader
 
-BOARD_W = CAVITY_W - 2 * WALL - 2.0
-BOARD_L = CAVITY_L - 2 * WALL - 8.0
+from tools.board_params import BOARD_W, BOARD_L, AVAIL_H   # noqa: E402
 AREA = BOARD_W * BOARD_L
-AVAIL_H = CAVITY_H - FLOOR - LID
 
 # ── PARTS ── (ref, w, h, qty, clearance, height) ─────────────────────────────
 L1 = [  # HVIN — 84 V entry, protection, start latch (D24)
@@ -120,8 +123,8 @@ def top_height(layer, parts):
     return max(h for ref, _, _, _, _, h in parts if (layer, ref) not in UNDERSIDE)
 
 
-print(f"M18 cavity      {CAVITY_L:.0f} x {CAVITY_W:.0f} x {CAVITY_H:.0f} mm"
-      f"   (⚠️ estimate, not measured)")
+_prov = "measured" if CAVITY_MEASURED else "⚠️ ESTIMATE, NOT MEASURED (M18)"
+print(f"M18 cavity      {CAVITY_L:.0f} x {CAVITY_W:.0f} x {CAVITY_H:.0f} mm   ({_prov})")
 print(f"board envelope  {BOARD_W:.0f} x {BOARD_L:.0f} = {AREA:.0f} mm²"
       f"   internal height {AVAIL_H:.1f} mm\n")
 
