@@ -95,10 +95,45 @@ def test_the_four_corrections_stuck(d):
     y2 = [p for p in d.parts if p.mpn == "VY2472M49Y5US6"]
     assert len(y2) == 4
     assert {p.board for p in y2} == {"CONV"}
-    # 2. DRV got its TVS (Q6)
-    drv_tvs = [p for p in d.parts
-               if p.board == "DRV" and p.mpn == "PESD5V0S4UD"]
+    # 2. DRV got its TVS (Q6) -- but NOT all of one part type.
+    #    PESD5V0S4UD is V_RWM 5 V, so it is correct only on J306, the brake
+    #    levers, which arrive through the D23 circuit's 1N4148s at logic
+    #    level. J301-J305 carry 12 V feeds and need a >=24 V standoff, or the
+    #    array conducts continuously -- a short across the very channel it is
+    #    meant to protect.
+    drv_tvs = [p for p in d.parts if p.board == "DRV" and p.vds_max in (5.0, 24.0)]
     assert len(drv_tvs) == 6, "one quad array per DRV harness connector"
+    hv = [p for p in drv_tvs if p.vds_max >= 24.0]
+    lv = [p for p in drv_tvs if p.vds_max == 5.0]
+    assert len(hv) == 5, "J301-J305 are 12 V and need >=24 V standoff"
+    assert len(lv) == 1 and lv[0].mpn == "PESD5V0S4UD", \
+        "J306 is logic level, so the OWNED part is correct there"
+
+
+def test_no_protection_part_stands_off_less_than_its_net(d):
+    """The class-closing check, asserted on the real design.
+
+    This is the defect that a 'DRV has TVS' test would have passed straight
+    through: the protection was present and the part was wrong.
+    """
+    from tools import rules
+    assert [e for e in rules.check_all(d) if "TVS standoff" in e] == []
+
+
+def test_the_84v_switches_bias_off(d):
+    """D14's most consequential case: what holds the pack off at power-up.
+
+    Q101 (D13) and Q104 (Q3) are P-channel HIGH-SIDE switches, so biasing OFF
+    means gate tied to its own SOURCE, not to ground.
+    """
+    for fet, gate_net, source_net in (("Q101", "D13_GATE", "HV_BPLUS"),
+                                      ("Q104", "KEY_GATE", "KEY_SW_OUT")):
+        gate = {r for r, _ in d.net(gate_net).pins}
+        src = {r for r, _ in d.net(source_net).pins}
+        shared = gate & src
+        assert shared, f"{fet} has no part bridging {gate_net} to {source_net}"
+        assert any(d.part(r).value == "100k" for r in shared), \
+            f"{fet}'s gate-source pull-up is missing or not 100k"
     # 3. BRAIN's regulator exists as a part with no BOM line (Q3)
     assert d.part("U405").mpn == "TBD-3V3-REG"
     # 4. CONV's ceiling is the Y2 discs', not the brick's

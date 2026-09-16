@@ -316,18 +316,31 @@ _DRV_PARTS = (
        f"the low level ~0.55 V through a 1N4148. ⛔ Q8: needs 3V3 on DRV"),
     _r("R318", "DRV", "10k",
        f"{_INV} §1.3 BOM G3, doc name 'R3R' — IN-06 pull-up to 3.3 V. ⛔ Q8"),
-    # ── ⭐ CORRECTION 2: one quad TVS array per DRV harness connector ─────────
-    *[Part(f"D{n}", "PESD5V0S4UD", "SOT-457/TSOP6 (⛔ not SOIC-8)", "DRV",
-           H_SOT457, vds_max=5.0,
-           value="V_RWM 5 V, V_CL 8 V @1 A",
-           source=f"{_INV} §5 Q6 — ⭐ ADDED: DRV's 23 conductors were unprotected "
-                  f"while PLAN §4/§6.2.4 and BDR §7.2 assert 'every net leaving the "
-                  f"box has a TVS at its connector'. One quad array per connector "
-                  f"({('J301','J302','J303','J304','J305','J306')[n-308]}), 6 × 4 = "
-                  f"24 channels for 23 conductors. ⛔ SEE THE REPORT: V_RWM 5 V is "
-                  f"WRONG for a 12 V lamp feed — the array conducts continuously. "
-                  f"The protection belongs here; this part number does not")
-      for n in range(308, 314)],
+    # ── TVS at every DRV connector — TWO part types, by rail voltage ────────
+    # DRV's 23 conductors were unprotected while PLAN §4/§6.2.4 and BDR §7.2
+    # both assert "every net leaving the box has a TVS at its connector".
+    #
+    # ⛔ The part is NOT one type. `PESD5V0S4UD` is V_RWM 5 V; J301-J305 carry
+    # 12 V lamp/horn/fan feeds, where a 5 V standoff conducts continuously --
+    # a dead short across the channel it is meant to protect, and nothing in
+    # the schematic looks different. J306 is the brake levers, which reach the
+    # board through the D23 circuit's 1N4148s at logic level, so the OWNED
+    # part is correct there.
+    *[Part(f"D{n}", "TBD-TVS-24V", "TBD (quad array)", "DRV",
+           H_SOT457, vds_max=24.0,
+           value="⬜ ≥24 V standoff, clamp < 40 V (the TPS4H160B's limit)",
+           source=f"gap-fix — 12 V harness protection at "
+                  f"{('J301','J302','J303','J304','J305')[n-308]}. ⬜ NEW BOM "
+                  f"LINE: no owned part stands off 12 V. BOM C2's "
+                  f"PESD5V0S4UD stays fully used on BRAIN's logic lines, so "
+                  f"nothing ordered is superseded. Requirement: 4 channels, "
+                  f"≥24 V V_RWM, clamping below the TPS4H160B's 40 V")
+      for n in range(308, 313)],
+    Part("D313", "PESD5V0S4UD", "SOT-457/TSOP6 (⛔ not SOIC-8)", "DRV",
+         H_SOT457, vds_max=5.0, value="V_RWM 5 V, V_CL 8 V @1 A",
+         source="gap-fix — J306, the brake levers. These reach the board "
+                "through the D23 circuit's 1N4148s at logic level, not at "
+                "12 V, so the OWNED BOM C2 part is correct here"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -440,7 +453,49 @@ _BRAIN_PARTS = (
        f"scheme, so it is numbered here"),
 )
 
-_PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
+
+# ── Gaps closed 2026-09-15 ───────────────────────────────────────────────────
+# Found by running rules.check_all() against the real netlist; each uses a part
+# type already on the BOM so nothing ordered is superseded.
+_GAP_PARTS = (
+    # D14 requires every gate to bias OFF. For a P-channel HIGH-SIDE switch
+    # that means Vgs = 0, i.e. the gate tied to its own SOURCE -- not to
+    # ground. Without these two resistors nothing holds the 84 V switches off
+    # through power-up, which is the one place D14 matters most.
+    Part("R110", "TBD-R-100k", "TBD (0805)", "HVIN", 1.0, value="100k",
+         source="gap-fix — Q101 (D13) gate-to-SOURCE pull-up. Same topology as "
+                "PLAN 6.2.2's R1 on the discrete high-side, at 84 V. BOM D9 "
+                "('every gate biased OFF') covers the part"),
+    Part("R111", "TBD-R-100k", "TBD (0805)", "HVIN", 1.0, value="100k",
+         source="gap-fix — Q104 (Q3, the FarDriver KEY switch) gate-to-SOURCE "
+                "pull-up. BOM D9"),
+    # 84 V wires leaving the box. SMCJ90A is BOM E12 -- the part already chosen
+    # for this exact node, so this is a QUANTITY change, not a new line.
+    Part("D104", "SMCJ90A", "DO-214AB", "HVIN", 2.6, vds_max=90.0,
+         source="gap-fix — KEY_SW_OUT leaves the box unprotected; HVIN's only "
+                "TVS was D101 on B+. Same part as E12"),
+    Part("D105", "SMCJ90A", "DO-214AB", "HVIN", 2.6, vds_max=90.0,
+         source="gap-fix — FD_KEY (the FarDriver KEY wire) leaves the box "
+                "unprotected. Same part as E12"),
+    # CAN is a 3.3 V differential pair, so the OWNED PESD5V0S4UD is correct
+    # here. BOM C2 bought 20 arrays for 15 lines -- this uses stock.
+    # The display connector J405 is parked with D19 but its FOOTPRINT is
+    # fitted (BDR §3 L4). Its protection footprint is fitted on the same terms:
+    # placed, routed, NOT POPULATED -- so un-parking the display is a
+    # populate-and-go, not a respin. The three telltales are 12 V lamp feeds
+    # and DISP_ONELINE is the FarDriver's 0-15 V output, so 5 V is wrong here
+    # for the same reason it is wrong on DRV.
+    Part("D406", "TBD-TVS-24V", "TBD (quad array)", "BRAIN", 1.1, vds_max=24.0,
+         dnp=True, value="⬜ ≥24 V standoff — DNP until D19 un-parks",
+         source="gap-fix — TT_L/TT_R/TT_HL/DISP_ONELINE leave the box on J405 "
+                "unprotected. ⏸️ Fitted but not populated, matching the park"),
+    Part("D405", "PESD5V0S4UD", "SOT-457", "BRAIN", 1.1, vds_max=5.0,
+         source="gap-fix — CANH/CANL leave the box on J405. 5 V standoff is "
+                "correct on a 3.3 V differential pair. Uses BOM C2 stock"),
+)
+
+_PARTS = (_HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
+          + _GAP_PARTS)
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFACE PIN MAPS — the three inter-board spines (BDR §5, BD-3, BD-4)
@@ -501,22 +556,22 @@ _S = f"{_INV} §2"
 # ~237 ms to ~20 ms.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_84V = (
-    Net("HV_BPLUS", (("J101", "1"), ("D101", "K"), ("Q101", "S"), ("J102", "1")),
+    Net("HV_BPLUS", (("R110", "2"), ("J101", "1"), ("D101", "K"), ("Q101", "S"), ("J102", "1")),
         domain="84V", leaves_box=True,
         source=f"{_S}.1 — fused UPSTREAM IN THE HARNESS (KLKD002 in a FEB-11-11), "
                f"never on the board (BDR §6)"),
-    Net("KEY_SW_OUT", (("J102", "2"), ("R101", "1"), ("Q104", "S")),
+    Net("KEY_SW_OUT", (("R111", "2"), ("D104", "1"), ("J102", "2"), ("R101", "1"), ("Q104", "S")),
         domain="84V", leaves_box=True,
         source=f"{_S}.1 — back from the mechanical key switch, which carries "
                f"~0.25 mA of gate drive only (PLAN §3.2.5)"),
     Net("HV_SW", (("Q101", "D"), ("L101", "1"), ("L102", "1")),
         domain="84V", source=f"{_S}.1 — D13's output, ahead of both chokes"),
-    Net("D13_GATE", (("Q101", "G"), ("R101", "2"), ("C105", "1"), ("D102", "A")),
+    Net("D13_GATE", (("R110", "1"), ("Q101", "G"), ("R101", "2"), ("C105", "1"), ("D102", "A")),
         domain="84V",
         source=f"{_S}.1 / §1.1 — ⬜ Q11: the ramp RC's and the zener's REFERENCE "
                f"NODE (source vs GND) is nowhere stated, so C105.2 and D102.K are "
                f"deliberately unassigned rather than guessed. Ramp target ~50 ms"),
-    Net("KEY_GATE", (("Q104", "G"), ("D103", "A"), ("Q102", "D"), ("Q103", "D")),
+    Net("KEY_GATE", (("R111", "1"), ("Q104", "G"), ("D103", "A"), ("Q102", "D"), ("Q103", "D")),
         domain="84V",
         source=f"{_S}.1 / §1.1 BDR §3 L1 'pulls Q3's gate down from the latch'. "
                f"⬜ the latch passives R103-R106 have no stated topology and "
@@ -546,7 +601,7 @@ _NETS_84V = (
         domain="84V",
         source=f"{_S}.1 — ⚠️ THE HOLD-UP NODE: C2 lives here and C1 does not "
                f"(PLAN §3.2.2). 237 ms of ride-out depends on it"),
-    Net("FD_KEY", (("Q104", "D"), ("J103", "1"), ("R107", "1")),
+    Net("FD_KEY", (("D105", "1"), ("Q104", "D"), ("J103", "1"), ("R107", "1")),
         domain="84V", leaves_box=True,
         source=f"{_S}.1 — Q3 → the FarDriver KEY wire; 1 conductor, the return is "
                f"the shared B−. ⚠️ Q5 DISPUTED: PLAN §3 puts the IN-12 divider tap "
@@ -559,10 +614,11 @@ _NETS_84V = (
     Net("BASEPLATE",
         (("C203", "2"), ("C204", "2"), ("C205", "2"), ("C206", "2"),
          ("U201", "BASEPLATE")),
+        domain="GND",
         source=f"{_S}.1 — chassis: the Y2 caps bridge ±Vin to it, BD-9's alloy plate "
                f"and the enclosure share it. ⚠️ 'A short-failure would put the 84 V "
                f"rail on the enclosure' (BOM E9) — hence IEC 60384-14 safety caps. "
-               f"Domain is SIGNAL only because model.Domain has no chassis member"),
+               f"Domain is GND: a chassis return, 0 V by definition"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -592,17 +648,17 @@ _GND_PINS = (
   + tuple(("J406", str(n)) for n in range(2, 41, 2))
 
 _NETS_RAILS = (
-    Net("GND", _GND_PINS, interface="HV-LINK", leaves_box=True,
+    Net("GND", _GND_PINS, domain="GND", interface="HV-LINK", leaves_box=True,
         source=f"{_S}.1/§2.2 — the star net, on all four boards and across ALL "
                f"THREE interfaces (HV-LINK · PWR-UP ×3 · STACK alternating "
                f"grounds). `interface` can name only one, so it names the lowest "
-               f"in stack order. Domain is SIGNAL because model.Domain has no "
+               f"in stack order. Domain is GND -- model.Domain now has "
                f"ground member and '84V' would trip BD-2 on a net that belongs on "
                f"every board. Display pin 3 (J405.3) is here and ⛔ IS NEVER SWITCHED"),
     Net("V5",
         (("U202", "+Vout"),) + _hvlink("V5") + (("U101", "VCC"),) +
         _pwrup("V5") + (("U405", "IN"),),
-        domain="5V", interface="HV-LINK",
+        domain="GND", interface="HV-LINK",
         source=f"{_S}.2 — BDR §5: '+5 V to BRAIN's regulator' on PWR-UP, and '5 V "
                f"back DOWN for the start latch's 74HC14' on HV-LINK. Two crossings; "
                f"the lower is named. ⚠️ U202's output is isolated (3 kV) but is "
@@ -673,7 +729,7 @@ _NETS_12V = (
     Net("LAMP_COMMON",
         (("J301", "1"), ("J302", "1"), ("J303", "2"), ("J303", "4"),
          ("D308", "A"), ("D309", "A"), ("D310", "A")),
-        domain="12V", leaves_box=True,
+        domain="GND", leaves_box=True,
         source=f"{_S}.3 — every lamp common lands on the module's 12 V return, "
                f"which stars at the controller B− stud, so this IS GND copper and "
                f"needs a net-tie to it at the star. Kept as its own net because the "
@@ -869,10 +925,10 @@ _NETS_BRAIN = (
                f"is fitted though D19 parks the feed"),
     Net("TWAI_RX", (("U404", "R"), ("U401", "IO34")), gpio="GPIO34",
         source=f"{_S}.6 / §4.4 — R7/R14 recovered"),
-    Net("CANH", (("U404", "CANH"), ("R401", "1"), ("J405", "8")), leaves_box=True,
+    Net("CANH", (("D405", "ch1"), ("U404", "CANH"), ("R401", "1"), ("J405", "8")), leaves_box=True,
         source=f"{_S}.6 — display pin 8, RED-BLACK. The panel terminates its own end "
                f"(132.4 Ω); the pair reading 68 Ω is the CAN pre-flight gate"),
-    Net("CANL", (("U404", "CANL"), ("R401", "2"), ("J405", "7")), leaves_box=True,
+    Net("CANL", (("D405", "ch2"), ("U404", "CANL"), ("R401", "2"), ("J405", "7")), leaves_box=True,
         source=f"{_S}.6 — display pin 7, GREEN-BLACK"),
     Net("UART1_TX", (("U401", "IO17"), ("R436", "1")), gpio="GPIO17",
         source=f"{_S}.6 — class E: 1 kΩ series and the PIN IS TRI-STATED WHENEVER "
@@ -897,16 +953,16 @@ _NETS_BRAIN = (
         source=f"{_S}.6 — open-drain to the controller's CruisePin (PIN17), default "
                f"OFF. ⛔ METER THE WIRE BEFORE FITTING A 30 V FET: the same 30-pin "
                f"harness carries pink 60VC at 72-84 V. Fallback is a PC817 opto"),
-    Net("TT_L", (("R426", "2"), ("J405", "1")), domain="12V", leaves_box=True,
+    Net("TT_L", (("D406", "ch1"), ("R426", "2"), ("J405", "1")), domain="12V", leaves_box=True,
         source=f"{_S}.6 — display pin 1, telltale LEFT, 0-15 V input fed from the "
                f"TURN_L LAMP FEED through ~1 kΩ. ⚠️ Q18: a 12 V net on the 3V3 board"),
-    Net("TT_R", (("R427", "2"), ("J405", "4")), domain="12V", leaves_box=True,
+    Net("TT_R", (("D406", "ch2"), ("R427", "2"), ("J405", "4")), domain="12V", leaves_box=True,
         source=f"{_S}.6 — display pin 4, telltale RIGHT. ⚠️ Q18"),
-    Net("TT_HL", (("R428", "2"), ("J405", "5")), domain="12V", leaves_box=True,
+    Net("TT_HL", (("D406", "ch3"), ("R428", "2"), ("J405", "5")), domain="12V", leaves_box=True,
         source=f"{_S}.6 — display pin 5, telltale HEADLIGHT. ⬜ Q22: fed from HIGH "
                f"here (PLAN §7's flash-with-no-firmware argument), so LOW beam does "
                f"NOT light it. One resistor, two, or a diode-OR is undecided"),
-    Net("DISP_ONELINE", (("R429", "2"), ("J405", "9")), leaves_box=True,
+    Net("DISP_ONELINE", (("D406", "ch4"), ("R429", "2"), ("J405", "9")), leaves_box=True,
         source=f"{_S}.6 — display pin 9 through 1 kΩ. ⛔ Q19: the FarDriver's BROWN "
                f"one-line lead is on NO MODULE CONNECTOR — J404's six conductors are "
                f"full — so R429.1 has no source and this net is only half a path"),

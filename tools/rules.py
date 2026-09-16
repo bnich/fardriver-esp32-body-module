@@ -34,7 +34,10 @@ ANALOG_NETS = {
 LOW_VOLTAGE_BOARDS = {"DRV", "BRAIN"}
 HIGH_DOMAINS = {"84V"}
 
-TVS_MPNS = {"PESD5V0S4UD", "SMCJ90A"}
+#: Parts that count as transient protection. ⚠️ Add a new protection part
+#: here or `tvs_on_box_leaving_nets` will not see it and will report a false
+#: gap -- and worse, a real gap elsewhere gets lost in the noise.
+TVS_MPNS = {"PESD5V0S4UD", "SMCJ90A", "TBD-TVS-24V"}
 BIAS_VALUES = {"10k", "100k", "20k"}
 
 

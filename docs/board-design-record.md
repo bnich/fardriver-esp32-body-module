@@ -442,21 +442,29 @@ and zero connectivity.
 
 ---
 
-## 9. Open items
+## 9. Gaps closed, and what they cost in parts
 
-- ⛔ ⚠️ **NOTHING BIASES THE 84 V SWITCHES OFF, and the documents do not say what should.**
-  `rules.check_all` reports `D13_GATE` and `KEY_GATE` — the gates of **Q101 (D13, the module's main
-  switch)** and **Q104 (Q3, the FarDriver KEY switch)** — with no bias-OFF part. Their default-OFF
-  depends on the ramp RC and gate zener, whose **values and reference node are stated nowhere**
-  (plan BOM E13/H3 say "+ zener" and "final RC values set on the bench"). ⛔ **This is the most
-  safety-relevant gap found**: what holds the pack off the converters through power-up is undefined.
-  D14 requires every gate to bias OFF; these two are the gates where it matters most.
-- ⛔ **`KEY_SW_OUT` and `FD_KEY` leave the box with no TVS.** HVIN's only TVS is `D101` on B+. The
-  key-switch return and the FarDriver KEY wire are both unprotected — the same class as DRV's gap,
-  one board down, and flagged by nothing until the rules were run against the real netlist.
-- ⬜ **Six display nets have no TVS** — `CANH`, `CANL`, the three telltales and `DISP_ONELINE`.
-  Consistent with D19's park; if the display un-parks, this is an additional protection line, not a
-  redistribution of the existing one.
+**`rules.check_all` went from 27 violations to 0.** Every fix used a part type already on the BOM
+except one, so nothing ordered is superseded.
+
+| Gap | Fix | Parts |
+|---|---|---|
+| ⛔ **Nothing biased the 84 V switches OFF** — `D13_GATE` and `KEY_GATE` had no bias-OFF part, so what holds the pack off the converters through power-up was undefined | **`R110`/`R111`, 100 kΩ gate-to-**SOURCE** pull-ups** on Q101 and Q104. ⚠️ For a P-channel **high-side** switch, biasing OFF means V<sub>GS</sub> = 0 — gate to its own source, **not** to ground. Same topology as plan §6.2.2's `R1`, at 84 V | ✅ **BOM D9** (generic) |
+| `KEY_SW_OUT` and `FD_KEY` left the box unprotected — HVIN's only TVS was `D101` on B+ | `D104`/`D105` | ✅ **BOM E12 `SMCJ90A`** — qty 1 → **3**. Same part, already chosen for this exact node |
+| `CANH`/`CANL` unprotected | `D405` | ✅ **BOM C2 `PESD5V0S4UD`** — 5 V standoff is *correct* on a 3.3 V differential pair. From stock |
+| DRV's 12 V harness lines unprotected, and my first fix specified a **5 V** array across them | `D308`–`D312` retargeted | ⬜ **ONE NEW LINE: ≥24 V quad array ×6.** No owned part stands off 12 V |
+| Brake levers unprotected | `D313` | ✅ **BOM C2** — logic level through the D23 `1N4148`s, so the owned part is right |
+| Display nets unprotected | `D406`, **DNP** | ⏸️ Fitted, not populated — matches D19's park, so un-parking is populate-and-go, not a respin |
+| `LAMP_COMMON` flagged as a 12 V net | It is the **return**. Added a `GND` domain to the model | — modelling fix, no part |
+
+**Stock position:** BOM C2 bought 20 `PESD5V0S4UD` for 15 lines; **6 arrays used, 14 spare.**
+⬜ **The only new procurement is the ≥24 V array** — 4 channels, clamping below the `TPS4H160B`'s
+40 V limit. ⚠️ **BOM owns procurement — add it there first**, then this record.
+
+---
+
+## 10. Open items
+
 - ⛔ **The START button's polarity is contradicted between two documents, and it decides a circuit.**
   Plan §3.2.5a draws the button fed **from the 5 V rail** into the RC; §2.0 has the right pod rewired
   with **`blue` as ground**, so pressing `green` pulls the node **to ground**. One of these is wrong,
@@ -486,7 +494,7 @@ and zero connectivity.
 
 ---
 
-## 10. Build order
+## 11. Build order
 
 1. **M18** — measure the cavity, re-run `tools/board-fit.py`, update §1/§3/§4.
    ⛔ Nothing below starts first; every outline is derived from it.

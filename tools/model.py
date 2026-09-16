@@ -8,7 +8,11 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 Board = Literal["HVIN", "CONV", "DRV", "BRAIN"]
-Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL"]
+Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
+#: "GND" is a RETURN, at 0 V by definition. It is not a voltage domain in the
+#: sense the others are, and rules that reason about working voltage must skip
+#: it -- a TVS clamping a ground net to ground is meaningless, and treating a
+#: return as a 12 V net produces exactly that false positive.
 Interface = Literal["HV-LINK", "PWR-UP", "STACK"]
 Side = Literal["top", "bottom"]
 
