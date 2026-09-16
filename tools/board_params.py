@@ -45,7 +45,11 @@ STACK_ORDER = ("HVIN", "CONV", "DRV", "BRAIN")
 #: enclosure, so tools/rules.py asserts them.
 LAYER_CEILING_MM = {
     "HVIN": 18.0,   # IXTP26P20P TO-220 upright floors this at 16.0
-    "CONV": 12.7,   # the TDK brick. Electrolytics go UNDERSIDE (BD-14)
+    "CONV": 14.0,   # the Y2 discs, which must sit AT the converter terminals
+                    # (plan 9.5.2) and are 1.3 mm taller than the 12.7 mm
+                    # brick -- so BD-9's plate clears them and the brick takes
+                    # a 1.3 mm alloy spacer up to it. Electrolytics go
+                    # UNDERSIDE (BD-14) and do not count here.
     "DRV": 6.0,     # right-angle low-profile connectors
     "BRAIN": 6.0,   # right-angle low-profile connectors
 }

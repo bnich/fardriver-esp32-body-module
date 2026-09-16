@@ -37,7 +37,6 @@ AREA = BOARD_W * BOARD_L
 L1 = [  # HVIN — 84 V entry, protection, start latch (D24)
     ("SMCJ90A DO-214AB",      8.0,  6.0,  1, 2.5,  2.6),
     ("CM choke 7448022010",  22.5, 20.5,  2, 1.5, H_CHOKE),
-    ("Y2 VY2472M49Y5US6",    13.0,  7.0,  4, 2.5, 14.0),
     ("IXTP26P20P TO-220AB",  11.0, 16.0,  2, 2.5, 16.0),
     ("74HC14 DIP-14",        19.0,  8.0,  1, 1.0,  4.5),
     ("RC film 2.2uF",        13.0,  7.0,  1, 1.0,  9.0),
@@ -51,6 +50,7 @@ L1 = [  # HVIN — 84 V entry, protection, start latch (D24)
 L2 = [  # CONV — both converters. BD-14: the two cans mount UNDERSIDE.
     ("TDK CN150B110-12/CO",  58.3, 37.2,  1, 2.0, 12.7),
     ("Cincon EC7BW-110S05",  50.8, 25.4,  1, 2.0, 10.2),
+    ("Y2 VY2472M49Y5US6",    13.0,  7.0,  4, 2.5, 14.0),   # AT the converter terminals
     ("EKXJ221 220u/220V",    25.0, 18.0,  2, 1.5, 18.0),   # underside — see BD14
     ("1N4007 DO-41",         10.0,  3.0,  1, 2.0,  3.0),
     ("FAC 0031.3803 + fuse", 30.0, 12.0,  1, 2.5, H_FUSEHOLDER),

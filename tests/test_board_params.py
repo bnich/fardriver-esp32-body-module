@@ -26,6 +26,10 @@ def test_layer_ceilings_cover_all_four_boards():
     assert set(bp.LAYER_CEILING_MM) == {"HVIN", "CONV", "DRV", "BRAIN"}
 
 
-def test_conv_ceiling_is_the_brick_height():
-    # nothing top-side on CONV may exceed the TDK brick (BD-14)
-    assert bp.LAYER_CEILING_MM["CONV"] == pytest.approx(12.7)
+def test_conv_ceiling_clears_the_y2_discs_not_just_the_brick():
+    # The Y2 caps must sit AT the converter terminals (plan 9.5.2) and are
+    # 14.0 mm -- taller than the 12.7 mm brick. The plate clears them; the
+    # brick gets a spacer. Setting this back to 12.7 makes a required part
+    # illegal on the board it is required to be on.
+    assert bp.LAYER_CEILING_MM["CONV"] == pytest.approx(14.0)
+    assert bp.LAYER_CEILING_MM["CONV"] > 12.7

@@ -59,7 +59,7 @@ raw part density if kept on one board        96%      unroutable
 
 ⭐ **No individual part is large — the board is small.** 42 × 186 mm is a small board, and the 84 V
 section has 18 distinct part types plus five connectors. Split across two layers the problem vanishes
-entirely; the four boards run at **34 / 66 / 24 / 29 %** raw density, against 96 % for the single board.
+entirely; the four boards run at **29 / 70 / 24 / 29 %** raw density, against 96 % for the single board.
 
 ⚠️ **These are shelf-packed real datasheet footprints, not a part count times a routing multiplier.**
 A density multiplier is a guess wearing a number's clothes; it answered this question wrongly once
@@ -75,16 +75,16 @@ already. Where one is unavoidable it is stated in the open, never folded into a 
 | **BD-2** | **Power flows bottom to top, voltage decreasing.** 84 V at the floor, 3.3 V at the lid | Maximum physical separation between the 84 V node and the 3.3 V serial taps — the §3.2.4 concern, solved by geometry instead of by routing |
 | **BD-3** | **Every inter-board interface is 2.54 mm pitch** | Owner, 2026-09-15: *"both. i want full options for pcb and breadboard."* Any one board can be replaced by a breadboard or perfboard section during bring-up, so §9.8's "don't skip the prototype" survives into the PCB era instead of being traded away |
 | **BD-4** | **The HV-LINK header skips alternate pins → 5.08 mm** | Plain 2.54 mm leaves ~0.7 mm pad-edge to pad-edge against IPC-2221's 0.6 mm at this voltage (plan §9.6.2) — passing but marginal. Skipping pins retires the issue for the cost of a longer connector |
-| **BD-5** | **`D16` resolves to (a) — FULL NATIVE lighting.** I²C leaves the lighting path; the `MCP23017`s serve bar inputs only | DRV and BRAIN are *stacked*, so the connector between them is short and rigid and 21 signals cost nothing. This is the end state plan §9.8.2 predicted and told us to revisit at layout |
+| **BD-5** | **`D16` resolves to (a) — FULL NATIVE lighting.** I²C leaves the lighting path; the `MCP23017`s serve bar inputs only | DRV and BRAIN are *stacked*, so the connector between them is short and rigid and its 21 signals cost nothing. ⚠️ **That is true of the CONNECTOR, not of the BOARD** — see §3.1. Full-native fits, with **zero spare pins** |
 | **BD-6** | **The start latch (D24) is on HVIN. The brake circuit (D23) is NOT — it is on DRV** | The latch switches 84 V and cannot leave that domain. The brake circuit is gated on **M3, still unmeasured** — ⛔ an unmeasured circuit does not go on a board we intend to spin once. DRV carries it with resistor-population options for both M3 outcomes |
 | **BD-7** | **`RUN` and `START` are copper, not firmware.** Both pods land on BRAIN for conditioning; the two contacts pass straight through to the spine as bare traces, tapped for sensing | D23 and D24 both require function with a hung or unflashed module. A trace through an unpowered board is still a trace; a firmware-mediated signal is not |
-| **BD-8** | **All harness connectors are right-angle, edge-facing, and low-profile (≤ 6 mm) wherever the current allows** | The lid lifts without disturbing the harness, and strain relief lands at the wall where the gland is. ⚠️ Connector height is **one of the two measures §4's budget depends on**, and the one carrying its whole 3.9 mm margin |
+| **BD-8** | **All harness connectors are right-angle, edge-facing, and low-profile (≤ 6 mm) wherever the current allows** | The lid lifts without disturbing the harness, and strain relief lands at the wall where the gland is. ⚠️ Connector height is **one of the two measures §4's budget depends on**, and the one carrying its whole 2.6 mm margin |
 | **BD-9** | **An alloy plate between CONV and DRV** — brick heatsink, EMC barrier between the 84 V and logic sections, and structural deck, bolted to the enclosure walls | One part solving three problems. ~79 cm² plus conduction into the walls is ample for the brick's 2.9 W |
 | **BD-10** | ⛔ **The `HAQ-10T` heatsink is NOT used** (BOM E5 becomes a spare) | 25.4 mm of fins on top of a 12.7 mm brick does not fit a stacked assembly. BD-9's plate is both a shorter and a better thermal path. ⚠️ E5 was specified against a free-standing metal box, a configuration this design no longer has |
 | **BD-11** | **Deliverable is a native `.eprj3` project**, generated from `netlist.py`, committed as text | EasyEDA publish `.eprj3` themselves as a git-friendly JSON format explicitly *"for users and AI tools."* No importer, no KiCad-version gamble, and `COMPONENT` binds a Device by UUID so real LCSC parts stay linked for ordering |
 | **BD-12** | ⛔ **Not the KiCad import route** | EasyEDA Pro's importer documents **KiCad 5.1 / 5.9**; the only available KiCad is **10.0.6**, five majors past it, across the KiCad-6 schematic format break. EasyEDA also warn *"copper area will be different, please check carefully."* Writing a 2019 format to feed a lossy importer is more work than writing the native one |
 | **BD-13** | **Keep both converters** — the isolated 5 V rail stays | Dropping the Cincon would free ~2,900 mm² and one tall part, but plan §3.2.1 bought it deliberately so *"a lamp or horn fault cannot brown out the brain"* at ~$57. §4 closes without spending that property, so it is not spent. ⚠️ **This is the reserve.** If M18 comes back smaller than the estimate, this is the first thing to re-open |
-| **BD-14** | **Tall parts may mount on a board's UNDERSIDE**, hanging into the free area of the layer below | L1 runs at 34 % density, so CONV's two 18 mm electrolytics hang down into it instead of adding 18 mm to the stack. Worth **5.3 mm**, and §4 does not close without it. ⚠️ Requires a keep-out on L1 directly beneath them, and the generator must carry a per-part side |
+| **BD-14** | **Tall parts may mount on a board's UNDERSIDE**, hanging into the free area of the layer below | L1 runs at 29 % density, so CONV's two 18 mm electrolytics hang down into it instead of adding 18 mm to the stack. Worth **5.3 mm**, and §4 does not close without it. ⚠️ Requires a keep-out on L1 directly beneath them, and the generator must carry a per-part side |
 
 ---
 
@@ -92,15 +92,15 @@ already. Where one is unavoidable it is stated in the open, never folded into a 
 
 | Layer | Board | Domain | Raw area | Density | Respin cost |
 |---|---|---|---|---|---|
-| **L1** ↓floor | **HVIN** | 84 V | 2,632 mm² | 34 % | **once** |
-| **L2** | **CONV** | 84 V → 12 V / 5 V | 5,141 mm² | **66 %** ⚠️ | **once** |
+| **L1** ↓floor | **HVIN** | 84 V | 2,268 mm² | 29 % | **once** |
+| **L2** | **CONV** | 84 V → 12 V / 5 V | 5,505 mm² | **70 %** ⚠️ | **once** |
 | ⎯ | *alloy plate (BD-9)* | — | — | — | — |
 | **L3** | **DRV** | 12 V | 1,876 mm² | 24 % | medium |
 | **L4** ↑lid | **BRAIN** | 3.3 V | 2,274 mm² | 29 % | **cheap** |
 
 Total raw part area **11,922 mm²** across **31,248 mm²** of board — **38 %**.
 
-⚠️ **CONV is the tight board and the only one that is.** A naive shelf-pack puts it at 202 mm against
+⚠️ **CONV is the tight board and the only one that is.** A naive shelf-pack puts it at 226 mm against
 186 mm available — it only fits because its two dominant parts are modules with **no routing beneath
 them**, which shelf-packing cannot model. Real layout will close it; a smaller cavity will not.
 **If M18 comes back under the estimate, CONV is the first casualty**, and BD-13 is the answer.
@@ -108,7 +108,7 @@ them**, which shelf-packing cannot model. Real layout will close it; a smaller c
 ### L1 — HVIN (84 V entry, protection, start latch)
 
 `SMCJ90A` TVS · 2 × Würth `7448022010` CM choke (one per converter input, before the bulk cap) ·
-4 × Vishay `VY2472M49Y5US6` Y2 to the plate · **D13** soft-start high-side switch `IXTP26P20P` +
+**D13** soft-start high-side switch `IXTP26P20P` +
 gate zener + ramp RC · **start latch (D24)** — `74HC14` · 1 MΩ/2.2 µF film RC · 2 × `BSS126` ·
 **Q3** `IXTP26P20P` + zener → FarDriver KEY · IN-12 divider 330 k / 10 k.
 
@@ -117,7 +117,8 @@ gate zener + ramp RC · **start latch (D24)** — `74HC14` · 1 MΩ/2.2 µF film
 
 ### L2 — CONV (both converters)
 
-TDK `CN150B110-12/CO` · Cincon `EC7BW-110S05` · **C1** `EKXJ221ELL221MM25S` at DC-DC #1's input
+TDK `CN150B110-12/CO` · Cincon `EC7BW-110S05` · **4 × Vishay `VY2472M49Y5US6` Y2** ·
+**C1** `EKXJ221ELL221MM25S` at DC-DC #1's input
 terminals · `1N4007` hold-up blocking diode · Schurter `FAC 0031.3803` + `0001.2504` 1 A T-lag ·
 **C2** `EKXJ221ELL221MM25S` behind the diode on DC-DC #2 alone.
 
@@ -130,7 +131,13 @@ geometry on a motorcycle (BOM §9.5.2); lying down is the shorter cantilever.
 
 2 × TI `TPS4H160BQPWPRQ1` — 6 lighting channels, 2 spare · 6 × 20 kΩ `OUT`→VBAT for off-state open-load ·
 3 × `AO3400A` low-side (horn, fan, buzzer) · **brake circuit (D23)** — 6 × `1N4148` steering,
-**Q1** `AO3407A` for the STOP lamp, **Q2** `AO3400A` run/off inverter, pull-ups.
+**Q1** `AO3407A` for the STOP lamp, **Q2** `AO3400A` run/off inverter, pull-ups ·
+**6 × `PESD5V0S4UD` at the connectors**.
+
+⛔ **DRV needs its own TVS and had none.** Six connectors carry **23 conductors out of the box**, and
+§7.2 asserts every such net has a TVS at its connector — an assertion that was false against this
+board. ⚠️ **BOM C2 bought 20 `PESD5V0S4UD` for 15 lines**; 23 more conductors on DRV needs that line
+re-counted before ordering.
 
 ⚠️ **The HTSSOP thermal pads must reach real copper**, or per-channel current limiting and thermal
 shutdown do not behave as specified. This is the hardest mount on the BOM.
@@ -138,16 +145,52 @@ shutdown do not behave as specified. This is the hardest mount on the BOM.
 
 ### L4 — BRAIN (logic)
 
-`ESP32-S3-WROOM-1-N8` (or `-H4`; ⛔ never `R8`/`R16V`, 65 °C) · 2 × `MCP23017` · `SN65HVD230` + 120 Ω ·
-USB-C for native USB console/flash · 11 × class-A conditioning networks (1 kΩ pull-up — **wetting
-current**, not 4.7 kΩ) · 4 × `PESD5V0S4UD` at the connectors · boost open-drain FET with a hard
-external pull-down.
+`ESP32-S3-WROOM-1-N8` (or `-H4`; ⛔ never `R8`/`R16V`, 65 °C) · **5 V → 3.3 V regulator** ·
+2 × `MCP23017` · `SN65HVD230` + 120 Ω · USB-C for native USB console/flash · 11 × class-A conditioning
+networks (1 kΩ pull-up — **wetting current**, not 4.7 kΩ) · 4 × `PESD5V0S4UD` at the connectors ·
+boost open-drain FET with a hard external pull-down.
+
+⛔ **The 3.3 V regulator is a new part with no BOM line.** Plan §3.2.2 says *"S3 `5V` pin → its
+onboard 3.3 V regulator"* — that regulator is on the **DevKitC-1**, and a bare `WROOM-1` has none.
+Nothing in the BOM supplies 3.3 V. ⚠️ Size it for the WiFi TX peak, not the average.
 
 ⚠️ **Carry the plan's pin *rules*, not its GPIO numbers** (§9.8): analog on ADC1 only (GPIO1–10),
 brake inputs native, boost on a dedicated pin and never on a bus, **no wire leaving the box on a
 strapping pin (0/3/45/46)**, GPIO43 never a driver.
 ⚠️ **The CAN hardware is fitted though D19 parks the feed.** Transceiver in hand, 2 GPIO, and a
 replacement panel is likelier to need CAN than not.
+
+### 3.1 ⛔ The GPIO budget closes with ZERO spare
+
+BD-5 justified full-native lighting on the stack connector being cheap. That is true of the connector
+and says nothing about the board. Totalling every signal that needs a pin:
+
+```
+clean pool, bare WROOM-1-N8 on a custom board         32
+  (45 exist, less flash 26-32, USB 19/20, strapping 0/3/45/46)
+
+BRAIN demand                                          32
+  6 lighting + 3 DIAG/SEL + 2 CS + 2 FAULT + 3 horn/fan/buzzer
+  + 1 boost + 2 brake + 2 I2C + 1 INT + 3 UART + 2 CAN
+  + 3 rail/key/ambient sense + 2 RUN/START sense
+                                                  --------
+SPARE                                                  0
+```
+
+⚠️ **And one of those 32 is GPIO43**, which emits the ROM boot log at 115200 on every reset and can
+never be a driver — so 13 driver signals compete for 31 pins, not 32.
+
+**Two earlier statements are no longer true and should not be relied on:**
+- ⛔ plan §9.8.2's *"an SPI CAN controller (~4 pins) fits if one is ever needed"* — it does not.
+- ⛔ **D11's display power switch has no pin.** It is parked under D19, so nothing breaks today, but
+  un-parking it now costs a pin that does not exist.
+
+**The cheapest pin to buy back** is plan §3.1.1's own suggestion: tie `DIAG_EN` low and drop
+ON-state open-load diagnostics, freeing **5 pins**, 2 of them ADC1. That trades lamp-out detection
+for headroom — it is a real option, not a default.
+
+📄 Checkable, not prose: [`../tools/gpio_budget.py`](../tools/gpio_budget.py), asserted by
+`tests/test_gpio_budget.py`. ⚠️ **If `SPARE` ever goes negative the design does not fit.**
 
 ---
 
@@ -162,15 +205,15 @@ PCB, its tallest part, and 1 mm of clearance, plus a 3 mm plate:
 | Cumulative measure | Stack height | |
 |---|---|---|
 | Nothing done — 18 mm caps upright, 12 mm connectors throughout | **77.4** | ⛔ over by 13.4 |
-| **+ BD-14** — the two electrolytics on L2's underside | 72.1 | ⛔ over by 8.1 |
-| **+ BD-8** — low-profile connectors on **both** logic layers | **60.1** | ✅ **under by 3.9** |
-| *+ M19 confirms the choke at 12 mm* | *58.1* | *under by 5.9* |
-| *+ TO-220s laid flat rather than upright* | *56.1* | *under by 7.9* |
+| **+ BD-14** — the two electrolytics on L2's underside | 73.4 | ⛔ over by 9.4 |
+| **+ BD-8** — low-profile connectors on **both** logic layers | **61.4** | ✅ **under by 2.6** |
+| *+ M19 confirms the choke at 12 mm* | *59.4* | *under by 4.6* |
+| *+ TO-220s laid flat rather than upright* | *57.4* | *under by 6.6* |
 
 ✅ **The budget closes on BD-14 and BD-8 alone** — two design decisions, neither waiting on a
 measurement. The two italic rows are margin, not requirements.
 
-⚠️ **3.9 mm is thin**, and it is spent by any one of: a taller connector family than assumed, a thicker
+⚠️ **2.6 mm is thin**, and it is spent by any one of: a taller connector family than assumed, a thicker
 plate, or a fourth standoff. The two italic rows are where more comes from; **BD-13 is the reserve**
 beyond that.
 
@@ -179,7 +222,7 @@ beyond that.
 | Layer | Ceiling above its own board | Set by |
 |---|---|---|
 | **L1 HVIN** | **18 mm** | ⭐ **the `IXTP26P20P` TO-220 floors this at 16 mm standing up**, so the CM choke is free up to 18 — confirming it (M19) buys only 2 mm |
-| **L2 CONV** | **12.7 mm** | the TDK brick. ⚠️ Nothing on the **top** side may exceed it — the electrolytics go underneath (BD-14) |
+| **L2 CONV** | **14.0 mm** | ⚠️ the **Y2 discs**, not the brick — they must sit at the converter terminals (plan §9.5.2) and are 1.3 mm taller than it, so BD-9's plate clears them and the brick takes a 1.3 mm spacer. Electrolytics go underneath (BD-14) |
 | **L3 DRV** | **6 mm** | right-angle low-profile connectors |
 | **L4 BRAIN** | **6 mm** | right-angle low-profile connectors |
 
@@ -198,7 +241,19 @@ All 2.54 mm (**BD-3**), so any board can be a breadboard section.
 
 ### HV-LINK — L1 ↔ L2, **84 V**, alternate pins skipped → 5.08 mm (**BD-4**)
 
-Protected 84 V up to the converters; 5 V back down for the start latch's `74HC14`.
+| Direction | Net | Note |
+|---|---|---|
+| ↑ up | **84 V protected** | downstream of D13's soft-start |
+| ↑ up | GND | |
+| ↓ down | **+5 V** | the start latch's `74HC14` runs off the logic rail |
+| ↑ up | **`KEY_SENSE`** | ⚠️ the IN-12 divider is on **HVIN**, so its output must reach BRAIN — it crosses HV-LINK *and* PWR-UP |
+| ↓ down | **`RUN`** | ⚠️ originates at BRAIN's pod connector, terminates on HVIN's latch — crosses STACK *and* HV-LINK |
+| ↓ down | **`START`** | ⚠️ as `RUN` |
+
+⛔ **Those last three cross two interfaces, not one.** `RUN` and `START` come from the right pod on
+**BRAIN** (L4) and are consumed by the latch on **HVIN** (L1), so they traverse the whole stack. They
+stay **copper the entire way** (BD-7) — a buffer anywhere on that path puts firmware in the start and
+brake paths, which D23 and D24 exist to prevent.
 
 ### PWR-UP — L2 → L3/L4
 
@@ -308,7 +363,7 @@ Reference material: `easyeda/easyeda-pro-eprj3-format` (project layout, worked e
 | # | Measure | Gates | State |
 |---|---|---|---|
 | **M18** | ⭐ **The cavity** — length, width **at the narrowest point**, clear height along the *whole* run, cable exits, what the floor is made of and whether it sees moving air | **Every board outline.** Width is the sensitive axis | ⬜ **owner estimate only** |
-| **M19** | Part heights — **the right-angle connector family first**, then the CM choke, then the fuse holder | §4's per-layer ceilings. ⚠️ **The connector is the one that matters**: §4 assumes 6 mm on both logic layers and the whole 3.9 mm margin rests on it. The choke is worth 2 mm | ⬜ |
+| **M19** | Part heights — **the right-angle connector family first**, then the CM choke, then the fuse holder | §4's per-layer ceilings. ⚠️ **The connector is the one that matters**: §4 assumes 6 mm on both logic layers and the whole 2.6 mm margin rests on it. The choke is worth 2 mm | ⬜ |
 | **M3** | Brake lever type, NO/NC, wire count | The brake circuit on DRV (BD-6) | ⬜ from the plan |
 | **M9** | FarDriver serial direction | BRAIN's tap wiring | ⬜ from the plan |
 | **M10** | KEY node draw | Q3 and its ramp | ⬜ from the plan |
@@ -318,12 +373,20 @@ Reference material: `easyeda/easyeda-pro-eprj3-format` (project layout, worked e
 
 ## 9. Open items
 
+- ⛔ **The START button's polarity is contradicted between two documents, and it decides a circuit.**
+  Plan §3.2.5a draws the button fed **from the 5 V rail** into the RC; §2.0 has the right pod rewired
+  with **`blue` as ground**, so pressing `green` pulls the node **to ground**. One of these is wrong,
+  and the answer sets the `74HC14` front end and the RC topology. ⚠️ **Resolve before HVIN is drawn** —
+  it is the D24 start latch.
+- ⛔ **Does `MCP23017` #2 still exist?** BD-5 stripped its lighting role, and the 12 remaining bar bits
+  fit a single 16-bit device. §3 still lists two. Dropping one frees board area and an I²C address;
+  keeping it leaves 16 spare bits for controls added later. **Decide before BRAIN is drawn.**
 - ⛔ **M18 is the gate on everything.** The envelope is an estimate offered from a menu, and both
   budgets are computed from it. Width is the sensitive axis.
-- ⚠️ **Height closes at 60.1 mm against 64 — a 3.9 mm margin that rests on one unread number**, the
+- ⚠️ **Height closes at 61.4 mm against 64 — a 2.6 mm margin that rests on one unread number**, the
   right-angle connector height assumed at 6 mm (**M19**). Pick the connector family early; it is a
   cheap decision that is carrying more of this design than its price suggests.
-- ⚠️ **CONV at 66 % is the only board without slack.** §3.
+- ⚠️ **CONV at 70 % is the only board without slack**, and the Y2 correction is what pushed it there. §3.
 - ⬜ **BD-9's plate** — material, thickness, how it bolts, and whether it needs a cutout for the
   electrolytics or an alloy spacer block down to the brick baseplate.
 - ⬜ **Does the enclosure see moving air?** If the floor is alloy and open, the brick could cool
