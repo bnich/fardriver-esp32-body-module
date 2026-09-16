@@ -118,3 +118,41 @@ def test_height_ignores_bottom_side_parts():
     # BD-14: the electrolytics hang into the layer below, so they do not
     # count against CONV's 12.7 mm top-side ceiling
     assert [e for e in rules.check_all(GOOD) if "height" in e.lower()] == []
+
+
+# --- TVS standoff vs the net it protects ------------------------------------
+def test_tvs_standoff_fires_on_a_5v_array_across_a_12v_feed():
+    """PESD5V0S4UD is V_RWM 5 V. On a 12 V lamp feed it conducts
+    continuously -- a short across the channel it was meant to protect, and
+    nothing about the schematic looks different."""
+    from dataclasses import replace
+    bad = replace(GOOD, parts=tuple(
+        replace(p, vds_max=5.0) if p.refdes == "D1" else p for p in GOOD.parts))
+    errs = rules.check_all(bad)
+    assert any("TVS standoff" in e for e in errs), errs
+
+
+def test_tvs_standoff_quiet_when_the_part_stands_off_the_rail():
+    from dataclasses import replace
+    ok = replace(GOOD, parts=tuple(
+        replace(p, vds_max=24.0) if p.refdes == "D1" else p for p in GOOD.parts))
+    assert [e for e in rules.check_all(ok) if "TVS standoff" in e] == []
+
+
+def test_analog_rule_covers_the_netlists_own_names_not_just_the_plans():
+    # The rule carried only IN-12/IN-15/IN-16, which appear nowhere in
+    # netlist.py -- so it silently covered nothing.
+    for name in ("KEY_SENSE", "V12_SENSE", "AMBIENT"):
+        assert name in rules.ANALOG_NETS, f"{name} not policed by the ADC1 rule"
+
+
+def test_usb_nets_are_entitled_to_gpio19_20():
+    from tools.model import Net
+    d = GOOD.with_net(Net("USB_DP", (("U1", "20"), ("D1", "2")), gpio="GPIO20"))
+    assert [e for e in rules.check_all(d) if "reserved for native USB" in e] == []
+
+
+def test_a_non_usb_net_on_gpio20_still_fires():
+    from tools.model import Net
+    d = GOOD.with_net(Net("HORN2", (("U1", "20"), ("Q1", "3")), gpio="GPIO20"))
+    assert any("reserved for native USB" in e for e in rules.check_all(d))

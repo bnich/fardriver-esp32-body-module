@@ -9,3 +9,12 @@ dependencies.lock
 *.map
 
 .DS_Store
+
+# Python bytecode -- never tracked. Generated, machine-specific, noise in
+# every diff.
+__pycache__/
+*.py[cod]
+
+# The generated EasyEDA Pro project is a BUILD ARTEFACT: regenerate with
+# `python3 tools/build_project.py`. Never hand-edit it, never commit it.
+/build-eprj3/

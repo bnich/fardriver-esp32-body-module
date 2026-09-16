@@ -20,7 +20,16 @@ NONEXISTENT_GPIOS = {f"GPIO{n}" for n in range(22, 26)}
 FLASH_GPIOS = {f"GPIO{n}" for n in range(26, 33)}
 
 #: Nets that must be read by ADC1 because ADC2 dies when WiFi is on.
-ANALOG_NETS = {"CS1", "CS2", "IN-12", "IN-15", "IN-16"}
+#: ⚠️ Both the plan's IN-nn labels AND the netlist's own net names are listed.
+#: The rule previously carried only the IN-nn names, which appear nowhere in
+#: netlist.py, so it silently covered nothing -- an assertion that cannot fire
+#: is not a test.
+ANALOG_NETS = {
+    "CS1", "CS2",
+    "IN-12", "KEY_SENSE",      # same signal, two vocabularies
+    "IN-15", "V12_SENSE",
+    "IN-16", "AMBIENT",
+}
 
 LOW_VOLTAGE_BOARDS = {"DRV", "BRAIN"}
 HIGH_DOMAINS = {"84V"}
@@ -87,7 +96,9 @@ def strapping_pins(d: Design) -> list[str]:
         if net.gpio in FLASH_GPIOS:
             errs.append(f"strapping: {net.name!r} uses {net.gpio}, which is "
                         f"in-package flash.")
-        if net.gpio in USB_GPIOS:
+        if net.gpio in USB_GPIOS and not net.name.startswith("USB_"):
+            # GPIO19/20 ARE native USB D-/D+. The USB nets are entitled to
+            # them; anything else on them is the error.
             errs.append(f"strapping: {net.name!r} uses {net.gpio}, reserved "
                         f"for native USB.")
     return errs
@@ -146,6 +157,41 @@ def layer_height_ceilings(d: Design) -> list[str]:
     return errs
 
 
+#: Working voltage of each domain, for protection-part selection.
+DOMAIN_VOLTS = {"84V": 84.0, "12V": 12.0, "5V": 5.0, "3V3": 3.3}
+
+
+def tvs_standoff_covers_its_net(d: Design) -> list[str]:
+    """A TVS must STAND OFF the net's working voltage, not clamp below it.
+
+    `PESD5V0S4UD` has V_RWM = 5 V. Put it across a 12 V lamp feed and it
+    conducts continuously -- a dead short on the channel it was meant to
+    protect. The part is correct on 3.3 V logic and wrong on 12 V, and nothing
+    about the schematic looks different.
+
+    Guarding the class here rather than at each call site, so the next 12 V
+    channel added cannot reintroduce it.
+    """
+    errs = []
+    for net in d.nets:
+        volts = DOMAIN_VOLTS.get(net.domain)
+        if volts is None:
+            continue
+        for refdes, _pin in net.pins:
+            if not _safe_has(d, refdes):
+                continue
+            part = d.part(refdes)
+            if part.mpn not in TVS_MPNS:
+                continue
+            if part.vds_max is not None and part.vds_max < volts:
+                errs.append(
+                    f"TVS standoff: {part.refdes} ({part.mpn}) stands off "
+                    f"{part.vds_max} V on net {net.name!r}, which works at "
+                    f"{volts} V. It will conduct continuously -- a short, not "
+                    f"protection.")
+    return errs
+
+
 def _safe_has(d: Design, refdes: str) -> bool:
     try:
         d.part(refdes)
@@ -162,6 +208,7 @@ ALL_RULES = (
     gpio43_never_a_driver,
     gate_bias_off,
     tvs_on_box_leaving_nets,
+    tvs_standoff_covers_its_net,
     layer_height_ceilings,
 )
 

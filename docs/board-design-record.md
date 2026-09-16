@@ -132,12 +132,20 @@ geometry on a motorcycle (BOM §9.5.2); lying down is the shorter cantilever.
 2 × TI `TPS4H160BQPWPRQ1` — 6 lighting channels, 2 spare · 6 × 20 kΩ `OUT`→VBAT for off-state open-load ·
 3 × `AO3400A` low-side (horn, fan, buzzer) · **brake circuit (D23)** — 6 × `1N4148` steering,
 **Q1** `AO3407A` for the STOP lamp, **Q2** `AO3400A` run/off inverter, pull-ups ·
-**6 × `PESD5V0S4UD` at the connectors**.
+**6 × protection arrays at the connectors — ⬜ part not yet chosen**.
 
 ⛔ **DRV needs its own TVS and had none.** Six connectors carry **23 conductors out of the box**, and
 §7.2 asserts every such net has a TVS at its connector — an assertion that was false against this
-board. ⚠️ **BOM C2 bought 20 `PESD5V0S4UD` for 15 lines**; 23 more conductors on DRV needs that line
-re-counted before ordering.
+board.
+
+⛔ **It is NOT `PESD5V0S4UD`.** That part is **V_RWM 5 V** and twelve of DRV's box-leaving nets are
+**12 V lamp feeds** — it would conduct continuously, a dead short across the channel it was meant to
+protect, with nothing in the schematic looking different. `PESD5V0S4UD` is correct on BRAIN's 3.3 V
+logic and wrong here.
+⬜ **Requirement: a ≥24 V standoff array**, 4 channels, clamping below the `TPS4H160B`'s 40 V limit.
+⚠️ **BOM C2 bought 20 `PESD5V0S4UD` for 15 lines** — that covers BRAIN only. DRV is a new line.
+✅ The rule `tvs_standoff_covers_its_net` now closes this **class**, so the next 12 V channel added
+cannot reintroduce it.
 
 ⚠️ **The HTSSOP thermal pads must reach real copper**, or per-channel current limiting and thermal
 shutdown do not behave as specified. This is the hardest mount on the BOM.
@@ -191,6 +199,36 @@ for headroom — it is a real option, not a default.
 
 📄 Checkable, not prose: [`../tools/gpio_budget.py`](../tools/gpio_budget.py), asserted by
 `tests/test_gpio_budget.py`. ⚠️ **If `SPARE` ever goes negative the design does not fit.**
+
+### 3.2 ⛔ The STACK spine is over-subscribed
+
+BD-5 sized the DRV↔BRAIN connector at 2 × 20 with alternating grounds — **20 signal contacts**.
+Counting what must actually cross it:
+
+```
+ 8  lighting channel inputs (6 used + 2 spare)
+ 3  DIAG_EN, SEL1, SEL2
+ 2  CS1, CS2          (analog, want ground flanks)
+ 2  FAULT1, FAULT2
+ 3  horn, fan, buzzer gates
+ 2  IN-05/06 brake sense
+ 1  IN-15 12 V rail sense
+ 1  BL
+ 1  V3P3 -- R3L/R3R are 3.3 V pull-ups sitting on the 12 V board
+ 3  telltale feeds HL_HIGH / TURN_L / TURN_R, which are 12 V lamp feeds on
+    DRV but land on BRAIN's display connector
+---
+26  demanded against 20 available          ⛔ OVER BY 6
+```
+
+**Three ways out, none free:**
+- **Drop the alternating grounds** — recovers up to 19 contacts, but `CS1`/`CS2` lose the ground
+  flanking that keeps lamp-out sensing honest beside 2.6 A of switched lamp current.
+- **Go to 2 × 25.** Costs ~13 mm of board edge on both boards.
+- ⭐ **Move the display connector to DRV.** The three telltales are *already* 12 V lamp feeds on DRV
+  (§6.2.1 feeds them from the lamp feeds through 1 kΩ, not from driver channels), so they stop
+  crossing at all — and `DISP_ONELINE` and the CAN pair go with it. **Cheapest, and it puts the
+  connector on the board whose voltage it already matches.** ⏸️ Parked with D19 either way.
 
 ---
 
@@ -406,6 +444,19 @@ and zero connectivity.
 
 ## 9. Open items
 
+- ⛔ ⚠️ **NOTHING BIASES THE 84 V SWITCHES OFF, and the documents do not say what should.**
+  `rules.check_all` reports `D13_GATE` and `KEY_GATE` — the gates of **Q101 (D13, the module's main
+  switch)** and **Q104 (Q3, the FarDriver KEY switch)** — with no bias-OFF part. Their default-OFF
+  depends on the ramp RC and gate zener, whose **values and reference node are stated nowhere**
+  (plan BOM E13/H3 say "+ zener" and "final RC values set on the bench"). ⛔ **This is the most
+  safety-relevant gap found**: what holds the pack off the converters through power-up is undefined.
+  D14 requires every gate to bias OFF; these two are the gates where it matters most.
+- ⛔ **`KEY_SW_OUT` and `FD_KEY` leave the box with no TVS.** HVIN's only TVS is `D101` on B+. The
+  key-switch return and the FarDriver KEY wire are both unprotected — the same class as DRV's gap,
+  one board down, and flagged by nothing until the rules were run against the real netlist.
+- ⬜ **Six display nets have no TVS** — `CANH`, `CANL`, the three telltales and `DISP_ONELINE`.
+  Consistent with D19's park; if the display un-parks, this is an additional protection line, not a
+  redistribution of the existing one.
 - ⛔ **The START button's polarity is contradicted between two documents, and it decides a circuit.**
   Plan §3.2.5a draws the button fed **from the 5 V rail** into the RC; §2.0 has the right pod rewired
   with **`blue` as ground**, so pressing `green` pulls the node **to ground**. One of these is wrong,
