@@ -1,6 +1,6 @@
 # REVV1 ESP32 module — BOM
 
-**✅ $374.26 committed** (13 lines) · ~ **$206.15 estimated** (28 lines) · **≈$580 all-in, EX-DUTY** · ⚠️ **tariffs are counted in no total here:** $31.97 on the Mouser line (E1, 25%) and $26.09 on DigiKey order 101547984 (with $8.49 shipping and $14.68 tax, total $232.22).
+**✅ $374.26 committed** (13 lines) · ~ **$212.15 estimated** (29 lines) · **≈$586 all-in, EX-DUTY** · ⚠️ **tariffs are counted in no total here:** $31.97 on the Mouser line (E1, 25%) and $26.09 on DigiKey order 101547984 (with $8.49 shipping and $14.68 tax, total $232.22).
 📦 bought (in hand or on order) · ⏳ arriving · ✅ price verified · ~ approximate · ⬜ no price · ◐ candidate, **unverified** · ⏸️ parked
 
 | # | Qty | Part | St | $ | Notes |
@@ -12,8 +12,9 @@
 | **B2** | 1 | 120 Ω termination | 📦 | — | On the breakout. **68 Ω joined** = the CAN pre-flight gate |
 | **B3** | 4 | 1 kΩ series | ⬜ | — | One is display pin-9 back-feed protection |
 | **C1** | 10 | **1 kΩ** pull-up + 1 kΩ + 100 nF | ⬜ | ~5 | ⚠️ **1 kΩ, not 4.7 kΩ** — wetting current. The brake inputs IN-05/06 take G3's 10 kΩ instead |
-| **C2** | 20 | **`PESD5V0S4UD`** quad TVS | 📦 | **8.54** | ✅ Paid 09-10 (20 @ $0.427, `PESD5V0S4UD,115`, DK 1727-3928-1-ND). Need 4 pkgs for 15 lines. Datasheet: V_RWM 5 V · V_CL 8 V@1 A / 13 V@20 A · **unidirectional ×4 lines** · common anode. ⛔ **SOT457/TSOP6, 6-pin 0.95 mm — not SOIC-8** (adapter: X7) |
+| **C2** | 20 | **`PESD5V0S4UD`** quad TVS | 📦 | **8.54** | ✅ Paid 09-10 (20 @ $0.427, `PESD5V0S4UD,115`, DK 1727-3928-1-ND). Need **6 pkgs**: 4 on BRAIN's class-A lines + `D405` (CAN, where 5 V standoff is *correct* on a 3.3 V pair) + `D313` (brake levers, logic level through the D23 diodes). **14 spare.** ⛔ **Not usable on 12 V lines — see C4.** Datasheet: V_RWM 5 V · V_CL 8 V@1 A / 13 V@20 A · **unidirectional ×4 lines** · common anode. ⛔ **SOT457/TSOP6, 6-pin 0.95 mm — not SOIC-8** (adapter: X7) |
 | **C3** | 4 | **`MCP23017-E/SP`** DIP-28 | 📦 | **6.76** | ✅ Paid 09-10 (4 @ $1.69, DK MCP23017-E/SP-ND). Need 2: #1 = 10 bar inputs, #2 = 5 lighting + diagnostics. DIP-28 through-hole — no adapter. I²C part, not the SPI `MCP23S17` |
+| **C4** | 6 | ⬜ **Quad TVS array, ≥24 V standoff** | ⬜ | ~6 | ⭐ **NEW 2026-09-15 — the only new part the board-set gaps required.** ⛔ **`C2`'s `PESD5V0S4UD` cannot do this job: it is V_RWM 5 V and DRV's harness lines are 12 V feeds**, so it would conduct continuously — a dead short across the channel it protects, with nothing in the schematic looking different. **Requirement:** 4 channels, **V_RWM ≥ 24 V**, clamping **below 40 V** (the `TPS4H160B`'s limit). 5 fitted on DRV (`D308`–`D312`, one per harness connector J301–J305) + 1 on BRAIN (`D406`, **DNP** until D19 un-parks the display). ⚠️ C2 is **not** superseded — it stays fully used on BRAIN's logic lines and on `D313` (the brake levers arrive at logic level through the D23 `1N4148`s) |
 | **D1** | 4 | TI **`TPS4H160BQPWPRQ1`** | 📦 | **15.04** | ✅ Paid 09-10 (4 @ $3.76, DK 296-44711-1-ND). **2 fitted** = 8 ch for 6 (the brake lamp is switched by the brake circuit's Q1, G2); 2 spare. 28-HTSSOP 0.65 mm with thermal pad — the hardest mount on the BOM (Notes; adapter: X7). ⚠️ **40 V — 12 V rail ONLY** |
 | **D2** | 6 | 20 kΩ pullup, OUT→VBAT | ⬜ | ~1 | Required for open-load detect — one per lighting channel |
 | **D3** | 10 | **`AO3400A`** (Alpha & Omega, genuine) | 📦 | **3.22** | ✅ Paid 09-10 (10 @ $0.322, DK 785-1000-1-ND — `785-` = Alpha & Omega). Covers 5 channels: fan · buzzer · horn · boost · spare. Chosen for **48 mΩ guaranteed max at V_GS 2.5 V** — clones lack that guaranteed figure. SOT-23 (adapter: X7). Fan channel needs a flyback diode |
@@ -21,7 +22,7 @@
 | **D6** | 1 | **Cooling fan, 12 V** | ⬜ | ~8 | Thermostatic off serial temps |
 | **D7** | ~15 | Screw terminals, 5 mm | ⬜ | ~8 | Consumes a whole board edge |
 | **D8** | — | 20 AWG bare copper | ⬜ | ~3 | 12 V bus reinforcement, sized for the measured 2.62 A |
-| **D9** | — | Gate pull-downs, resistors, TVS | ⬜ | ~5 | Every gate biased OFF |
+| **D9** | — | Gate pull-downs, resistors, TVS | ⬜ | ~5 | Every gate biased OFF. ⚠️ **Includes `R110`/`R111`, 100 kΩ gate-to-SOURCE pull-ups on `Q101` (D13) and `Q104` (Q3)** — added 2026-09-15. For a P-channel **high-side** switch, biasing OFF means V_GS = 0, so the gate ties to its own **source**, not to ground. Without them nothing held the pack off the converters through power-up |
 | **E1** | 1 | TDK-Lambda **`CN150B110-12/CO`** | 📦 | **127.88** | ✅ Paid 09-10 (Mouser 967-CN150B110-12/CO, pending) **+ $31.97 tariff = $159.85.** `/CO` = factory conformal coating (EN 50155) on the internal board — cannot be retrofitted; +$14.78 over the uncoated $113.10, taken because the bike condensation-cycles. ⚠️ **160 V is a hard ceiling, transients included.** ⬜ On arrival: confirm the baseplate mounting face is **bare metal** (thermal path to E5, baseplate ~82 °C) and that E5 fits (see E5) |
 | **E2** | 1 | Cincon **`EC7BW-110S05`** | 📦 | **61.66** | ✅ Ordered 09-10. 43–160 VDC → 5 V/4 A, 3 kV iso — the logic rail, kept separate so a lamp or horn fault cannot brown out the brain. ⚠️ Meets its EN 50155 EMC rating only *"WITH EXTERNAL FILTER"* — that filter is E7. ⬜ Likely potted, so no coating option as on E1 — confirm |
 | **E3** | 1 | Littelfuse **`KLKD002.T`** 2 A fast | 📦 | **26.44** | ✅ Paid 09-10 (DK 5666-KLKD002.T-ND; `.T` = packaging only). 2 A fast, 600 VAC/**600 VDC**, 50 kA DC. Fits at the module's B+ tap, in E4. ⬜ **Order 2–3 spares** — no substitute exists (Notes) |
@@ -33,7 +34,7 @@
 | **E9** | 4 | **Vishay `VY2472M49Y5US6`** Y2 4700 pF | ✅ | ~2 | Verified from Vishay's datasheet: 4700 pF ±20% (M), **12.5 mm body**, Y5U. *"Class X1, 440 VAC, Class Y2, 300 VAC"*, **IEC 60384-14**, and an explicit **`1000 VDC`** rating — ours is a DC application (84 V rail → baseplate), ~12× margin. Test 2600 VAC/2 s. IEC/UL/DIN-VDE/CSA/CQC, UL 94 V-0, IR ≥ 10 000 MΩ. **−40…+125 °C — needed: they sit at DC-DC #1's input terminals beside a ~82 °C baseplate.** Why Y-class (not the voltage): they bridge +Vin/−Vin to the **baseplate** → heatsink → enclosure, and the module grounds at the controller's B− stud, so **a short-failure would put the 84 V rail on the enclosure**; IEC 60384-14 certifies a safety cap against exactly that. A plain 2 kV ceramic is the wrong part. ⚠️ The trailing `###` selects packaging (DK `…TV0`, Mouser `…TV7`). ⬜ **4 × 12.5 mm discs is real carrier-board area** — note before layout |
 | **E10** | 1 | **`1N4007`** | ~ | ~0.15 | Hold-up blocking diode |
 | **E11** | 1 | **Schurter `0001.2504`** 1 A T-lag | 📦 | **4.93** | ✅ Paid 09-10 (5 @ $0.986, DK 486-1782-ND). Listing: *"1A 250VAC 300VDC 5X20"*. 1 fitted on DC-DC #2 per Cincon's datasheet, **4 spare** — bring-up will blow one. ⚠️ **Order SPT by part number** — the glass `FST` and ceramic `SP` are the same size with **no DC rating at all** |
-| **E12** | 1 | **`SMCJ90A`** TVS | ✅ | 0.47 | ⚠️ Not `SMBJ90A` / `SMBJ100A` / `5KP90A` |
+| **E12** | **3** | **`SMCJ90A`** TVS | ✅ | ~1.41 | ⚠️ Not `SMBJ90A` / `SMBJ100A` / `5KP90A`. ⭐ **Qty 1 → 3 (2026-09-15):** the input TVS, plus **`D104` on `KEY_SW_OUT` and `D105` on `FD_KEY`** — both 84 V wires leaving the box, previously unprotected (HVIN's only TVS was on B+). Same part, already proven for this node |
 | **E13** | 2 | IXYS **`IXTP26P20P`** TO-220AB + zener | ⬜ | ~6 | Chosen on **SOA: 363 W @ 5 ms**. Not `FQP12P20` (no SOA plot). **Two: D13's module switch and Q3, the start latch's KEY switch (plan §3.2.5a)** |
 | **E14** | 1 | 330 k / 10 k divider | ⬜ | — | KEY sense, 84 V → 2.47 V |
 | **E16** | 1 | Carrier PCB + **metal** enclosure | ⬜ | ~30 | ⚠️ Metal, never proto board — conduction-cooled bricks. ⬜ No part chosen |
@@ -114,7 +115,7 @@
 - **Not in this BOM:** the bike's own parts — wheel, tyres, controller, battery, Class T fuse and block,
   torque arms. Those are in the build sheet's order tracker.
 - **Totals are summed from the rows:** committed = the 13 paid rows; estimated = the 24 `~` rows, with A3
-  at the low end of its range. E12's verified $0.47 is in neither.
+  at the low end of its range. E12's verified price (now ~$1.41 for qty 3) is in neither.
 - **D23 — the brake light is hardware (decided 2026-09-11).** The STOP lamp is switched by the brake
   circuit's Q1 (group G), not a `TPS4H160B` channel, so D1 serves 6 lighting channels, D2 is 6, C1 is
   10, and IN-05/06 take G3's 10 kΩ pull-ups. Only milliamps flow through the lever switch, so any lever
