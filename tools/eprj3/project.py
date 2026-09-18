@@ -78,7 +78,17 @@ def _timestamp(epoch_ms):
 
 
 class Sheet:
-    """One schematic page. Holds no canvas and no layers: DOCHEAD + META."""
+    """One schematic page. Holds no canvas and no layers: DOCHEAD + META.
+
+    A sheet file embeds its own library.  `library_records` are the SYMBOL and
+    DEVICE documents the page uses (each starting with its own DOCHEAD), and
+    `page_records` the records that follow the page's META -- components,
+    wires, attributes -- with tickets from 2 up, META being 1.  Both are
+    serialised records, as `records.serialize_record` returns them, and both
+    default to empty, which is an empty sheet.  The page's own DOCHEAD and META
+    stay here: they carry the three identities (uuid, schematic, title) the
+    index must agree with.
+    """
 
     def __init__(self, title, uuid, schematic_uuid, z_index, client, epoch_ms,
                  edit_version=EDIT_VERSION):
@@ -89,6 +99,8 @@ class Sheet:
         self.client = client
         self.epoch_ms = epoch_ms
         self.edit_version = edit_version
+        self.library_records = ()
+        self.page_records = ()
 
     def document(self):
         head = serialize_record(
@@ -103,7 +115,10 @@ class Sheet:
             {"type": "META", "ticket": 1, "id": "META"},
             payload={"title": self.title, "schematic": self.schematic_uuid,
                      "source": "", "zIndex": self.z_index})
-        return join_records([head, meta])
+        # Library documents first, the page last: the order every sheet the
+        # editor writes uses.
+        return join_records([*self.library_records, head, meta,
+                             *self.page_records])
 
 
 class Schematic:
