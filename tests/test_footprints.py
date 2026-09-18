@@ -187,3 +187,29 @@ def test_each_placed_part_names_the_device_of_its_own_lcsc_part():
             assert lcsc_of_device[a["Device"]] == parts[ref].lcsc, ref
             checked += 1
     assert checked > 10
+
+
+# --- through-hole pads and pin-header patterns ------------------------------------
+def test_a_header_pattern_is_on_the_2_54_grid_with_pin_1_square():
+    pads = footprints.header(9, 2.54)
+    assert [p.num for p in pads] == [str(i) for i in range(1, 10)]
+    assert [round(p.x_mm, 3) for p in pads] == [round(-10.16 + 2.54 * i, 3) for i in range(9)]
+    assert all(p.hole_mm == footprints.HEADER_HOLE_MM for p in pads)
+    assert pads[0].shape == "RECT" and {p.shape for p in pads[1:]} == {"ELLIPSE"}
+
+
+def test_a_two_row_header_numbers_across_the_rows_as_headers_do():
+    """2 x 25: pin 1 and pin 2 share a column, odd pins in one row."""
+    pads = {p.num: p for p in footprints.header(50, 2.54, rows=2)}
+    assert pads["1"].x_mm == pads["2"].x_mm and pads["1"].y_mm != pads["2"].y_mm
+    assert pads["3"].x_mm - pads["1"].x_mm == pytest.approx(2.54)
+    assert {p.y_mm for n, p in pads.items() if int(n) % 2} == {pads["1"].y_mm}
+
+
+def test_through_hole_pads_are_on_every_layer_and_drilled():
+    recs = records(footprints.footprint_records(
+        "fpH", "HDR", footprints.header(3, 5.08), client="0123456789abcdef", epoch_ms=1))
+    pads = [p for h, p in recs if h["type"] == "PAD"]
+    assert all(p["layerId"] == footprints.MULTI_LAYER for p in pads)
+    assert all(p["hole"]["holeType"] == "ROUND" for p in pads)
+    assert pcb_to_mm(pads[1]["centerX"] - pads[0]["centerX"]) == pytest.approx(5.08, abs=1e-3)

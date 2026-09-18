@@ -249,7 +249,7 @@ def test_self_validator_invariants(sheets_by_mode, board):
         assert len(ids) == len(set(ids)), d["uuid"]
     kinds = [d["docType"] for d in documents(records)]
     assert kinds[-1] == "SCH_PAGE" and kinds.count("SCH_PAGE") == 1
-    assert set(kinds[:-1]) <= {"SYMBOL", "DEVICE"}
+    assert set(kinds[:-1]) <= {"FOOTPRINT", "SYMBOL", "DEVICE"}
 
 
 @pytest.mark.parametrize("board", STACK_ORDER)

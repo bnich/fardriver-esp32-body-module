@@ -34,6 +34,8 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `v2footprint.py` (EasyEDA library footprints, V2 → V3), `placement.py` (sheet layout), `schematic.py` (sheets, devices and nets) |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
+| `padmap.py` | Which footprint pad each netlist pin lands on, typed from the datasheets |
+| `footprint_lib.py` | Library footprints through `~/tools/lcsc-search`, fitted to our pins; generated patterns |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus the list of parts you solder by hand |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
@@ -209,10 +211,20 @@ it opens.
 V3 records. It reproduces the editor's own conversion of 19 footprints record for record. The oracle
 test needs those example files locally and skips without them.
 
-⬜ **Library footprints are not bound yet.** EasyEDA joins a symbol pin to a pad by number. Our
-symbols number pins by the netlist's names (`A`/`K`, `G`/`D`/`S`, `VS`), and a library footprint
-numbers its pads 1…N. Every multi-pin part needs a checked pin → pad map first; a wrong one wires a
-transistor backwards.
+**Footprints are bound to devices.** EasyEDA joins a symbol pin to a footprint pad by number. Our
+symbols number pins by the netlist's names (`A`/`K`, `G`/`D`/`S`, `VS`), so each footprint's pads
+are renamed to the pins they carry:
+
+- `padmap.py` holds the pad → pin maps, typed from each part's datasheet. `test_padmap.py`
+  checks every map against EasyEDA's library symbol where this machine can reach the library, and
+  it fails on a swapped FET or a reversed diode.
+- `footprint_lib.py` fetches the library footprints through `~/tools/lcsc-search` (cached, so it
+  works offline after one online build). `fit()` renames their pads and removes the VH post the
+  design omits. The inter-board connectors get a generated 2.54 mm header pattern, because every
+  family on the options list uses that grid.
+- The build summary names every placed item still without a footprint. `--no-footprints` binds
+  none, and the test suite binds only generated footprints.
+- No library data is kept in this repository.
 
 ## Rules
 

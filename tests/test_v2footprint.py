@@ -184,8 +184,8 @@ def test_substrate_layers_are_renumbered_into_v3s_range():
 @pytest.mark.parametrize("change, message", [
     (('["CANVAS"', '["VIA","e9",0,"",0,0,0,20,10,0]\n["CANVAS"'),
      "record type 'VIA'"),
-    (('["CANVAS"', '["HEAD",{"editorVersion":"4.7.8"}]\n["CANVAS"'),
-     "record type 'HEAD'"),
+    (('["CANVAS"', '["HEAD",{"editorVersion":"4.7.8","originX":5}]\n["CANVAS"'),
+     "HEAD carries"),
     (('0,0,3,0,0,0,0,0]', '0,0,5,0,0,0,0,0]'), "text alignment 5"),
     (('["ROUND",20,20]', '["RECT",20,20]'), "hole"),
     (('["RECT",30,50]', '["POLY",[["L",1,1,3,3]]]'), "pad shape"),
@@ -197,6 +197,26 @@ def test_anything_not_seen_converted_raises(change, message):
     assert old in SYNTHETIC
     with pytest.raises(v2.V2FootprintError, match=message):
         convert(SYNTHETIC.replace(old, new, 1))
+
+
+def test_a_metadata_only_head_carries_nothing_to_convert():
+    """V2 1.8 opens with HEAD {editorVersion, importFlag, uuid, title,
+    source}: who wrote it and what it is called.  META takes its title and
+    source from convert()'s arguments, so the output is unchanged."""
+    head = ('["HEAD",{"editorVersion":"2.2.C","importFlag":0,"uuid":"x",'
+            '"title":"T","source":""}]')
+    with_head = SYNTHETIC.replace('["LAYER",1,', head + '\n["LAYER",1,', 1)
+    assert convert(with_head) == convert(SYNTHETIC)
+
+
+def test_the_last_active_layer_wins():
+    """V2 1.8 footprints carry ACTIVE_LAYER twice with different values (49,
+    then 1).  It is the editor's selected layer -- UI state, no copper -- and
+    a V2 document is a sequence, so the last one is the document's state."""
+    twice = SYNTHETIC.replace('["ACTIVE_LAYER",1]', '["ACTIVE_LAYER",49]\n["ACTIVE_LAYER",1]', 1)
+    assert convert(twice) == convert(SYNTHETIC)
+    swapped = SYNTHETIC.replace('["ACTIVE_LAYER",1]', '["ACTIVE_LAYER",1]\n["ACTIVE_LAYER",3]', 1)
+    assert '"layerId":3' in "".join(r for r in convert(swapped) if "ACTIVE_LAYER" in r)
 
 
 # --- (c) a live LCSC library footprint ----------------------------------------
@@ -320,3 +340,100 @@ def test_all_19_example_footprints_match_the_editors_conversion():
                      "ELE_PLACEHOLDER": 111, "PAD": 58, "ATTR": 38,
                      "DOCHEAD": 19, "META": 19, "ACTIVE_LAYER": 19,
                      "CANVAS": 19}
+
+
+# --- silkscreen text, the font cache, and layers already in V3 numbering --------------
+STRING_LINE = '["STRING","e5",0,3,-10,20,"+","default",78.74,11.811,0,0,3,0,0,0,0,0]'
+FONT_LINE = ('["FONT","+","default",7.874,11.811,false,false,false,0,64.4,78.74,'
+             '[[3.22,6.87,"L",3.22,0.43],[0,3.65,"L",6.44,3.65]]]')
+
+
+def _with(*lines):
+    return SYNTHETIC.replace('["CANVAS"', "\n".join(lines) + '\n["CANVAS"', 1)
+
+
+def test_a_silkscreen_string_converts_field_by_field():
+    """EasyEDA's documented footprint STRING (format-skill
+    examples/FOOTPRINT/t-pcb-string.md): no specialColor, which is PCB-only."""
+    recs = convert(_with(STRING_LINE))
+    strings = [json.loads(r.partition("||")[2]) for r in recs if r.startswith('{"type":"STRING"')]
+    assert strings == [{"partitionId": "", "groupId": 0, "layerId": 3, "x": -10, "y": 20,
+                        "text": "+", "fontFamily": "default", "fontSize": 78.74,
+                        "strokeWidth": 11.811, "bold": False, "italic": False,
+                        "origin": "LEFT_BOTTOM", "angle": 0, "reverse": False,
+                        "expansion": 0, "mirror": False, "locked": False, "zIndex": 5}]
+    holders = [json.loads(r.partition("||")[2]) for r in recs if '"ELE_PLACEHOLDER"' in r]
+    assert {"dataType": "STRING", "max": 5} in holders
+
+
+def test_the_font_cache_is_dropped_because_the_editor_rebuilds_it():
+    """V2 FONT records are glyph outlines cached for STRING text.  The example
+    PCB's V2 form has none, and the editor's V3 conversion of it carries 51:
+    the editor builds them.  Dropping the cache loses nothing."""
+    assert convert(_with(FONT_LINE, STRING_LINE)) == convert(_with(STRING_LINE))
+
+
+def test_substrate_layers_already_in_v3_numbering_pass_through():
+    line = '["LAYER",361,"SUBSTRATE","Dielectric1",0,"#000000",1,"#000000",0.5]'
+    recs = convert(SYNTHETIC.replace('["ACTIVE_LAYER"', line + '\n["ACTIVE_LAYER"', 1))
+    assert any(r.startswith('{"type":"LAYER","ticket":') and '"[\\"LAYER\\",361]"' in r for r in recs)
+
+
+def test_a_string_alignment_never_seen_raises():
+    with pytest.raises(v2.V2FootprintError, match="text alignment"):
+        convert(_with(STRING_LINE.replace(",3,0,0,0,0,0]", ",5,0,0,0,0,0]")))
+
+
+def test_strings_match_the_editors_conversion_of_the_example_pcb():
+    """The example project's PCB exists as V2 and as the editor's V3: all 19
+    STRINGs, matched by text.  (The PCB form adds specialColor.  One string,
+    "GND", was edited in the example after conversion -- moved, which also gave
+    it a new zIndex -- so it is matched on all but x, y and zIndex; the other 18
+    are matched on every field.)"""
+    if not (ORACLE_V2.is_file() and ORACLE_V3.is_file()):
+        pytest.skip(f"no editor-converted example project under {EXAMPLES}")
+    pytest.importorskip("cryptography")
+    from tools import eprj2
+    con = sqlite3.connect(f"file:{ORACLE_V2}?mode=ro", uri=True)
+    v2pcb = con.execute("select dataStr from documents where docType = 3").fetchone()[0]
+    con.close()
+    ours = [v2._string_record(n, json.loads(line), set())[2]
+            for n, line in enumerate(v2pcb.splitlines(), 1) if line.startswith('["STRING"')]
+    theirs = {}
+    for rec in eprj2.read(ORACLE_V3)["text"].split("|\n"):
+        if rec.startswith('{"type":"STRING"'):
+            p = json.loads(rec.partition("||")[2])
+            theirs[p["text"]] = p
+    assert len(ours) == 19
+    for mine in ours:
+        t = dict(theirs[mine["text"]])
+        t.pop("specialColor")
+        moved = (t["x"], t["y"]) != (mine["x"], mine["y"])
+        if moved:
+            assert mine["text"] == "GND", f"{mine['text']!r} moved: not the known edit"
+            t["x"], t["y"], t["zIndex"] = mine["x"], mine["y"], mine["zIndex"]
+        assert mine == t, mine["text"]
+
+
+def test_layer_stackup_records_are_left_to_the_pcb():
+    """V2 1.8 footprints from a newer editor carry LAYER_PHYS (material,
+    thickness, permittivity per layer): the stackup, which the PCB owns.  The
+    editor's own conversions of all 19 example footprints have none, so a
+    footprint without it is a form the editor itself writes."""
+    phys = '["LAYER_PHYS",1,"",1.379,0,0,1]'
+    assert convert(_with(phys)) == convert(SYNTHETIC)
+
+
+def test_editor_preferences_are_not_footprint_content():
+    """PREFERENCE (routing width, via size, 'L45' corners, optimisation) is the
+    editor's setting, not the footprint's; the editor's 19 conversions have none."""
+    pref = '["PREFERENCE",0,10,0,24,12,1,0,"L45",1,1,0,1,"",0,1,"OPTIMIZA_NONE",0,"OPTIMIZA_NONE",1,1]'
+    assert convert(_with(pref)) == convert(SYNTHETIC)
+
+
+def test_a_json_boolean_flag_reads_as_the_flag():
+    """Newer editors write some V2 flags as JSON false/true instead of 0/1."""
+    old = '"U?",0,0,"default",45,6,0,0,3,0,0,0,0,0]'
+    assert old in SYNTHETIC
+    assert convert(SYNTHETIC.replace(old, '"U?",0,0,"default",45,6,0,0,3,0,0,0,0,false]', 1)) \
+        == convert(SYNTHETIC)

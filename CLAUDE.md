@@ -43,6 +43,9 @@ python3 -m pytest              # rules and unit tests
 - **LCSC parts live in `netlist.py` only**: `_R_LCSC`, `_C_LCSC`, `_FAB_BY_MPN`, `_FAB_CONN`. JLC
   Basic first; the part need not match what was bought. Choose with `~/tools/lcsc-search`, and check
   each candidate against the constraints in the part's `source`, never against the keyword.
+- ⛔ **A pad map is typed from the datasheet and checked against the library symbol**
+  (`tools/padmap.py`, `tests/test_padmap.py`). Never infer one from a footprint's geometry. A
+  wrong map wires a FET backwards on a board that passes every other check.
 - **Resistors are rated parts.** A resistor's `v_max` is its chosen part's WORKING voltage, never
   the overload figure: 0603 is 75 V, 0805 150 V, 1206 200 V. `VR-UNDER` checks it against the node.
 

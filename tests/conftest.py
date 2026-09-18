@@ -1,4 +1,10 @@
+import os
+
 import pytest
+
+# The suite is hermetic: no library footprint is fetched.  Tests that bind
+# footprints hand emit_board a FakeLibrary instead.
+os.environ["REVV1_NO_LIBRARY"] = "1"
 
 
 @pytest.fixture

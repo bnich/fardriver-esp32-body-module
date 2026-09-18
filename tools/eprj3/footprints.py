@@ -19,8 +19,14 @@ from .pcb import EDIT_VERSION
 from .records import serialize_record
 from .units import mm_to_pcb
 
-#: The PCB top copper layer id.
+#: The PCB top copper layer id, and the all-copper-layers id a drilled pad
+#: sits on (the id the library's through-hole footprints use).
 TOP_LAYER = 1
+MULTI_LAYER = 12
+#: A 2.54 mm pin header's land: 1.0 mm drill, 1.7 mm pad -- the common
+#: pattern for 0.64 mm square posts, whatever the header family.
+HEADER_HOLE_MM = 1.0
+HEADER_PAD_MM = 1.7
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,8 @@ class Pad:
     y_mm: float
     w_mm: float
     h_mm: float
+    hole_mm: float | None = None    # None: surface mount; else a round drill
+    shape: str = "RECT"             # RECT or ELLIPSE
 
 
 def two_pad(pitch_mm, pad_w_mm, pad_h_mm, nums=("1", "2")):
@@ -39,12 +47,34 @@ def two_pad(pitch_mm, pad_w_mm, pad_h_mm, nums=("1", "2")):
             Pad(nums[1], half, 0.0, pad_w_mm, pad_h_mm))
 
 
+def header(pins, pitch_mm, rows=1):
+    """A through-hole pin-header land pattern, centred on the origin: `pins`
+    posts at `pitch_mm`, in one row, or in two rows numbered across (pin 1 and
+    pin 2 share a column, odd pins in one row) as headers are.  Pin 1 is square."""
+    cols = pins // rows
+    if cols * rows != pins:
+        raise ValueError(f"{pins} pins do not fill {rows} rows")
+    out = []
+    for i in range(pins):
+        col, row = (i // rows, i % rows) if rows == 2 else (i, 0)
+        x = (col - (cols - 1) / 2) * pitch_mm
+        y = (row - (rows - 1) / 2) * pitch_mm
+        out.append(Pad(str(i + 1), round(x, 4), round(y, 4), HEADER_PAD_MM,
+                       HEADER_PAD_MM, HEADER_HOLE_MM, "RECT" if i == 0 else "ELLIPSE"))
+    return tuple(out)
+
+
 def _pad_payload(pad, z):
-    return {"groupId": 0, "netName": "", "layerId": TOP_LAYER, "num": pad.num,
+    hole = None if pad.hole_mm is None else {
+        "holeType": "ROUND", "width": round(mm_to_pcb(pad.hole_mm), 4),
+        "height": round(mm_to_pcb(pad.hole_mm), 4)}
+    return {"groupId": 0, "netName": "",
+            "layerId": TOP_LAYER if pad.hole_mm is None else MULTI_LAYER,
+            "num": pad.num,
             "centerX": round(mm_to_pcb(pad.x_mm), 4),
             "centerY": round(mm_to_pcb(pad.y_mm), 4), "padAngle": 0,
-            "hole": None,
-            "defaultPad": {"padType": "RECT",
+            "hole": hole,
+            "defaultPad": {"padType": pad.shape,
                            "width": round(mm_to_pcb(pad.w_mm), 4),
                            "height": round(mm_to_pcb(pad.h_mm), 4)},
             "specialPad": [], "padOffsetX": 0, "padOffsetY": 0,

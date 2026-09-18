@@ -80,7 +80,9 @@ _ELEMENT_ID = re.compile(r"^e([1-9][0-9]*)$")
 
 #: Primitive types carried across.  Everything else except the ones handled
 #: explicitly in `convert` raises.
-_PRIMITIVES = ("PAD", "FILL", "POLY", "ATTR")
+_PRIMITIVES = ("PAD", "FILL", "POLY", "ATTR", "STRING")
+#: The keys a V2 1.8 HEAD carries: metadata only.
+_HEAD_KEYS = frozenset({"editorVersion", "importFlag", "uuid", "title", "source"})
 
 
 def parse_v2(v2_text):
@@ -123,11 +125,14 @@ def _arity(n, rec, *allowed):
 
 
 def _bool(n, rec, i):
-    """V2 encodes every yes/no as 1/0."""
+    """V2 encodes a yes/no as 1/0; newer editors (V2 1.8) sometimes write a
+    JSON false/true instead, which is just as unambiguous."""
     v = rec[i]
-    if v is True or v is False or v not in (0, 1):
+    if v is True or v is False:
+        return v
+    if v not in (0, 1):
         raise V2FootprintError(
-            f"{_where(n, rec)}: field {i} = {v!r}, expected 0 or 1")
+            f"{_where(n, rec)}: field {i} = {v!r}, expected 0, 1, false or true")
     return v == 1
 
 
@@ -208,11 +213,16 @@ def _layer_record(n, rec):
     if isinstance(state, bool) or state not in range(8):
         raise V2FootprintError(f"{_where(n, rec)}: layer state {state!r}")
     if ltype == "SUBSTRATE":
-        if not V2_FIRST_SUBSTRATE <= lid <= V2_LAST_SUBSTRATE:
+        last_v3 = SUBSTRATE_LAYER + (V2_LAST_SUBSTRATE - V2_FIRST_SUBSTRATE)
+        if V2_FIRST_SUBSTRATE <= lid <= V2_LAST_SUBSTRATE:
+            lid = lid - V2_FIRST_SUBSTRATE + SUBSTRATE_LAYER
+        elif not SUBSTRATE_LAYER <= lid <= last_v3:
+            # A document written by a newer editor (V2 1.8, "2.2.C") already
+            # numbers its substrates in V3's range: those pass through.
             raise V2FootprintError(
-                f"{_where(n, rec)}: substrate layer {lid} outside the "
-                f"{V2_FIRST_SUBSTRATE}..{V2_LAST_SUBSTRATE} seen converted")
-        lid = lid - V2_FIRST_SUBSTRATE + SUBSTRATE_LAYER
+                f"{_where(n, rec)}: substrate layer {lid} outside both "
+                f"{V2_FIRST_SUBSTRATE}..{V2_LAST_SUBSTRATE} and "
+                f"{SUBSTRATE_LAYER}..{last_v3}")
     return ("LAYER", json.dumps(["LAYER", lid], separators=(",", ":")), {
         "layerType": ltype, "layerName": name,
         "use": bool(state & 1), "show": bool(state & 2),
@@ -354,6 +364,24 @@ def _attr_record(n, rec, substrates):
         "zIndex": _element_number(n, rec)})
 
 
+def _string_record(n, rec, substrates):
+    """STRING, silkscreen text: [id, groupId, layer, x, y, text, font, size,
+    stroke, bold, italic, origin, angle, reverse, expansion, mirror, locked].
+    Field for field the example PCB's 19 strings (whose V3 form adds a
+    PCB-only specialColor); the footprint form is EasyEDA's documented one."""
+    _arity(n, rec, 18)
+    return ("STRING", rec[1], {
+        "partitionId": "", "groupId": rec[2],
+        "layerId": _layer(n, rec, rec[3], substrates),
+        "x": rec[4], "y": rec[5], "text": rec[6], "fontFamily": rec[7],
+        "fontSize": rec[8], "strokeWidth": rec[9],
+        "bold": _bool(n, rec, 10), "italic": _bool(n, rec, 11),
+        "origin": _enum(n, rec, 12, _ORIGIN, "text alignment"),
+        "angle": rec[13], "reverse": _bool(n, rec, 14), "expansion": rec[15],
+        "mirror": _bool(n, rec, 16), "locked": _bool(n, rec, 17),
+        "zIndex": _element_number(n, rec)})
+
+
 def _primitive_records(prims):
     """Primitives regrouped by type, each run behind an ELE_PLACEHOLDER.
 
@@ -447,11 +475,41 @@ def convert(v2_text, *, uuid, title, client, epoch_ms,
             prims.append((n, rec))
         elif rec[0] == "ACTIVE_LAYER":
             _arity(n, rec, 2)
-            # LCSC serves footprints with this line twice; one record says it.
-            if active is not None and active[2]["layerId"] != rec[1]:
-                raise V2FootprintError(
-                    f"{_where(n, rec)}: second ACTIVE_LAYER disagrees")
+            # The editor's selected layer: UI state, no copper.  LCSC serves
+            # footprints with this line twice, in V2 1.8 with DIFFERENT values
+            # (49, then 1).  A V2 document is a sequence, so the last one is
+            # the document's state; V3 keeps one record.
             active = ("ACTIVE_LAYER", "ACTIVE_LAYER", {"layerId": rec[1]})
+        elif rec[0] == "LAYER_PHYS":
+            # Per-layer stackup (material, thickness, permittivity), written
+            # by newer editors into footprints too.  The PCB owns the stackup;
+            # the editor's own conversions of all 19 example footprints carry
+            # none, so leaving it out gives a form the editor itself writes.
+            _arity(n, rec, 7)
+            continue
+        elif rec[0] == "PREFERENCE":
+            # The editor's routing settings (track width, via size, corner
+            # style, optimisation), written by newer editors into footprints:
+            # UI state, not footprint content.  The editor's own conversions of
+            # all 19 example footprints carry none.
+            continue
+        elif rec[0] == "FONT":
+            # Glyph outlines cached for STRING text.  The example PCB's V2 form
+            # carries none and the editor's V3 form of it carries 51: the
+            # editor builds the cache itself, so dropping it loses nothing.
+            continue
+        elif rec[0] == "HEAD":
+            # V2 1.8 opens with HEAD {editorVersion, importFlag, uuid, title,
+            # source}: who wrote the document and what it is called.  META
+            # takes title and source from convert()'s arguments, and the
+            # document gets its own uuid.  Anything else in it could be
+            # content, so it raises rather than being dropped.
+            _arity(n, rec, 2)
+            extra = set(rec[1]) - _HEAD_KEYS if isinstance(rec[1], dict) else {"?"}
+            if extra:
+                raise V2FootprintError(
+                    f"{_where(n, rec)}: HEAD carries {sorted(extra)}, which is not "
+                    f"document metadata -- dropping it could lose content")
         elif rec[0] == "CANVAS":
             if canvas is not None:
                 raise V2FootprintError(f"{_where(n, rec)}: second CANVAS")
@@ -475,6 +533,8 @@ def convert(v2_text, *, uuid, title, client, epoch_ms,
             rec3 = _fill_record(n, rec, substrates, refs)
         elif t == "POLY":
             rec3 = _poly_record(n, rec, substrates)
+        elif t == "STRING":
+            rec3 = _string_record(n, rec, substrates)
         else:
             rec3 = _attr_record(n, rec, substrates)
         converted.append((t, _element_number(n, rec), rec3))

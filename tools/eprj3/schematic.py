@@ -57,7 +57,7 @@ is REFUSED, never rewritten: a silently renamed net is a different net.
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import placement
 from . import symbols as sym
@@ -331,11 +331,32 @@ class Page:
         if pins != nums:
             raise ValueError(f"{symbol.title}: pads {sorted(nums)} do not match "
                              f"pins {sorted(pins)}")
-        key = (device or self.default_device(symbol)).key
-        uuid = _uid("footprint", self.sheet_uuid, _json([list(x) if isinstance(x, tuple) else x for x in key]))
-        self._footprints[key] = (uuid, footprints.footprint_records(
+        device = device or self.default_device(symbol)
+        uuid = self.footprint_uuid(device)
+        self._footprints[device.key] = (uuid, footprints.footprint_records(
             uuid, title, pads, client=self.client, epoch_ms=self.epoch_ms,
             edit_version=self.edit_version))
+
+    def footprint_uuid(self, device):
+        return _uid("footprint", self.sheet_uuid,
+                    _json([list(x) if isinstance(x, tuple) else x for x in device.key]))
+
+    def has_footprint(self, device):
+        return device.key in self._footprints
+
+    def bind_footprint_records(self, device, uuid, records, required, who):
+        """Give `device` a footprint already built as V3 records (a library
+        footprint, pads renamed to our pins).  Every pin in `required` must
+        have a pad, or the netlist maps that pin to nothing."""
+        pads = set()
+        for rec in records:
+            head, _, payload = rec.partition("||")
+            if json.loads(head)["type"] == "PAD":
+                pads.add(str(json.loads(payload)["num"]))
+        missing = set(required) - pads
+        if missing:
+            raise ValueError(f"{who}: footprint leaves pins with no pad: {sorted(missing)}")
+        self._footprints[device.key] = (uuid, list(records))
 
     def library_records(self):
         """FOOTPRINT, SYMBOL, then DEVICE documents: the order the editor
@@ -474,6 +495,9 @@ class BoardSheet:
     layout: object
     page: Page
     naming: str
+    #: refdes whose device carries a library footprint, and those that do not
+    footprints_bound: list = field(default_factory=list)
+    footprints_unbound: list = field(default_factory=list)
 
     @property
     def part_count(self):
@@ -555,9 +579,45 @@ def place_part(page, item, x, y, unique_id, *, part=None, connector=None):
                       device=device_for(item, part, connector))
 
 
-def emit_board(design, board, sheet, *, naming=None, unique_ids=None):
+def _bind_library_footprint(page, item, thing, library, bound, unbound):
+    """Bind `thing`'s library footprint to its device, once per device."""
+    from tools import footprint_lib, padmap
+    from tools.model import Part
+    from . import v2footprint
+    if not padmap.needs_footprint(thing):
+        return
+    device = device_for(item, *((thing, None) if isinstance(thing, Part) else (None, thing)))
+    code = padmap.footprint_source(thing)
+    if code is None:
+        gen = footprint_lib.generated(thing)
+        if gen is None:
+            unbound.append(item.ref)
+            return
+        if not page.has_footprint(device):
+            page.bind_footprint(item.symbol, gen[0], gen[1], device=device)
+        bound.append(item.ref)
+        return
+    if library is None:
+        unbound.append(item.ref)
+        return
+    if not page.has_footprint(device):
+        got = library.footprint(code)
+        if got is None:
+            unbound.append(item.ref)
+            return
+        title, v2_text = got
+        uuid = page.footprint_uuid(device)
+        records = v2footprint.convert(v2_text, uuid=uuid, title=title, client=page.client,
+                                      epoch_ms=page.epoch_ms, edit_version=page.edit_version)
+        page.bind_footprint_records(device, uuid, footprint_lib.fit(records, thing),
+                                    padmap.pins_of(thing), f"{item.ref} ({code})")
+    bound.append(item.ref)
+
+
+def emit_board(design, board, sheet, *, naming=None, unique_ids=None, library=None):
     """Fill `sheet` (a `project.Sheet`) with every part, connector and net of
-    `board`.  Returns the `BoardSheet` describing what was placed."""
+    `board`, binding library footprints when `library` is given.  Returns the
+    `BoardSheet` describing what was placed."""
     mode = naming_mode(naming)
     items = board_items(design, board)
     for net in sorted({n for i in items for n in i.nets.values()}):
@@ -573,11 +633,15 @@ def emit_board(design, board, sheet, *, naming=None, unique_ids=None):
     connectors = {c.refdes: c for c in design.connectors}
     page = Page(sheet.uuid, client=sheet.client, epoch_ms=sheet.epoch_ms,
                 edit_version=sheet.edit_version)
+    bound, unbound = [], []
     for item in items:
         x, y = lay.origins[item.ref]
         placed = place_part(page, item, x, y, unique_ids[item.ref],
                             part=parts.get(item.ref),
                             connector=connectors.get(item.ref))
+        thing = parts.get(item.ref) or connectors.get(item.ref)
+        if thing is not None:
+            _bind_library_footprint(page, item, thing, library, bound, unbound)
         for pin in item.symbol.pins:
             net = item.nets.get(pin.number)
             if net is None:
@@ -587,4 +651,4 @@ def emit_board(design, board, sheet, *, naming=None, unique_ids=None):
 
     sheet.library_records = page.library_records()
     sheet.page_records = page.page_records(first_ticket=2)
-    return BoardSheet(board, items, lay, page, mode)
+    return BoardSheet(board, items, lay, page, mode, bound, unbound)

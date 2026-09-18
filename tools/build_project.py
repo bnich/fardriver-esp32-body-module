@@ -52,7 +52,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools import eprj2, integrity, netlist, rules  # noqa: E402
+from tools import eprj2, footprint_lib, integrity, netlist, rules  # noqa: E402
 from tools.board_params import STACK_ORDER  # noqa: E402
 from tools.eprj3 import reader, schematic  # noqa: E402
 from tools.eprj3.project import DEFAULT_EPOCH_MS, Project  # noqa: E402
@@ -63,8 +63,9 @@ DEFAULT_OUT = "build-eprj3"
 #: The line every summary ends with.  Stated plainly, every run.
 ACCEPTANCE_WARNING = (
     "Nets: EasyEDA Pro 3.2.149 joins them as generated (the gauge, 2026-09-18). "
-    "It does not open .eprj3: open the project as .eprj2. No part has a "
-    "footprint, so the editor refuses a netlist export until they are bound.")
+    "It does not open .eprj3: open the project as .eprj2. Footprints come from "
+    "EasyEDA's library; the editor refuses a netlist export while any part "
+    "lacks one (listed above).")
 
 
 def gate(design):
@@ -83,8 +84,9 @@ def read_back(project, design):
     return problems
 
 
-def build(design, *, naming=None, epoch_ms=DEFAULT_EPOCH_MS):
-    """The project, in memory.  Returns (project, [BoardSheet, ...])."""
+def build(design, *, naming=None, epoch_ms=DEFAULT_EPOCH_MS, library=None):
+    """The project, in memory.  Returns (project, [BoardSheet, ...]).  With a
+    `library` (tools/footprint_lib.py), each device carries its footprint."""
     project = Project.for_stack(PROJECT_NAME, epoch_ms=epoch_ms)
     unique_ids = schematic.project_unique_ids(design, STACK_ORDER)
     sheets = []
@@ -92,7 +94,8 @@ def build(design, *, naming=None, epoch_ms=DEFAULT_EPOCH_MS):
         sheet = board.schematic.sheets[0]
         sheets.append(schematic.emit_board(design, board.title, sheet,
                                            naming=naming,
-                                           unique_ids=unique_ids))
+                                           unique_ids=unique_ids,
+                                           library=library))
     return project, sheets
 
 
@@ -187,6 +190,10 @@ def summary(project, sheets, root, zip_path):
             f"{pcb.stat().st_size:8d} B")
     lines.append(f"  naming: {sheets[0].naming}   zip: {zip_path} "
                  f"({zip_path.stat().st_size} B)")
+    bound = [r for s in sheets for r in s.footprints_bound]
+    unbound = [r for s in sheets for r in s.footprints_unbound]
+    lines.append(f"  footprints: {len(bound)} placed items carry one; "
+                 f"{len(unbound)} do not" + (f": {' '.join(unbound)}" if unbound else ""))
     lines.append(ACCEPTANCE_WARNING)
     return "\n".join(lines)
 
@@ -196,6 +203,9 @@ def main(argv=None):
         description="Generate the EasyEDA Pro project for the board set.")
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help=f"output directory (default: {DEFAULT_OUT}/)")
+    parser.add_argument("--no-footprints", action="store_true",
+                        help="bind no library footprint (default: bind them "
+                             "through ~/tools/lcsc-search when it is here)")
     parser.add_argument("--template",
                         help="an .eprj2 EasyEDA Pro saved, for the .eprj2 "
                              "output (default: found in the editor's folders)")
@@ -210,7 +220,8 @@ def main(argv=None):
             print(f"  {p}", file=sys.stderr)
         return 1
 
-    project, sheets = build(design)
+    library = None if args.no_footprints else footprint_lib.open_library()
+    project, sheets = build(design, library=library)
     problems = read_back(project, design)
     if problems:
         print(f"REFUSED: the emitted sheets do not carry the netlist -- "
