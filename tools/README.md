@@ -1,7 +1,9 @@
 # Design-time tooling
 
 Checks the four-board set and generates its EasyEDA Pro project from a checked-in netlist.
-**Stdlib only** — no dependencies, no virtualenv. Run everything from the repo root.
+**Stdlib only**, no virtualenv, with one exception: the `.eprj2` output needs the `cryptography`
+package. Without it, everything else still runs and the build says the `.eprj2` was not written.
+Run everything from the repo root.
 
 📄 The design these tools describe: [`../docs/plan.md` §9.2](../docs/plan.md).
 
@@ -31,6 +33,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `soft_start.py` | The D13 main-switch gate network, simulated |
 | `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `placement.py` (sheet layout), `schematic.py` (sheets and nets) |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
+| `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
@@ -114,12 +117,24 @@ error**, so a header with no `type`, a `||` inside a header, and NaN/Infinity ar
 ## Generating the EasyEDA Pro project
 
 ```bash
-python3 tools/gauge.py             # gauge-revv1/ + .zip + GAUGE-INSTRUCTIONS.md   the naming test (passed)
-python3 tools/build_project.py     # revv1-module/ + revv1-module.zip              exit 1 if any gate fails
+python3 tools/gauge.py             # gauge-revv1/ + .eprj2 + .zip + GAUGE-INSTRUCTIONS.md   the naming test (passed)
+python3 tools/build_project.py     # revv1-module/ + revv1-module.eprj2 + .zip             exit 1 if any gate fails
 ```
 
 Both write to `build-eprj3/` by default (`--out DIR` to change it). That folder is gitignored: the
 project is a build artefact. Never hand-edit it; change the netlist and regenerate.
+
+⭐ **Open `revv1-module.eprj2` in EasyEDA Pro**, by its path. The editor lists a project only after
+it has been opened once. EasyEDA Pro 3.2.149 does not open the `.eprj3` folder or the zip; its
+native project is `.eprj2`. `tools/eprj2.py` wraps the folder as one:
+
+- The `.eprj2` is an SQLite file whose design is one snapshot made of the same records.
+- It copies the schema, db version and account uuid from a **template**: any `.eprj2` the installed
+  editor saved. By default the tool finds one in `~/Documents/EasyEDA-Pro/`; pass `--template` or
+  set `EASYEDA_EPRJ2_TEMPLATE` to choose. No file of the editor's is kept in this repo.
+- It is deterministic. The same design gives the same file, and a changed design gets a new project
+  id, so the editor never mistakes it for an older build.
+- `python3 tools/eprj2.py info|decode|roundtrip FILE.eprj2` reads any `.eprj2`.
 
 `build_project.py` runs three gates, and writes nothing unless all three are empty: `integrity.check`,
 `rules.check_all`, and a **read-back** — `eprj3/reader.py` parses every sheet about to be written,
@@ -130,8 +145,7 @@ naming every problem. Otherwise it writes one board per
 - a schematic sheet with every part and connector of that board;
 - a PCB with the outline, mounting holes and rules from `eprj3/pcb.py`.
 
-It also writes a zip of the folder, because whether EasyEDA Pro opens a folder or imports a zip is
-undocumented. Two runs are byte-identical.
+It also writes a zip of the folder and the `.eprj2`. Two runs are byte-identical.
 
 ### How a net is drawn
 

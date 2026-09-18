@@ -34,7 +34,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.build_project import DEFAULT_OUT, write  # noqa: E402
+from tools.build_project import (DEFAULT_OUT, eprj2_line, write,  # noqa: E402
+                                 write_eprj2)
 from tools.eprj3 import footprints, placement, schematic  # noqa: E402
 from tools.eprj3 import symbols as sym  # noqa: E402
 from tools.eprj3.project import Project  # noqa: E402
@@ -190,6 +191,9 @@ def main(argv=None):
         description="Write the EasyEDA Pro gauge project.")
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help=f"output directory (default: {DEFAULT_OUT}/)")
+    parser.add_argument("--template",
+                        help="an .eprj2 EasyEDA Pro saved (default: found in "
+                             "the editor's folders)")
     args = parser.parse_args(argv)
     project, _ = build()
     root, zip_path = write(project, args.out)
@@ -203,6 +207,7 @@ def main(argv=None):
               f"{e.mechanism}")
     print(f"  sheet {sch.stat().st_size} B   zip {zip_path} "
           f"({zip_path.stat().st_size} B)")
+    print(eprj2_line(*write_eprj2(root, args.template)))
     print(f"Open it in EasyEDA Pro and follow {notes}.")
     return 0
 

@@ -52,7 +52,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools import integrity, netlist, rules  # noqa: E402
+from tools import eprj2, integrity, netlist, rules  # noqa: E402
 from tools.board_params import STACK_ORDER  # noqa: E402
 from tools.eprj3 import reader, schematic  # noqa: E402
 from tools.eprj3.project import DEFAULT_EPOCH_MS, Project  # noqa: E402
@@ -148,6 +148,31 @@ def write(project, out):
     return root, zip_path
 
 
+def write_eprj2(root, template):
+    """Wrap the written folder as `<name>.eprj2` beside it: the file EasyEDA
+    Pro 3.2.149 opens.  Returns (path, None), or (None, why it was not written).
+
+    Not writing it is not a failed build -- the folder is still the design --
+    but the summary says so loudly, every run.
+    """
+    root = Path(root)
+    template = template or eprj2.find_template()
+    if template is None:
+        return None, ("no template: open any project in EasyEDA Pro once so it "
+                      "saves an .eprj2, or pass --template")
+    try:
+        return eprj2.convert(root, root.parent / f"{root.name}.eprj2",
+                             template), None
+    except (RuntimeError, ValueError) as exc:
+        return None, str(exc)
+
+
+def eprj2_line(path, why):
+    if path is not None:
+        return f"  open in EasyEDA Pro: {path}"
+    return f"  ⚠️ NO .eprj2 WRITTEN, and EasyEDA Pro 3.2.149 cannot open the folder: {why}"
+
+
 def summary(project, sheets, root, zip_path):
     lines = [f"{project.name}: {len(sheets)} boards -> {root}"]
     lines.append(f"  {'board':6} {'parts':>5} {'conns':>5} {'nets':>5} "
@@ -162,8 +187,6 @@ def summary(project, sheets, root, zip_path):
             f"{pcb.stat().st_size:8d} B")
     lines.append(f"  naming: {sheets[0].naming}   zip: {zip_path} "
                  f"({zip_path.stat().st_size} B)")
-    lines.append("  Footprints are not bound: link LCSC devices in EasyEDA "
-                 "Pro.")
     lines.append(ACCEPTANCE_WARNING)
     return "\n".join(lines)
 
@@ -173,6 +196,9 @@ def main(argv=None):
         description="Generate the EasyEDA Pro project for the board set.")
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help=f"output directory (default: {DEFAULT_OUT}/)")
+    parser.add_argument("--template",
+                        help="an .eprj2 EasyEDA Pro saved, for the .eprj2 "
+                             "output (default: found in the editor's folders)")
     args = parser.parse_args(argv)
 
     design = netlist.current()
@@ -194,6 +220,7 @@ def main(argv=None):
         return 1
     root, zip_path = write(project, args.out)
     print(summary(project, sheets, root, zip_path))
+    print(eprj2_line(*write_eprj2(root, args.template)))
     return 0
 
 

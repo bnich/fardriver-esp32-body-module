@@ -22,8 +22,8 @@ owner decision (2026-09-18), and an exception to the workspace's CC BY-SA defaul
 
 ## The `tools/` workflow
 
-Stdlib Python, no virtualenv. Run from the repo root, in this order, after any change to the netlist
-or the model:
+Stdlib Python, no virtualenv, apart from `cryptography` for the `.eprj2` output (`tools/eprj2.py`).
+Run from the repo root, in this order, after any change to the netlist or the model:
 
 ```bash
 python3 -m tools.integrity     # structural gate — must print "0 integrity problem(s)"
@@ -38,6 +38,8 @@ python3 -m pytest              # rules and unit tests
   not when a comment says so.
 - A height or rating is "confirmed" only if it was read in a manufacturer PDF — say which.
 - The generated EasyEDA project is a build artefact: never hand-edit it, never commit it.
+- ⛔ **EasyEDA Pro 3.2.149 opens `.eprj2`, not `.eprj3`.** Open `build-eprj3/revv1-module.eprj2`.
+  The editor refuses a netlist export while any part lacks a footprint.
 
 ## ⚠️ The traps that matter most
 
