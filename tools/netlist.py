@@ -27,6 +27,8 @@ Conventions
   CONNECTOR pin numbers are a generator-side index. For the pods the binding
             key is wire colour + gauge, never the cavity number.
 """
+from dataclasses import replace
+
 from .model import Board, ConnPin, Connector, Design, Net, Part
 
 #: The four boards, bottom to top: voltage falls with height (BD-1, BD-2).
@@ -47,10 +49,9 @@ _DS_TDK = "TDK-Lambda CN50/100/150B110 instruction manual (tdk_cn50-150b110_apl.
 _DS_TDK_CAT = "TDK-Lambda CN-B110 datasheet (tdk_cn-b_e.pdf)"
 _DS_CINCON = "Cincon EC7BW-110 datasheet V15 (cincon_Datasheet-EC7BW-110-series.pdf)"
 _DS_WE = "Würth 7448022010 datasheet rev 002.000 (we7448022010.pdf)"
-_DS_IXYS = "IXYS IXTP26P20P datasheet (ixtp26p20p_dk.pdf)"
+_DS_IXYS = "IXYS DS99913D (01/13), IXTA/IXTP26P20P (ixys_ds99913d.pdf)"
 _DS_BSS127 = "Infineon BSS127 rev 2.1 (bss127.pdf)"
 _DS_SMS = "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf)"
-_DS_PESD = "Nexperia PESD5V0S4UD datasheet (nexperia_PESD5V0S4UD_current.pdf)"
 _DS_SMCJ = "Littelfuse SMCJ series datasheet (littelfuse_smcj_series_2025_wayback.pdf)"
 _DS_VY2 = "Vishay doc 28535 (vishay_vy2_series_doc28535.pdf)"
 _DS_KXJ = "Chemi-Con KXJ series (kxj.pdf)"
@@ -63,25 +64,77 @@ _BRK = "brake-circuit.md"
 
 # ── generic chip packages: (footprint w × l, height). Heights are envelopes
 # ── for the size class, not read from any one manufacturer: unconfirmed.
-_R_PKG = {"0805": ((2.0, 1.25), 0.6), "1206": ((3.2, 1.6), 0.6)}
+_R_PKG = {"0603": ((1.6, 0.8), 0.45), "0805": ((2.0, 1.25), 0.6), "1206": ((3.2, 1.6), 0.6)}
 _C_PKG = {"0805": ((2.0, 1.25), 1.25), "1206": ((3.2, 1.6), 1.8)}
+
+# ── The LCSC parts JLC places for parts bought by value ──────────────────────
+# Chosen with ~/tools/lcsc-search, JLC Basic first (owner, 2026-09-18). A
+# candidate counts only when its PARAMETERS meet the need: value, package,
+# 1 % tolerance, and a WORKING voltage (never the overload figure) above the
+# worst net it touches. The rating is the chosen part's, and it IS the part's
+# v_max: `rules.voltage_ratings` checks it against the circuit. A value with
+# no entry has no rating, and VR-RATED fails the design until one is chosen.
+#   (value, package) -> (LCSC, maker part, working V, JLC class)
+_R_LCSC = {
+    ("100R", "0805"): ("C17408", "UNI-ROYAL 0805W8F1000T5E", 150.0, "Basic"),
+    ("120R", "0805"): ("C17437", "UNI-ROYAL 0805W8F1200T5E", 150.0, "Basic"),
+    ("1k", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
+    ("1k00 1%", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
+    ("2k0 1%", "0805"): ("C17604", "UNI-ROYAL 0805W8F2001T5E", 150.0, "Basic"),
+    ("2k2", "0805"): ("C17520", "UNI-ROYAL 0805W8F2201T5E", 150.0, "Basic"),
+    ("4k7", "0805"): ("C17673", "UNI-ROYAL 0805W8F4701T5E", 150.0, "Basic"),
+    ("5k1", "0805"): ("C27834", "UNI-ROYAL 0805W8F5101T5E", 150.0, "Basic"),
+    ("10k", "0805"): ("C17414", "UNI-ROYAL 0805W8F1002T5E", 150.0, "Basic"),
+    ("20k", "0805"): ("C4328", "UNI-ROYAL 0805W8F2002T5E", 150.0, "Basic"),
+    ("47k", "0805"): ("C17713", "UNI-ROYAL 0805W8F4702T5E", 150.0, "Basic"),
+    ("100k", "0805"): ("C149504", "UNI-ROYAL 0805W8F1003T5E", 150.0, "Basic"),
+    ("180k", "0805"): ("C17501", "UNI-ROYAL 0805W8F1803T5E", 150.0, "preferred Extended"),
+    ("240k", "0603"): ("C4197", "UNI-ROYAL 0603WAF2403T5E", 75.0, "preferred Extended"),
+    # The 84 V string: 1206, 200 V. No Basic part exists at these values.
+    ("165k", "1206"): ("C2999515", "FOJAN FRC1206F1653TS", 200.0, "Extended"),
+    ("270k", "1206"): ("C17940", "UNI-ROYAL 1206W4F2703T5E", 200.0, "Extended"),
+    ("499k", "1206"): ("C55020396", "FOJAN FRQ1206F4993TS", 200.0, "Extended"),
+}
+#   (value, needed V, package) -> (LCSC, maker part, rated V, JLC class). The
+#   rated V can exceed the need: a better-rated Basic part beats an exact-rated
+#   Extended one.
+_C_LCSC = {
+    ("100nF", 50.0, "0805"): ("C49678", "YAGEO CC0805KRX7R9BB104", 50.0, "Basic"),
+    ("1uF", 16.0, "0805"): ("C28323", "Samsung CL21B105KBFNNNE, X7R", 50.0, "Basic"),
+    ("10uF", 16.0, "1206"): ("C13585", "Samsung CL31A106KBHNNNE, X5R", 50.0, "Basic"),
+    ("10uF", 25.0, "1206"): ("C13585", "Samsung CL31A106KBHNNNE, X5R", 50.0, "Basic"),
+    ("2.2uF", 25.0, "1206"): ("C50254", "Samsung CL31B225KBHNNNE, X7R", 50.0, "Basic"),
+    ("4.7uF 50V X7R", 50.0, "1206"): ("C29823", "FH 1206B475K500NT, X7R", 50.0, "Basic"),
+    ("22nF", 250.0, "1206"): ("C3862155", "Murata GCM31C5C2E223JX03L, C0G", 250.0, "Extended"),
+}
+
+
+def _lcsc_note(lcsc: str, maker: str, volts: float, cls: str) -> str:
+    return f" LCSC {lcsc}: {maker}, {volts:g} V working, JLC {cls}."
 
 
 def _r(refdes: str, board: Board, value: str, source: str,
        pkg: str = "0805", dnp: bool = False) -> Part:
-    """A chip resistor, bought by value."""
+    """A chip resistor, bought by value; its part and rating come from _R_LCSC."""
     fp, h = _R_PKG[pkg]
+    lcsc, maker, volts, cls = _R_LCSC.get((value, pkg), ("", "", None, ""))
     return Part(refdes, f"R-{value}", pkg, board, "R", ("1", "2"), h,
-                footprint_mm=fp, value=value, dnp=dnp, source=source)
+                footprint_mm=fp, value=value, dnp=dnp, v_max=volts,
+                lcsc=lcsc, assembly="jlc" if lcsc else "",
+                source=source + (_lcsc_note(lcsc, maker, volts, cls) if lcsc else ""))
 
 
 def _c(refdes: str, board: Board, value: str, v_max: float, source: str,
        pkg: str = "0805") -> Part:
-    """A ceramic chip capacitor, bought by value. `v_max` is its rated voltage."""
+    """A ceramic chip capacitor, bought by value. `v_max` is the voltage it
+    must be rated for; the chosen part's rating (from _C_LCSC) replaces it."""
     fp, h = _C_PKG[pkg]
+    lcsc, maker, volts, cls = _C_LCSC.get((value, v_max, pkg), ("", "", v_max, ""))
     return Part(refdes, f"C-{value}", pkg, board, "C", ("1", "2"), h,
-                footprint_mm=fp, v_max=v_max,
-                value=f"{value} {v_max:g}V", source=source)
+                footprint_mm=fp, v_max=volts, lcsc=lcsc,
+                assembly="jlc" if lcsc else "",
+                value=f"{value} {volts:g}V",
+                source=source + (_lcsc_note(lcsc, maker, volts, cls) if lcsc else ""))
 
 
 def _sot23(refdes: str, mpn: str, board: Board, kind: str, v_max: float,
@@ -94,12 +147,13 @@ def _sot23(refdes: str, mpn: str, board: Board, kind: str, v_max: float,
 
 def _1n4148(refdes: str, name: str, role: str) -> Part:
     """One of the six D23 steering diodes, all on DRV."""
-    return Part(refdes, "1N4148", "SOD-123 (assumed)", "DRV", "D", ("A", "K"), 1.35,
+    return Part(refdes, "1N4148W", "SOD-123", "DRV", "D", ("A", "K"), 1.35,
                 footprint_mm=(3.7, 1.6), v_max=75.0,
                 source=f"{_BRK} §2/§3 '{name}' — {role}. Cathode on the lever "
                        f"node. SILICON, never Schottky: a Schottky's hot "
                        f"reverse leakage reaches the 3.3 V inputs. V_R 75 V: "
-                       f"{_DS_1N4148} p.1. BOM G1. ⬜ package unchosen: SOD-123 envelope")
+                       f"{_DS_1N4148} p.1. BOM G1. 1N4148W: the SOD-123 1N4148, same "
+                       f"75 V / 150 mA die. ⬜ SOD-123 envelope, not read off a drawing")
 
 
 def _tvs15(refdes: str, board: Board, where: str, dnp: bool = False) -> Part:
@@ -114,14 +168,19 @@ def _tvs15(refdes: str, board: Board, where: str, dnp: bool = False) -> Part:
 
 
 def _tvs5(refdes: str, board: Board, where: str) -> Part:
-    """Nexperia PESD5V0S4UD, the 5 V quad array for lines that stay <= 5 V."""
-    return Part(refdes, "PESD5V0S4UD", "SOT457 (SC-74)", board, "TVS",
-                TVS_ARRAY_PINS, 1.1, height_confirmed=True,
+    """onsemi SMS05T1G, the 5 V quad array for lines that stay <= 5 V."""
+    return Part(refdes, "SMS05T1G", "SC-74", board, "TVS",
+                TVS_ARRAY_PINS, 1.10, height_confirmed=True,
                 footprint_mm=(3.1, 3.0), v_max=5.0,
-                value="V_RWM 5 V · V_BR 6.4-7.2 V",
-                source=f"{where}. {_DS_PESD}: p.2 pads 1/3/4/6 cathodes K1-K4, "
-                       f"2/5 common anode; p.8 SOT457 A max 1.1 mm. Spare "
-                       f"cathodes tie to GND. BOM C2")
+                value="V_RWM 5 V · V_BR 6.0 V min · 9.8 V @ 5 A",
+                source=f"{where}. {_DS_SMS}: the SMS05/SMS15 family sheet -- "
+                       f"p.1 pads 1/3/4/6 cathode, 2/5 anode, the SMS15T1G's "
+                       f"own pinout; p.4 SC-74 A max 1.10 mm. I_R up to 20 uA "
+                       f"and ~300 pF per line: harmless on the pod inputs, "
+                       f"within the CC spec, ~0.2 V on RUN's 10 k pull-up, too "
+                       f"heavy for CAN (J405 is parked). Replaces the Nexperia "
+                       f"PESD5V0S4UD (BOM C2), which LCSC has none of. Spare "
+                       f"cathodes tie to GND")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -138,29 +197,33 @@ _HVIN_PARTS = (
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
          source=f"KSW to GND at J102: the key-switch wire is an 84 V conductor "
                 f"leaving the box. BOM E12. {_DS_SMCJ} p.5: D max 2.62 mm"),
-    Part("Q101", "IXTP26P20P", "TO-220AB, laid FLAT and bolted", "HVIN", "PFET",
+    Part("Q101", "IXTA26P20P-TRL", "TO-263AA (D2PAK)", "HVIN", "PFET",
          ("G", "D", "S"), 4.83, height_confirmed=True,
-         footprint_mm=(10.66, 22.0), v_max=200.0,
+         footprint_mm=(10.41, 15.88), v_max=200.0,
          value="P-ch -200 V, V_GS ±20 V, V_GS(th) -2…-4 V",
          source=f"'D13', the module's high-side power switch: S = HV_BPLUS, "
                 f"D = HV_SW. plan §3.2.5, BOM E13; chosen on SOA — 114 W at a "
                 f"~50 ms ramp clears the 70 °C DC line (≈191 W at 84 V, "
-                f"DS99913D Fig. 14). {_DS_IXYS} p.3 TO-220 outline: body "
-                f"thickness A max 4.83 mm, so FLAT it is 4.83 mm where upright "
-                f"it is 17.5-21.8 mm. ⚠️ The tab is the drain (84 V): nylon "
-                f"screw, and keep it off any metal floor"),
+                f"DS99913D Fig. 14). {_DS_IXYS}: one sheet for the IXTA "
+                f"(TO-263) and IXTP (TO-220) -- one die, one SOA, so "
+                f"tools/soft_start.py holds for either. p.3 TO-263 outline: A "
+                f"max 4.83 mm, E 10.41, L 15.88. The IXTA because JLC can "
+                f"reflow it (LCSC C3291074, the IXTP has none in stock); "
+                f"fallback: the IXTP26P20P, hand-soldered. ⚠️ The tab is the "
+                f"drain (HV_SW, 84 V): board copper at 84 V -- keep "
+                f"clearance to every other net, and no metal under it"),
     _r("R110", "HVIN", "100k",
        "Q101 gate to SOURCE — the D14 bias-OFF: V_GS = 0 with the key off. "
        "With R101A/B (540 kΩ) it sets V_GS = -13.1 V at 84 V, -9.4 V at 60 V, "
        "-6.7 V at 43 V. BOM D9"),
-    Part("D102", "TBD-ZENER-15V", "SOD-123 (assumed)", "HVIN", "ZENER",
+    Part("D102", "BZT52B15", "SOD-123", "HVIN", "ZENER",
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=15.0, value="15V",
          source="Q101 gate clamp inside the ±20 V V_GS rating: anode = gate, "
                 "cathode = source. Never conducts in normal running (-13.1 V). "
                 "BOM E13 '+ zener'. ⬜ MPN and package unchosen"),
-    Part("C105", "TBD-C0G-68n-250V", "1812 C0G or film box (unchosen)", "HVIN",
-         "C", ("1", "2"), 3.0, footprint_mm=(4.5, 3.2), v_max=250.0,
-         value="68nF C0G/film ≥250 V",
+    Part("C105", "CGA9N1C0G2J683JT0Y0S", "2220 C0G", "HVIN",
+         "C", ("1", "2"), 2.3, footprint_mm=(5.7, 5.0), v_max=630.0,
+         value="68nF C0G 630V",
          source="Q101 gate to DRAIN: the Miller cap that sets the output slew, "
                 "≈55 ms at 84 V: I = (84 - V_pl)/540 k - V_pl/100 k ≈ 0.105 mA at a "
                 "4.3 V plateau, t = 84 V × 68 nF / I (plan §3.2.5). It holds "
@@ -198,7 +261,7 @@ _HVIN_PARTS = (
     _r("R113", "HVIN", "100k",
        "Q105 gate to GND — the D14 bias-OFF: key off or J102 unplugged ⇒ "
        "Q105 off ⇒ Q101 off"),
-    Part("D106", "TBD-ZENER-10V", "SOD-123 (assumed)", "HVIN", "ZENER",
+    Part("D106", "BZT52B10", "SOD-123", "HVIN", "ZENER",
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=10.0, value="10V",
          source="Q105 gate clamp, D13_EN to GND, inside the BSS127's ±20 V "
                 "V_GS. The node runs at 7.6 V, so it conducts only on a "
@@ -297,13 +360,14 @@ _CONV_PARTS = (
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 16.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C2_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
-    Part("C207", "TBD-POLYMER-680u-25V", "radial solid polymer, lying down",
-         "CONV", "C", ("+", "-"), 10.5, footprint_mm=(10.5, 14.0), v_max=25.0,
-         value="680uF 25V low-ESR solid",
+    Part("C207", "PA25V680M8x12", "radial polymer 8 × 12.5 mm, lying down",
+         "CONV", "C", ("+", "-"), 8.5, footprint_mm=(8.5, 15.0), v_max=25.0,
+         value="680uF 25V polymer, 20 mΩ",
          source=f"U201 +V to -V. {_DS_TDK} p.9 Table 6-1: '12,15V: 25V 680μF "
                 f"(Solid Cap.)', 'For stable operation' (Chemi-Con PSG class). "
-                f"⬜ part unchosen: a 10 mm can lying down is ~10.5 mm, which "
-                f"must stay under the 12.7 mm brick"),
+                f"JIERR PA25V680M8x12: solid polymer, 20 mΩ, 4.1 A ripple, "
+                f"-55…105 °C. ⬜ 8 mm can lying down is ~8.5 mm, not read "
+                f"off a drawing; under the 12.7 mm brick either way"),
     _c("C208", "CONV", "2.2uF", 25.0,
        f"U201 +V to -V. {_DS_TDK} p.8 C6: 2.2 µF ceramic against output spike "
        f"noise", pkg="1206"),
@@ -316,20 +380,24 @@ _CONV_PARTS = (
        pkg="1206"),
     _c("C211", "CONV", "10uF", 16.0, "U202 output bulk, V5 to GND", pkg="1206"),
     _c("C212", "CONV", "100nF", 50.0, "U202 output HF decoupling, V5 to GND"),
-    Part("D201", "1N4007", "DO-41, lying flat", "CONV", "D", ("A", "K"), 2.7,
-         height_confirmed=True, footprint_mm=(2.7, 10.2), v_max=1000.0,
+    Part("D201", "M7", "DO-214AC (SMA)", "CONV", "D", ("A", "K"), 2.44,
+         footprint_mm=(5.3, 2.9), v_max=1000.0,
          source=f"Hold-up blocking diode, HV_C2_P → HV_C2_HOLD_IN. Plain "
-                f"silicon (plan §3.2.6). {_DS_1N4007} p.4: DO-41 body ø 2.7 × "
-                f"5.2 mm max. BOM E10"),
-    Part("FH201A", "TBD-5x20-FUSE-CLIP", "PCB fuse clip, 5 × 20", "CONV",
-         "FUSECLIP", ("1",), 8.0, footprint_mm=(6.0, 8.0),
+                f"silicon (plan §3.2.6): the SMA 1N4007, 1000 V / 1 A, 30 A "
+                f"surge; it carries <= 0.62 A (the whole module at 60 V) "
+                f"behind F201. The DO-41 1N4007 (BOM E10) is the breadboard's. "
+                f"⬜ SMA envelope 2.44 mm, not read off a drawing"),
+    Part("FH201A", "01110501Z", "PCB fuse clip, 5 × 20", "CONV",
+         "FUSECLIP", ("1",), 7.1, footprint_mm=(4.8, 3.8),
          source="F201's input-end clip. ⛔ Not the in-hand Schurter FAC "
                 "0031.3803: that is a 47.5 mm VERTICAL holder. The DC "
-                "interrupting duty is the fuse's, not the clip's. ⬜ clip part "
-                "unchosen; height is the fuse seated in it, assumed"),
-    Part("FH201B", "TBD-5x20-FUSE-CLIP", "PCB fuse clip, 5 × 20", "CONV",
-         "FUSECLIP", ("1",), 8.0, footprint_mm=(6.0, 8.0),
-         source="F201's output-end clip. ⬜ clip part unchosen, as FH201A"),
+                "interrupting duty is the fuse's, not the clip's. Littelfuse "
+                "01110501Z (111 501): 5 mm clip with fuse stop, 10 A; catalogue "
+                "body 7.1 mm tall, 4.8 × 3.8 mm, rows 17.8 mm apart for 5 × 20. "
+                "⬜ seated height to confirm on a real part"),
+    Part("FH201B", "01110501Z", "PCB fuse clip, 5 × 20", "CONV",
+         "FUSECLIP", ("1",), 7.1, footprint_mm=(4.8, 3.8),
+         source="F201's output-end clip, as FH201A"),
     Part("F201", "0001.2504", "5 × 20 ceramic, in clips FH201A/B", "CONV",
          "FUSE", ("1", "2"), 8.0, footprint_mm=(5.2, 20.0), v_max=300.0,
          value="1A T-lag 300VDC",
@@ -604,11 +672,11 @@ def _class_a_parts(pull: str, series: str, cap: str, net: str) -> tuple[Part, ..
 
 
 _BRAIN_PARTS = (
-    Part("U401", "ESP32-S3-WROOM-1-N8", "WROOM-1 / WROOM-1U SMD module",
+    Part("U401", "ESP32-S3-WROOM-1U-N8", "WROOM-1 / WROOM-1U SMD module",
          "BRAIN", "MODULE", _U401_PINS, 3.35, height_confirmed=True,
          footprint_mm=(18.0, 25.5), nc=("IO3", "IO45", "IO46"),
-         value="footprint also takes ESP32-S3-WROOM-1U-N8 (same pads)",
-         source=f"BOM A1 / D18: 8 MB quad flash, no PSRAM, -40…+85 °C; never "
+         value="U.FL antenna: the enclosure is metal (BD-19). The footprint also takes the -1-N8",
+         source=f"BOM A4 / D18: 8 MB quad flash, no PSRAM, -40…+85 °C; never "
                 f"R8/R16V (65 °C). {_DS_WROOM} p.11-12 Table 3-1, 41 pads: "
                 f"GND = pads 1 and 40, EPAD = 41, 3V3 = 2, EN = 3 ('Do not "
                 f"leave the EN pin floating'), IO43 = pad 37 'TXD0', IO44 = "
@@ -618,17 +686,17 @@ _BRAIN_PARTS = (
                 f"internal pull during software initialization'. p.42: 18 × 25.5 × 3.1±0.15 (-1), "
                 f"18 × 19.2 × 3.2±0.15 (-1U) — booked at the -1U's 3.35 max. "
                 f"Keep the antenna keep-out either way"),
-    Part("U402", "MCP23017-E/SP", "SPDIP-28", "BRAIN", "IC",
+    Part("U402", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
          ("GPA0", "GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6",
           "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5", "GPB6",
           "VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "INTA"),
-         5.08, height_confirmed=True, footprint_mm=(35.56, 10.92),
+         2.0, footprint_mm=(10.5, 8.2),
          nc=("GPA7", "GPB7", "INTB", "NC11", "NC14"),
          value="I²C address 0x20 (A2..A0 = 000)",
          source=f"Expander #1: every bar input. {_MCP_SOURCE}"),
-    Part("U403", "MCP23017-E/SP", "SPDIP-28", "BRAIN", "IC",
+    Part("U403", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
          ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0"),
-         5.08, height_confirmed=True, footprint_mm=(35.56, 10.92),
+         2.0, footprint_mm=(10.5, 8.2),
          nc=("GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6", "GPA7",
              "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5", "GPB6", "GPB7",
              "INTA", "INTB", "NC11", "NC14"),
@@ -702,7 +770,7 @@ _BRAIN_PARTS = (
     _r("R431", "BRAIN", "240k",
        "IN-11 divider bottom: 4.52 V × 240 / 340 = 3.19 V at U402.GPB2 — "
        "0.55 V over the MCP23017's V_IH (0.8 × V_DD = 2.64 V) and 0.11 V "
-       "under V_DD"),
+       "under V_DD. 0603: the 240k LCSC stocks is an 0603", pkg="0603"),
     _r("R432", "BRAIN", "10k",
        f"FAULT1 pull-up to V3P3: FAULT is open-drain. {_DS_TPS} p.29: "
        f"'R(pu) = 10 kΩ'"),
@@ -1517,7 +1585,140 @@ _CONNECTORS = (
 )
 
 
+# ── The LCSC parts JLC places for parts bought by part number ────────────────
+# Parts bought by value are in _R_LCSC / _C_LCSC. Chosen with ~/tools/lcsc-search
+# on 2026-09-18, JLC Basic first, each checked against the constraints its own
+# `source` states (standoff, V_DS, threshold, pinout). mpn -> (LCSC, maker part,
+# JLC class, what the check found).
+_FAB_BY_MPN = {
+    "SMCJ90A": ("C1976063", "Vishay SMCJ90A-E3/57T", "Extended",
+                "1.5 kW, V_C 146 V @ 10.3 A; not the 600 W 'SMCJ90A-L'"),
+    "SMBJ18A": ("C19077573", "SMBJ18A (R+O)", "preferred Extended",
+                "600 W, V_C 29.2 V"),
+    "SMS15T1G": ("C894371", "onsemi SMS15T1G", "Extended", "the part itself"),
+    "SMS05T1G": ("C233428", "onsemi SMS05T1G", "Extended", "the part itself"),
+    "USBLC6-2SC6": ("C7519", "ST USBLC6-2SC6", "Extended", "the part itself"),
+    "1N4148W": ("C81598", "1N4148W", "Basic", "75 V, silicon"),
+    "SS14": ("C2480", "MDD SS14", "Basic", "40 V / 1 A Schottky"),
+    "M7": ("C95872", "MDD M7", "Basic", "1000 V / 1 A, 30 A surge"),
+    "BZT52B10": ("C22395568", "BZT52B10 (R+O)", "preferred Extended",
+                 "V_Z 9.8-10.2 V"),
+    "BZT52B15": ("C22395570", "BZT52B15 (R+O)", "preferred Extended",
+                 "V_Z 14.7-15.3 V; the 5 % C grade reaches 13.8 V, too near "
+                 "the -13.1 V running V_GS"),
+    "AO3400A": ("C20917", "AOS AO3400A", "Basic", "the part itself"),
+    "AO3407A": ("C15155", "AOS AO3407A", "Extended",
+                "±20 V gate; not the Basic AO3401A, whose gate is ±12 V"),
+    "BSS127": ("C152611", "Infineon BSS127H6327XTSA2", "Extended",
+               "enhancement mode, V_GS(th) 2.6 V max; not the Diodes "
+               "BSS127S-7, whose 4.5 V max is above D13_EN at 43 V"),
+    "IXTA26P20P-TRL": ("C3291074", "IXYS IXTA26P20P-TRL", "Extended",
+                       "DS99913D, the IXTP's die in TO-263"),
+    "MCP23017T-E/SS": ("C558584", "Microchip MCP23017T-E/SS", "Extended",
+                       "DS20001952D Table 2-1: SSOP, SOIC and SPDIP share pins 1-28"),
+    "SN65HVD230DR": ("C12084", "TI SN65HVD230DR", "preferred Extended", "the part itself"),
+    "TLV76733DGNR": ("C2873382", "TI TLV76733DGNR", "Extended",
+                     "the part itself; stock is thin (34). Pin-compatible fallback "
+                     "TLV76701DGNR C3752401 needs an FB divider"),
+    "TPS4H160BQPWPRQ1": ("C471053", "TI TPS4H160BQPWPRQ1", "Extended",
+                         "version B; never the A version, C485918"),
+    "ESP32-S3-WROOM-1U-N8": ("C2980297", "Espressif ESP32-S3-WROOM-1U-N8", "Extended",
+                             "-40…+85 °C; never the 65 °C N8R8 / N16R8"),
+    "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", "Extended",
+                           "the part itself; through-hole"),
+    "PA25V680M8x12": ("C46550437", "JIERR PA25V680M8x12", "Extended",
+                      "680 µF 25 V polymer, 20 mΩ; through-hole"),
+    "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", "Extended",
+                       "the same series, X1/Y2: reel, kinked 7.5 mm leads"),
+    "CGA9N1C0G2J683JT0Y0S": ("C2175506", "TDK CGA9N1C0G2J683JT0Y0S", "Extended",
+                             "C0G, 630 V, ±5 %"),
+    "0001.2504": ("C1665055", "Schurter 0001.2504", "Extended", "the part itself"),
+    "01110501Z": ("C151075", "Littelfuse 01110501Z", "Extended", "5 mm clip with fuse stop"),
+}
+
+#: Parts LCSC cannot supply to their constraints: the owner buys them and
+#: solders them by hand (owner, 2026-09-18). mpn -> why.
+_HAND_BY_MPN = {
+    "CN150B110-12/CO": "nothing on LCSC takes 43-160 V in and gives 12 V at "
+                       ">= 2.62 A with stock: the TDK brick, in hand",
+    "EC7BW-110S05": "the Cincon is in hand; LCSC's nearest 43-160 V 5 V module "
+                    "(YLPTEC URB1D05LD-20WR3, C19724292) numbers its pins "
+                    "differently and states its isolation two ways",
+    "7448022010": "LCSC has none of the Würth choke; its nearest (YDFW1212T, "
+                  "C16197255) has 2.4x the DCR and no voltage rating. Two in hand",
+}
+
+
+def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
+    """Parts with their LCSC part from _FAB_BY_MPN.  An entry no part uses is
+    an error: a stale choice would read as a checked one."""
+    used = set()
+    out = []
+    for p in parts:
+        fab = None if p.lcsc else _FAB_BY_MPN.get(p.mpn)
+        if fab:
+            used.add(p.mpn)
+            lcsc, maker, cls, check = fab
+            p = replace(p, lcsc=lcsc, assembly="jlc",
+                        source=f"{p.source}. LCSC {lcsc}: {maker}, JLC {cls}; {check}")
+        elif p.mpn in _HAND_BY_MPN:
+            used.add(p.mpn)
+            p = replace(p, assembly="hand",
+                        source=f"{p.source}. HAND-SOLDERED: {_HAND_BY_MPN[p.mpn]}")
+        out.append(p)
+    stale = (set(_FAB_BY_MPN) | set(_HAND_BY_MPN)) - used
+    if stale:
+        raise ValueError(f"_FAB_BY_MPN entries no part uses: {sorted(stale)}")
+    return tuple(out)
+
+
+#: Connectors, by refdes: (LCSC, maker part, note), or "hand" and why. The
+#: inter-board connectors are absent on purpose: their family is the owner's
+#: open decision (docs/esp32-needed-from-owner.md item 6).
+_FAB_CONN = {
+    "J101": ("hand", "LCSC has no side-entry VH header with post 2 factory-omitted: "
+                     "pull post 2 from a JST B4PS-VH(LF)(SN), LCSC C157996, and solder "
+                     "it. A stock header with post 2 fitted puts floating metal "
+                     "between 84 V and the return"),
+    "J102": ("C41793313", "DLL VHH-3AWT2-750", "VH-compatible, middle post omitted at "
+                                               "the factory, 7 A 250 V"),
+    "J301": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J302": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J303": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J304": ("C265094", "JST S02B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J305": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J306": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J309": ("C265095", "JST S03B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J310": ("C265094", "JST S02B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J402": ("C491712", "JST S09B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J403": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J404": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J405": ("C491712", "JST S09B-PASK-2(LF)(SN)", "genuine JST PA"),
+    "J401": ("C2988369", "G-Switch GT-USB-7010ASV", "USB-C 2.0, 16-pin top mount, "
+                                                    "-40…+85 °C"),
+    "J408": ("C32713265", "hanxia HX PZ2.54-1x6P WZ", "1 × 6 right-angle, gold"),
+}
+
+
+def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
+    out = []
+    for c in connectors:
+        fab = _FAB_CONN.get(c.refdes)
+        if fab and fab[0] == "hand":
+            c = replace(c, assembly="hand", source=f"{c.source}. HAND-SOLDERED: {fab[1]}")
+        elif fab:
+            lcsc, maker, note = fab
+            c = replace(c, lcsc=lcsc, assembly="jlc",
+                        source=f"{c.source}. LCSC {lcsc}: {maker}, JLC Extended; {note}")
+        out.append(c)
+    stale = set(_FAB_CONN) - {c.refdes for c in connectors}
+    if stale:
+        raise ValueError(f"_FAB_CONN entries for no connector: {sorted(stale)}")
+    return tuple(out)
+
+
 def current() -> Design:
     """The design as it stands. The ONE API: `.parts`, `.nets`, `.connectors`
     and the lookups on `Design`. Nothing else builds a Design."""
-    return Design(parts=_PARTS, nets=_NETS, connectors=_CONNECTORS)
+    return Design(parts=_with_fab(_PARTS), nets=_NETS,
+                  connectors=_with_fab_conn(_CONNECTORS))

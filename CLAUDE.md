@@ -40,6 +40,11 @@ python3 -m pytest              # rules and unit tests
 - The generated EasyEDA project is a build artefact: never hand-edit it, never commit it.
 - ⛔ **EasyEDA Pro 3.2.149 opens `.eprj2`, not `.eprj3`.** Open `build-eprj3/revv1-module.eprj2`.
   The editor refuses a netlist export while any part lacks a footprint.
+- **LCSC parts live in `netlist.py` only**: `_R_LCSC`, `_C_LCSC`, `_FAB_BY_MPN`, `_FAB_CONN`. JLC
+  Basic first; the part need not match what was bought. Choose with `~/tools/lcsc-search`, and check
+  each candidate against the constraints in the part's `source`, never against the keyword.
+- **Resistors are rated parts.** A resistor's `v_max` is its chosen part's WORKING voltage, never
+  the overload figure: 0603 is 75 V, 0805 150 V, 1206 200 V. `VR-UNDER` checks it against the node.
 
 ## ⚠️ The traps that matter most
 

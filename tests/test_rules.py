@@ -29,9 +29,12 @@ TPS_PINS = ("VS", "GND", "IN1", "IN2", "IN3", "IN4", "OUT1", "OUT2", "OUT3",
 
 
 # ── fixture construction ─────────────────────────────────────────────────────
-def _r(ref, board, value):
+def _r(ref, board, value, v_max=150.0):
+    """A chip resistor with its working-voltage rating (0805 thick film: 150 V).
+    A 0 R link is a conductor and carries none."""
     return Part(ref, f"R-{value}", "0805", board, "R", ("1", "2"), 0.6,
-                value=value, source="fixture")
+                value=value, v_max=None if value == "0R" else v_max,
+                source="fixture")
 
 
 def _c(ref, board, value, volts, **kw):
@@ -83,12 +86,12 @@ DOMAINS = {
     # TI SLVSCV8E: the CS pin sits at 4.5-6.5 V in any fault, which is why it
     # meets the ADC pin only through R323
     "U301_CS": "5V",
-    # no rated part and no stated level: honestly SIGNAL. A FET's GATE net
-    # needs no declared voltage -- its rating is across drain and source.
-    "HORN_GATE": "SIGNAL",
-    "BOOT": "SIGNAL", "U0TXD": "SIGNAL", "U0RXD": "SIGNAL", "SDA": "SIGNAL",
-    "SCL": "SIGNAL", "MCP_RESET": "SIGNAL", "LGT_LOW": "SIGNAL",
-    "U301_IN1": "SIGNAL", "U301_CL": "SIGNAL",
+    # Resistors are rated parts, so every net one touches carries its level,
+    # as in the real netlist: 3.3 V logic, and the TPS4H160B's IN and CL pins.
+    "HORN_GATE": "3V3", "SDA": "3V3", "SCL": "3V3", "MCP_RESET": "3V3",
+    "LGT_LOW": "3V3", "U301_IN1": "3V3", "U301_CL": "3V3",
+    # no rated part and no stated level: honestly SIGNAL.
+    "BOOT": "SIGNAL", "U0TXD": "SIGNAL", "U0RXD": "SIGNAL",
 }
 INTERFACES = {
     "GND": "HV-LINK", "HV_C1_P": "HV-LINK", "HV_C1_N": "HV-LINK",
@@ -793,6 +796,24 @@ def test_vr_rated_fires_on_a_tvs_with_no_rating():
 @pytest.mark.parametrize("ref", ["C105", "D303", "D102", "D101", "Q301", "Q101"])
 def test_vr_rated_fires_for_every_kind_that_must_carry_a_rating(ref):
     assert any(ref in e for e in fired(GOOD.replace_part(ref, v_max=None), "VR-RATED"))
+
+
+def test_vr_rated_fires_on_a_resistor_with_no_rating():
+    """A resistor on the 84 V string is chosen by its working voltage: an
+    unrated one is an unchecked one."""
+    assert any("R110" in e for e in fired(GOOD.replace_part("R110", v_max=None), "VR-RATED"))
+
+
+def test_a_zero_ohm_link_needs_no_rating():
+    assert not [e for e in fired(GOOD, "VR-RATED") if "R211" in e]
+
+
+def test_vr_under_fires_on_a_75v_resistor_on_the_84v_bus():
+    """0603 thick film is rated 75 V.  R112 runs from KSW (84 V) with no clamp
+    across it: under-rated.  R110 is across Q101's gate-source, which D102
+    clamps to 15 V, so the same rating is enough there."""
+    assert any("R112" in e for e in fired(GOOD.replace_part("R112", v_max=75.0), "VR-UNDER"))
+    assert not [e for e in fired(GOOD.replace_part("R110", v_max=75.0), "VR-UNDER") if "R110" in e]
 
 
 def test_vr_rated_rejects_a_rating_that_is_not_a_number():

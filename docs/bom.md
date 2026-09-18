@@ -80,6 +80,31 @@
 
 ---
 
+## JLC assembly — the custom boards
+
+The custom boards are assembled by JLC from **LCSC parts, JLC Basic first** (owner, 2026-09-18). The
+LCSC part does not have to be the part bought for the breadboard above. Every placed part names its
+LCSC number in [`tools/netlist.py`](../tools/netlist.py), and that is the only place the numbers
+live:
+- parts bought by value: `_R_LCSC` and `_C_LCSC`;
+- parts bought by part number: `_FAB_BY_MPN`;
+- connectors: `_FAB_CONN`.
+
+A resistor's or capacitor's working voltage is its chosen part's, and the rules check it against the
+circuit. `python3 -m tools.jlc_bom --out bom.csv` writes the file JLC's order takes.
+
+**What JLC cannot place, which you buy and solder:**
+
+| Ref | Part | Why |
+|---|---|---|
+| U201 | TDK CN150B110-12/CO (E1, in hand) | nothing on LCSC takes 43–160 V in and gives 12 V at ≥ 2.62 A with stock |
+| U202 | Cincon EC7BW-110S05 (E2, in hand) | LCSC's nearest 43–160 V 5 V module numbers its pins differently and states its isolation two ways |
+| L101, L102 | Würth 7448022010 (in hand) | LCSC has none; its nearest has 2.4× the DCR and no voltage rating |
+| J101 | JST B4PS-VH(LF)(SN), LCSC C157996, **post 2 pulled** | no stocked VH header has post 2 omitted, and a fitted post puts floating metal between 84 V and the return |
+
+⬜ **The inter-board connectors** (J104, J201, J202, J307, J407, J308, J406) wait on the connector
+family, which is an open decision. `tools.jlc_bom` lists them as not yet chosen.
+
 ## Order history
 
 | Date | Order | Lines | Paid | State |

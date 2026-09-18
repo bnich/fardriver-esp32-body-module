@@ -131,3 +131,59 @@ def test_no_part_overrides_its_devices_footprint(gauge_docs):
     page_recs = gauge_docs["SCH_PAGE"][0]
     assert not [p for h, p in page_recs
                 if h["type"] == "ATTR" and p.get("key") == "Footprint"]
+
+
+# --- one device per real part, one symbol per drawing ----------------------------
+def test_parts_bought_as_one_part_share_a_device_and_others_do_not():
+    """Every resistor draws the same symbol, but a 10k and a 100k are different
+    parts: different LCSC numbers, so different devices.  Two 10k share one."""
+    from tools import netlist as nl
+    from tools.eprj3.project import Project
+    from tools.eprj3.schematic import emit_board
+    design = nl.current()
+    project = Project("t")
+    project.add_board("DRV")
+    sheet = project.boards[0].schematic.sheets[0]
+    emit_board(design, "DRV", sheet)
+    docs = documents("|\n".join(sheet.library_records))
+    devices = [d[1][1] for d in docs["DEVICE"]]
+    by_supplier = {}
+    for dev in devices:
+        part_no = dev["attributes"].get("Supplier Part")
+        if part_no:
+            assert dev["attributes"].get("Supplier") == "LCSC"
+            assert part_no not in by_supplier, f"{part_no} has two devices"
+            by_supplier[part_no] = dev
+    drv_lcsc = {p.lcsc for p in design.parts if p.board == "DRV" and p.lcsc and not p.dnp}
+    assert drv_lcsc and drv_lcsc <= set(by_supplier), drv_lcsc - set(by_supplier)
+    # the resistors' devices all point at ONE symbol
+    r_symbols = {d["attributes"]["Symbol"] for d in devices if d["title"].startswith("R-")}
+    assert len(r_symbols) == 1 and len([d for d in devices if d["title"].startswith("R-")]) > 1
+
+
+def test_each_placed_part_names_the_device_of_its_own_lcsc_part():
+    from tools import netlist as nl
+    from tools.eprj3.project import Project
+    from tools.eprj3.schematic import emit_board
+    design = nl.current()
+    project = Project("t")
+    project.add_board("DRV")
+    sheet = project.boards[0].schematic.sheets[0]
+    emit_board(design, "DRV", sheet)
+    docs = documents("|\n".join(sheet.library_records))
+    lcsc_of_device = {d[0][1]["uuid"]: d[1][1]["attributes"].get("Supplier Part", "")
+                      for d in docs["DEVICE"]}
+    page = records(sheet.page_records)
+    comp_of = {}
+    attrs = {}
+    for h, p in page:
+        if h["type"] == "ATTR":
+            attrs.setdefault(p["parentId"], {})[p["key"]] = p["value"]
+    parts = {p.refdes: p for p in design.parts}
+    checked = 0
+    for cid, a in attrs.items():
+        ref = a.get("Designator")
+        if ref in parts and parts[ref].lcsc:
+            assert lcsc_of_device[a["Device"]] == parts[ref].lcsc, ref
+            checked += 1
+    assert checked > 10

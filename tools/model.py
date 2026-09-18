@@ -24,6 +24,7 @@ Board = Literal["HVIN", "CONV", "DRV", "BRAIN"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
 Interface = Literal["HV-LINK", "PWR-UP", "STACK"]
 Side = Literal["top", "bottom"]
+Assembly = Literal["", "jlc", "hand"]
 Kind = Literal[
     "R", "C", "L", "CMCHOKE", "D", "ZENER", "TVS", "FUSE", "FUSECLIP",
     "NFET", "PFET", "IC", "MODULE", "CONVERTER", "MECH",
@@ -54,13 +55,19 @@ class Part:
     #: Pins deliberately left unconnected. Must be justified in `source`.
     nc: tuple[str, ...] = ()
     #: Maximum continuous working voltage ACROSS the part: V_DS for a FET,
-    #: V_RWM for a TVS, rated voltage for a capacitor, V_R for a diode.
-    #: REQUIRED for kinds C, D, ZENER, TVS, NFET, PFET (rules.py enforces).
+    #: V_RWM for a TVS, rated voltage for a capacitor, V_R for a diode, the
+    #: working voltage for a resistor (a 0 R link or net-tie carries none).
+    #: REQUIRED for kinds C, D, ZENER, TVS, NFET, PFET, R (rules.py enforces).
     v_max: float | None = None
     side: Side = "top"
     value: str = ""
     dnp: bool = False
     source: str = ""
+    #: The LCSC part JLC places (`C` + digits), or "" when none is chosen.
+    lcsc: str = ""
+    #: "jlc" when JLC assembles it from `lcsc`; "hand" when the owner buys it
+    #: and solders it, because LCSC has nothing that meets its constraints.
+    assembly: Assembly = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,9 @@ class Connector:
     #: protection parts may be DNP without that counting as a gap.
     parked: bool = False
     source: str = ""
+    #: As on Part: the LCSC part, and who fits it.
+    lcsc: str = ""
+    assembly: Assembly = ""
 
 
 @dataclass(frozen=True)

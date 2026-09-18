@@ -31,9 +31,10 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `board_fit.py` | Area and height budget (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `soft_start.py` | The D13 main-switch gate network, simulated |
-| `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `placement.py` (sheet layout), `schematic.py` (sheets and nets) |
+| `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `v2footprint.py` (EasyEDA library footprints, V2 → V3), `placement.py` (sheet layout), `schematic.py` (sheets, devices and nets) |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
+| `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus the list of parts you solder by hand |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
@@ -193,6 +194,25 @@ it opens.
 - Text widths used for spacing are generous estimates, because the default font size is not stated
   anywhere. If the real font is wider still, labels can overlap. Connectivity is unaffected, because
   text carries none.
+
+### Parts, devices and LCSC numbers
+
+- Each **real part** is one EasyEDA device: one value in one package with one LCSC number. Devices
+  share symbols. Two 10k 0805 resistors share a device; a 10k and a 100k do not.
+- A device with an LCSC number carries `Supplier: LCSC` and `Supplier Part`, which is what a JLC BOM
+  reads.
+- The numbers come from `netlist.py`.
+  - `current()` applies `_FAB_BY_MPN` and `_FAB_CONN`, and refuses an entry no part uses.
+  - A part that JLC cannot place is marked `assembly="hand"`, with the reason in its `source`.
+
+`eprj3/v2footprint.py` converts EasyEDA library footprints, which the library serves only as V2, into
+V3 records. It reproduces the editor's own conversion of 19 footprints record for record. The oracle
+test needs those example files locally and skips without them.
+
+⬜ **Library footprints are not bound yet.** EasyEDA joins a symbol pin to a pad by number. Our
+symbols number pins by the netlist's names (`A`/`K`, `G`/`D`/`S`, `VS`), and a library footprint
+numbers its pads 1…N. Every multi-pin part needs a checked pin → pad map first; a wrong one wires a
+transistor backwards.
 
 ## Rules
 

@@ -312,7 +312,8 @@ def test_the_module_only_taps_the_key_line_it_never_switches_it(d, w):
     mpns = " ".join(p.mpn for p in d.parts)
     assert "74HC14" not in mpns, "the latch's Schmitt inverter is back"
     assert "BSS126" not in mpns, "BSS126 is DEPLETION mode: on at V_GS = 0"
-    assert [p.refdes for p in d.parts if p.mpn == "IXTP26P20P"] == ["Q101"], (
+    assert [p.refdes for p in d.parts
+            if p.kind == "PFET" and (p.v_max or 0) >= DOMAIN_VOLTS["84V"]] == ["Q101"], (
         "one 84 V P-FET: the module's own power switch")
     ksw = [cp.net for cp in d.connector("J102").pins if cp.net != "GND"][0]
     assert not w.parts_on(ksw, FETS), "a FET sits on the key line"

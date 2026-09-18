@@ -109,7 +109,12 @@ UNCONFIRMED_MARGIN_MM = 2.0
 # ── part facts ───────────────────────────────────────────────────────────────
 FETS = ("NFET", "PFET")
 #: Kinds that must carry a voltage rating (model.Part.v_max).
-RATED_KINDS = ("C", "D", "ZENER", "TVS", "NFET", "PFET")
+RATED_KINDS = ("C", "D", "ZENER", "TVS", "NFET", "PFET", "R")
+
+
+def _is_link(p: Part) -> bool:
+    """A 0 R link or a copper net-tie: a conductor, with no voltage across it."""
+    return p.kind == "R" and (p.mpn == "NET-TIE" or p.value.strip().upper() in ("0R", "0"))
 #: What a DC path may pass through.
 _SERIES = ("R", "L", "FUSE", "FUSECLIP")
 _HAZARD_PATH = _SERIES + ("D", "CMCHOKE") + FETS
@@ -120,15 +125,21 @@ _GROUND_JOIN = _SERIES + ("CMCHOKE",)
 #: above its line here is a typo or a wish. (prefix, volts, source)
 DATASHEET_V_MAX: tuple[tuple[str, float, str], ...] = (
     ("PESD5V0S4UD", 5.0, "Nexperia PESD5V0S4UD, V_RWM"),
+    ("SMS05T1G", 5.0, "onsemi SMS05T1/D rev 10, V_RWM"),
     ("SMS15T1G", 15.0, "onsemi SMS05T1/D rev 10, V_RWM"),
     ("SMCJ90A", 90.0, "Littelfuse SMCJ series, V_R; plan 3.2.1"),
     ("SMBJ15A", 15.0, "Littelfuse SMBJ series: the part number carries V_R"),
     ("AO3400A", 30.0, "AOS AO3400A, V_DS"),
     ("AO3407A", 30.0, "AOS AO3407A, V_DS"),
     ("IXTP26P20P", 200.0, "IXYS DS99913D, V_DSS"),
+    ("IXTA26P20P", 200.0, "IXYS DS99913D, V_DSS"),
     ("BSS127", 600.0, "Infineon BSS127 rev 2.x, V_DS"),
     ("1N4148", 100.0, "V_RRM"),
     ("1N4007", 1000.0, "V_RRM"),
+    ("M7", 1000.0, "the SMA 1N4007: V_RRM"),
+    ("SMBJ18A", 18.0, "the part number carries V_R"),
+    ("BZT52B10", 10.0, "V_Z nominal"),
+    ("BZT52B15", 15.0, "V_Z nominal"),
     ("SS14", 40.0, "V_RRM"),
     ("TPS4H160", 40.0, "TI SLVSCV8E, operating V_VS; abs max 48 V"),
 )
@@ -753,7 +764,7 @@ def voltage_ratings(d: Design) -> list[str]:
     errs = []
     gate_clamps = _gate_source_pairs(ix)
     for p in d.parts:
-        required = p.kind in RATED_KINDS
+        required = p.kind in RATED_KINDS and not _is_link(p)
         if p.v_max is None:
             if required:
                 errs.append(f"VR-RATED: {p.refdes} ({p.kind} {p.mpn}) carries no "

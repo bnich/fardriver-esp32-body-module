@@ -123,8 +123,10 @@ def build(epoch_ms=None):
     # EasyEDA Pro will not export a netlist with any footprint missing, and the
     # netlist is how the gauge is read.  A generic 0805 outline: layout never
     # uses the gauge.
-    page.bind_footprint(sym.for_part(resistor(EXPERIMENTS[0].left)),
-                        "R0805_GAUGE", footprints.two_pad(1.9, 1.0, 1.3))
+    r = resistor(EXPERIMENTS[0].left)
+    item = placement.Item(r.refdes, sym.for_part(r), {}, r.refdes, schematic.part_name(r))
+    page.bind_footprint(item.symbol, "R0805_GAUGE", footprints.two_pad(1.9, 1.0, 1.3),
+                        device=schematic.device_for(item, part=r))
     sheet.library_records = page.library_records()
     sheet.page_records = page.page_records(first_ticket=2)
     return project, page

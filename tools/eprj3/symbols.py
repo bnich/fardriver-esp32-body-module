@@ -534,7 +534,8 @@ def symbol_records(symbol, uuid, *, client, epoch_ms,
 
 
 def device_records(symbol, uuid, symbol_uuid, *, client, epoch_ms,
-                   edit_version=EDIT_VERSION, footprint_uuid=""):
+                   edit_version=EDIT_VERSION, footprint_uuid="", title=None,
+                   extra=()):
     """The `DEVICE` document: DOCHEAD + META, nothing else (§6).
 
     `Footprint` is the uuid of a FOOTPRINT document in the project, or empty
@@ -544,6 +545,7 @@ def device_records(symbol, uuid, symbol_uuid, *, client, epoch_ms,
     """
     if footprint_uuid and symbol.global_net_name is not None:
         raise ValueError(f"{symbol.title}: a net flag has no footprint")
+    title = title or symbol.title
     symbol_name = _json({"name": symbol.title, "uuid": symbol_uuid,
                          "source": ""})
     if symbol.global_net_name is not None:
@@ -552,13 +554,14 @@ def device_records(symbol, uuid, symbol_uuid, *, client, epoch_ms,
                       "Symbol": symbol_uuid, "SymbolName": symbol_name}
     else:
         attributes = {"Symbol": symbol_uuid, "Footprint": footprint_uuid,
-                      "Designator": symbol.designator, "Name": symbol.title,
+                      "Designator": symbol.designator, "Name": title,
                       "Value": "", "Description": "", "Add into BOM": "yes",
                       "Convert to PCB": "yes", "SymbolName": symbol_name}
+        attributes.update(dict(extra))
     return [
         _dochead("DEVICE", uuid, client, epoch_ms, edit_version),
         serialize_record({"type": "META", "ticket": 1, "id": "META"},
-                         payload={"title": symbol.title, "tags": [],
+                         payload={"title": title, "tags": [],
                                   "source": "", "images": [],
                                   "attributes": attributes}),
     ]

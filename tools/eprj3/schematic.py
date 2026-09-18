@@ -168,6 +168,17 @@ def _attr(parent, key, value, z, shown=None, key_visible=None,
             "parentId": parent, "zIndex": z}
 
 
+@dataclass(frozen=True)
+class Device:
+    """What a placed part IS, beyond its drawing.  Parts with equal keys share
+    one device; every resistor shares the R symbol, but a 10k and a 100k are
+    different parts with different LCSC numbers, so they are two devices.
+    `attributes` are extra (name, value) pairs, e.g. Supplier Part."""
+    key: tuple
+    title: str
+    attributes: tuple = ()
+
+
 class Page:
     """Builds one sheet's library documents and page records.
 
@@ -182,8 +193,9 @@ class Page:
         self.client = client
         self.epoch_ms = epoch_ms
         self.edit_version = edit_version
-        self._library = {}      # symbol key -> (symbol, symbol uuid, device uuid)
-        self._footprints = {}   # symbol key -> (footprint uuid, FOOTPRINT records)
+        self._symbols = {}      # symbol key -> (symbol, symbol uuid)
+        self._devices = {}      # device key -> (symbol key, device uuid, Device)
+        self._footprints = {}   # device key -> (footprint uuid, FOOTPRINT records)
         self._records = []      # (type, id, payload)
         self._ids = set()
         self._z = 0
@@ -200,27 +212,41 @@ class Page:
         self._z += 1
         return self._z
 
-    def use(self, symbol):
-        """Embed `symbol` in this sheet's library; return (symbol, device)
-        uuids.  Namespaced by the sheet, so no two sheets share a uuid."""
-        entry = self._library.get(symbol.key)
+    @staticmethod
+    def default_device(symbol):
+        return Device(key=symbol.key, title=symbol.title)
+
+    def use(self, symbol, device=None):
+        """Embed `symbol` and its device in this sheet's library; return
+        (symbol, device) uuids.  Namespaced by the sheet, so no two sheets
+        share a uuid.  With no `device`, the symbol's own default one."""
+        entry = self._symbols.get(symbol.key)
         if entry is None:
             problems = sym.check_symbol(symbol)
             if problems:
                 raise ValueError("bad symbol: " + "; ".join(problems))
-            key = _json(list(symbol.key))
-            entry = (symbol, _uid("symbol", self.sheet_uuid, key),
-                     _uid("device", self.sheet_uuid, key))
-            self._library[symbol.key] = entry
+            entry = (symbol, _uid("symbol", self.sheet_uuid, _json(list(symbol.key))))
+            self._symbols[symbol.key] = entry
         elif entry[0] != symbol:
             raise ValueError(f"two different symbols share the key "
                              f"{symbol.key!r}")
-        return entry[1], entry[2]
+        device = device or self.default_device(symbol)
+        dev = self._devices.get(device.key)
+        if dev is None:
+            dev = (symbol.key, _uid("device", self.sheet_uuid,
+                                    _json([list(x) if isinstance(x, tuple) else x
+                                           for x in device.key])), device)
+            self._devices[device.key] = dev
+        elif dev[0] != symbol.key or dev[2] != device:
+            raise ValueError(f"device {device.key!r} is used with two symbols "
+                             f"or two attribute sets")
+        return entry[1], dev[1]
 
-    def place(self, symbol, x, y, rotation=0, *, role, attrs):
+    def place(self, symbol, x, y, rotation=0, *, role, attrs, device=None):
         """A COMPONENT and its ATTRs.  `attrs` is a list of
         (key, value, shown, key_visible, value_visible)."""
-        sym_uuid, dev_uuid = self.use(symbol)
+        sym_uuid, dev_uuid = self.use(symbol, device)
+        dev_title = (device or self.default_device(symbol)).title
         cid = self._id("component", *role)
         is_flag = symbol.doc_type == sym.DOC_NETFLAG
         if is_flag:
@@ -230,7 +256,7 @@ class Page:
         else:
             inline = {"Footprints": "[]", "Devices": "[]",
                       "DeviceName": _json({"uuid": dev_uuid,
-                                           "name": symbol.title,
+                                           "name": dev_title,
                                            "source": ""}),
                       "FootprintName": None, "pinClass": {},
                       "differentialPairClass": {}, "Symbols": "[]"}
@@ -293,8 +319,9 @@ class Page:
         return placed
 
     # -- output ----------------------------------------------------------
-    def bind_footprint(self, symbol, title, pads):
-        """Give `symbol`'s device a FOOTPRINT document built from `pads`.
+    def bind_footprint(self, symbol, title, pads, device=None):
+        """Give a device (default: `symbol`'s own) a FOOTPRINT document built
+        from `pads`.
 
         Every pad number must be one of the symbol's pin numbers and every pin
         must have a pad, or the netlist would map a pin to nothing."""
@@ -304,31 +331,35 @@ class Page:
         if pins != nums:
             raise ValueError(f"{symbol.title}: pads {sorted(nums)} do not match "
                              f"pins {sorted(pins)}")
-        uuid = _uid("footprint", self.sheet_uuid, _json(list(symbol.key)))
-        self._footprints[symbol.key] = (uuid, footprints.footprint_records(
+        key = (device or self.default_device(symbol)).key
+        uuid = _uid("footprint", self.sheet_uuid, _json([list(x) if isinstance(x, tuple) else x for x in key]))
+        self._footprints[key] = (uuid, footprints.footprint_records(
             uuid, title, pads, client=self.client, epoch_ms=self.epoch_ms,
             edit_version=self.edit_version))
 
     def library_records(self):
         """FOOTPRINT, SYMBOL, then DEVICE documents: the order the editor
         writes a project's library in."""
-        unused = set(self._footprints) - set(self._library)
+        unused = set(self._footprints) - set(self._devices)
         if unused:
-            raise ValueError(f"footprints bound to symbols never placed: {sorted(unused)}")
+            raise ValueError(f"footprints bound to devices never placed: {sorted(map(str, unused))}")
         out = []
         for _, records in self._footprints.values():
             out += records
-        for symbol, sym_uuid, dev_uuid in self._library.values():
+        for symbol, sym_uuid in self._symbols.values():
             out += sym.symbol_records(symbol, sym_uuid, client=self.client,
                                       epoch_ms=self.epoch_ms,
                                       edit_version=self.edit_version)
-        for key, (symbol, sym_uuid, dev_uuid) in self._library.items():
+        for key, (sym_key, dev_uuid, device) in self._devices.items():
+            symbol, sym_uuid = self._symbols[sym_key]
             fp = self._footprints.get(key)
             out += sym.device_records(symbol, dev_uuid, sym_uuid,
                                       client=self.client,
                                       epoch_ms=self.epoch_ms,
                                       edit_version=self.edit_version,
-                                      footprint_uuid=fp[0] if fp else "")
+                                      footprint_uuid=fp[0] if fp else "",
+                                      title=device.title,
+                                      extra=device.attributes)
         return out
 
     def page_records(self, first_ticket=2):
@@ -486,11 +517,42 @@ def _part_attrs(item, x, y, unique_id, *, part=None, connector=None):
     return attrs
 
 
+_TITLE_BAD = re.compile(r"[^\x21-\x7e]+")
+
+
+def device_for(item, part=None, connector=None):
+    """The device a placed part or connector is: one per real part.
+
+    Identity is the symbol plus what makes the part itself -- its LCSC number
+    when it has one, else its MPN, package and value -- so two 10k 0805
+    resistors share a device and a 10k and a 100k do not.  A part with an LCSC
+    number carries it as `Supplier Part`, which is what a JLC BOM reads."""
+    thing = part or connector
+    if thing is None:
+        return None
+    lcsc = thing.lcsc
+    if part is not None:
+        ident = (lcsc,) if lcsc else (part.mpn, part.package, part.value)
+        # Parts bought by value share an LCSC part across values written two
+        # ways ("1k", "1k00 1%"): the title comes from what they share.
+        name = part.kind if (lcsc and part.kind in ("R", "C")) else part.mpn
+    else:
+        ident = (lcsc,) if lcsc else ("conn", connector.refdes)
+        # Connectors sharing an LCSC part share a device: titled by the part.
+        name = "CONN" if lcsc else f"{connector.name.split(',')[0]}_{len(connector.pins)}P"
+    sep = "-" if part is not None and lcsc and part.kind in ("R", "C") else "_"
+    title = _TITLE_BAD.sub("_", f"{name}{sep}{lcsc}" if lcsc else name).strip("_")[:60]
+    attrs = (("Supplier", "LCSC"), ("Supplier Part", lcsc)) if lcsc else ()
+    return Device(key=("device", item.symbol.key) + ident, title=title,
+                  attributes=attrs)
+
+
 def place_part(page, item, x, y, unique_id, *, part=None, connector=None):
     """Place one part or connector at rotation 0 with its full ATTR set."""
     return page.place(item.symbol, x, y, 0, role=("part", item.ref),
                       attrs=_part_attrs(item, x, y, unique_id, part=part,
-                                        connector=connector))
+                                        connector=connector),
+                      device=device_for(item, part, connector))
 
 
 def emit_board(design, board, sheet, *, naming=None, unique_ids=None):
