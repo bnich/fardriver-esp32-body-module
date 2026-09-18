@@ -15,8 +15,8 @@ Two kinds of thing live here and they are kept apart on purpose:
 ⚠️ BOTH BUDGETS ARE PROVISIONAL, twice over:
   * M18 is not measured. The cavity is the owner's estimate. Width is the
     sensitive axis: roughly 25-30 mm of usable board length per 10 mm of width.
-  * The enclosure is not chosen (decided after M18). Nothing here assumes a
-    material; wall, floor and lid are ALLOWANCES that the decision replaces.
+  * The enclosure is an all-metal CNC box, but its model does not exist yet:
+    wall, floor and lid are ALLOWANCES that the model's thicknesses replace.
 When either lands: edit the block, flip the flag, run `python3 -m tools.board_fit`.
 """
 import math
@@ -32,9 +32,11 @@ CAVITY_H = 70.0    # mm, floor to the underside of the battery tray
 CAVITY_MEASURED = False   # ⛔ still an estimate; flip when M18 lands
 
 # --- enclosure: PROVISIONAL allowances -------------------------------------
-# What the enclosure takes out of the cavity on each face, whatever it turns
-# out to be made of. Not a wall design. Every figure derived below inherits
-# them, which is why both budgets report themselves as provisional.
+# What the enclosure takes out of the cavity on each face. The enclosure is an
+# all-metal CNC box (owner, 2026-09-18); these are allowances until its model
+# sets the real wall, floor and lid thicknesses. Every figure derived below
+# inherits them, which is why both budgets report themselves as provisional.
+# ENCLOSURE_DECIDED means "the model has set these", not "the material is known".
 ENCLOSURE_DECIDED = False
 WALL = 3.0
 FLOOR = 3.0

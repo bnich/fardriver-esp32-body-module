@@ -45,8 +45,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 **⬜ Open:**
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time.
 - **M3** — the brake-lever switch type gates the brake circuit build (`brake-circuit.md` §4).
-- **M18** — the enclosure cavity. Gates every board outline, and the enclosure material is decided
-  after it (§9.7).
+- **M18** — the enclosure cavity. Gates every board outline and the enclosure model (§9.7).
 - **The custom stack's height does not yet close:** 71.1 mm derived from the netlist's part heights
   against 64.0 mm available at the *estimated* cavity — provisional until M18 and the enclosure land,
   binding after. The inter-board connector family (M19) sets two of the gaps (§9.2).
@@ -498,8 +497,7 @@ voltage. No baseplate temperature is final until that number exists.
   ≤ 85–90 °C. ⚠️ The 60 °C ambient used for that target is an assumption — re-check it once the box
   has a mounting position.
 - **The brick is conduction-cooled, so it bolts to a thermal interface** — metal that carries its heat
-  out of the enclosure — whichever enclosure is built. The enclosure material is decided after
-  **M18** (owner, 2026-09-18), and the boards assume neither answer; §9.7 states the requirement.
+  out of the enclosure. The enclosure is an all-metal box (§9.7), and the plate bolts to its walls.
 - **Not the `HAQ-10T`** (7.5 °C/W, a free-air figure; BOM E5): a finned sink sealed inside a box only
   heats the trapped air, and 25.4 mm of fin on a 12.7 mm brick does not fit the stack (§9.2).
 - ⚠️ **An over-temperature trip takes the whole 12 V rail down** — every lamp, the horn, and the brake
@@ -1301,7 +1299,7 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **D15** | High-side driver type | **(a) smart high-side switch on all 6 module lighting channels** — TI `TPS4H160BQPWPRQ1` (§6.2.2a) | **DECIDED 2026-09-08.** Per-channel current limiting stops a shorted lamp wire hiccuping the whole rail and killing the headlight; thermal shutdown and lamp-out detection come with it. 3.3 V input compatible, floating input = OFF |
 | **D16** | Which channels are native GPIO, which ride the I2C expander? | **(a) FULL NATIVE on the custom board** — all six lighting channels, their diagnostics, boost, the brake inputs, PWM and analog on S3 pins; the expanders carry bar inputs only (§9.8.2). **The DevKit prototype runs (b):** low beam + boost native, the other 5 lighting channels on expander #2 (§3.1.3) | **(a) DECIDED 2026-09-18 (owner)** for the custom board; **(b) DECIDED 2026-09-08 (owner)** for the prototype, where all-native does not fit the DevKit's pins. Putting every lamp and bar switch behind one bus means a single I2C fault at night costs the headlight and signals in one event. (a) takes the bus out of the lighting path entirely; (b) keeps the headlight LOW on a private wire, and boost on its own pin (§7.1), with 7 pins spare. The brake lamp is not a module output (D23) |
 | **D17** | Status screen on the module | **(c) no screen** | **DECIDED 2026-09-08 (owner).** The Chaojie 3" is the only display; simplifies board A, the housing and the firmware. With D8 parked the dash shows only the one-line fields and the **WiFi page is the primary readout**. ⚠️ **Re-open trigger (D19): if the panel is replaced rather than fixed**, revisit what the module must display itself |
-| **D18** | Module variant for the custom PCB (§9.8.3) | **(a) `ESP32-S3-WROOM-1-N8`** (8 MB, no PSRAM, −40…+85 °C) — or its external-antenna twin **`-WROOM-1U-N8`** on the same footprint (§9.8.1) | Same part as the prototype (M13), so firmware, pin availability and thermal envelope carry across unchanged. Keep **(b) `-H4`** (4 MB, −40…+105 °C) in reserve only if a thermal survey of the finished box shows it above ~75 °C — ⬜ confirm two OTA app partitions fit 4 MB first. ⛔ **Never an `R8` / `R16V`** — −40…+65 °C against a 60 °C ambient |
+| **D18** | Module variant for the custom PCB (§9.8.3) | **(a) the `-N8` variant (8 MB, no PSRAM, −40…+85 °C): `ESP32-S3-WROOM-1U-N8`**, the external-antenna twin of the prototype's `-1-N8` on the same footprint, because the enclosure is metal (§9.7, §9.8.1) | Same part as the prototype (M13), so firmware, pin availability and thermal envelope carry across unchanged. Keep **(b) `-H4`** (4 MB, −40…+105 °C) in reserve only if a thermal survey of the finished box shows it above ~75 °C — ⬜ confirm two OTA app partitions fit 4 MB first. ⛔ **Never an `R8` / `R16V`** — −40…+65 °C against a 60 °C ambient |
 | ⏸️ **D19** | Keep spending time on the Chaojie CAN dash feed? | **(b) PARK it** — finish the rest of the module, re-open the display later | **DECIDED 2026-09-10 (owner):** *"the display we have now will either not work, or take too long to setup … we will come back to the display later, and either figure it out or replace it."* Parking costs almost nothing to hold open (the CAN hardware is in hand and spends 2 GPIO), and every remaining step is display-independent. **Consequences:** ① D8 parked (the vendor thread with Peri stays open passively) · ② the CAN hardware stays fitted · ③ D11 parks and block F leaves the first order · ④ the WiFi page becomes the primary readout — a firmware deliverable · ⑤ the dash keeps its one-line feed (issue #7) · ⑥ D17 gains its re-open trigger. **Cost:** temperatures on the glass are deferred — the rider sees them on a phone, not while riding. Telltales are unaffected (pins 1/4/5 off the lamp feeds) and port to any 0–15 V sense-input dash |
 | **D20** | Handlebar pods | **(c) replace BOTH with bought switch sets** — every bar control is a new dry contact | **DECIDED 2026-09-10 (owner):** *"we are going to replace the right pod as well. this will be all of our buttons."* IN-01…IN-04 are plain **class A** dry contacts. The original pods come off whenever the switch sets are wired. **M1** is the unpowered ohm-out of the new sets. **12 input bits on expander #1** (§3.1.3); 1 kΩ pull-ups on every bar input (§4); ⬜ check right-bar space; ⬜ measure bar Ø |
 | **D21** | Lighting control | **(b) a 3-position slider + a high/low toggle**, as the bought set provides | **DECIDED 2026-09-10 (owner):** *"for the lighting, there is a high/low toggle, and a 3 position slider."* The slider's positions **are** D14's three states in order, with "low beam implies running" built into the hardware; the state is visible; and at boot the module reads the actual switch, not a remembered value. It improves **recovery**, not **immunity** — a hung module still drives no lamps. Lighting becomes a combinational lookup (§7). ⬜ Ohm the slider out before wiring (OFF/A/B vs OFF/A/A+B) |
@@ -1586,12 +1584,15 @@ conformal-coat anything above 12 V whatever board you buy.
 ⚠️ **Gated on §9.8:** the housing follows the custom boards' outline (§9.2), not the perfboard
 stack's. Material, ingress, inserts and thermal rules below apply either way.
 
-- ⬜ **The custom stack's enclosure material — printed or metal — is decided after M18** (owner,
-  2026-09-18). The boards are drawn to suit either, and no thermal or height budget is final until it
-  is. Either way the brick's baseplate bolts to a metal thermal interface (§3.2.3), which is the
-  "bolt to metal" requirement below in its minimum form.
-- ⚠️ **A metal enclosure — or a metal cavity with the battery tray for a lid — kills a PCB antenna.**
-  BRAIN's footprint takes the external-antenna `-WROOM-1U` for that case (§9.8.1).
+- ✅ **The custom stack's enclosure is an all-metal box, CNC-machined by JLCCNC from this project's
+  models** (owner, 2026-09-18). The model follows M18. The brick's baseplate bolts to a metal plate
+  above CONV (§3.2.3), and the plate bolts to the box walls, so the heat leaves through the box. Wall,
+  floor and lid thicknesses come from the model, and until then the height and area budgets use 3 mm
+  allowances and say they are provisional.
+- ⚠️ **The box kills a PCB antenna**, so BRAIN fits the external-antenna `-WROOM-1U` (§9.8.1). Its
+  antenna sits outside the box, and M18 finds where a lead can leave.
+- ⚠️ **The box is insulated from the frame** (gap pad, nylon hardware), or the frame becomes a second
+  B− return (§3.2.4).
 
 - Internal envelope: follows the boards — plan for **4 positions, A, B, C and one D**. Allow **≥20 mm per
   layer** if stacking (DevKit plus headers ~13 mm).
@@ -1643,8 +1644,8 @@ stays unused (ROM boot log).
 both come as `-N8` (85 °C) and `-H4` (105 °C), so D18 applies to either. BRAIN's footprint accepts
 both and keeps the PCB antenna's keep-out. **The `-1U` matters because a metal enclosure — or a metal
 cavity with the battery tray for a lid — kills a PCB antenna**, and Espressif asks for at least 15 mm
-of clearance around one in every direction. Which module is fitted follows the enclosure decision
-(§9.7).
+of clearance around one in every direction. The enclosure is metal (§9.7), so the custom board fits
+the `-1U`.
 
 #### 9.8.2 What gets easier, and what may reverse
 
