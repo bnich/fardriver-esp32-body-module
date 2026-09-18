@@ -108,6 +108,11 @@ perfect with every wire cosmetic and zero connectivity.** "It looks right" canno
 | **4.1** | ⬜ **Licence.** This is now unambiguously a hardware repo under **MIT**, against **CC BY-SA 4.0** in the workspace conventions | Move the hardware docs to CC BY-SA 4.0 and keep MIT for firmware, or state the exception deliberately |
 | **4.2** | ⬜ **The `C4` TVS part** (≥24 V quad array, clamp < 40 V) and the **`U405` 3.3 V regulator** | I will research and propose both unless told otherwise — they need sourcing, not a decision |
 
+⭐ **Every 09-10 order was received 09-18**, so "don't replace parts we've ordered" is now "don't
+replace parts in hand". The board set honours that: **`C4` is the only new line**, and it exists
+because no owned part stands off 12 V — physics, not preference. `C2`'s 20 `PESD5V0S4UD` stay fully
+used (6 arrays, 14 spare) on the logic lines where 5 V standoff is correct.
+
 ---
 
 ## 5. ⬜ Values the documents leave undefined
