@@ -372,8 +372,7 @@ _BRAIN_PARTS = (
          source=f"{_INV} §1.4 BOM C3 — expander #1, bar inputs, 12 of 16 bits. "
                 f"⬜ Q24: BDR §9 prefers SOIC-28 on a 44 mm board but 'change the "
                 f"BOM first' — the BOM owns procurement, so DIP-28 stands here"),
-    Part("U403", "MCP23017-E/SP", "DIP-28", "BRAIN", H_DIP, dnp=True,
-         source=f"{_INV} §1.4 ⚠️ Q2 UNRESOLVED: BDR §3 L4 says '2 × MCP23017', but "
+    Part("U403", "MCP23017-E/SP", "DIP-28", "BRAIN", H_DIP, source=f"{_INV} §1.4 ⚠️ Q2 UNRESOLVED: BDR §3 L4 says '2 × MCP23017', but "
                 f"BD-5 removed I²C from the lighting path and the 12 bar bits fit "
                 f"ONE device. Carried as a DNP footprint for spare bits"),
     Part("U404", "SN65HVD230DR", "SOIC-8", "BRAIN", 1.8,
@@ -419,16 +418,16 @@ _BRAIN_PARTS = (
     _r("R425", "BRAIN", "10k",
        f"{_INV} §1.4 BOM D9 — boost HARD external pull-down (BDR §3 L4, PLAN §3.1.1). "
        f"D14: the gate must bias OFF through a boot that is ~200 ms of high-Z"),
-    _r("R426", "BRAIN", "1k",
+    _r("R426", "DRV", "1k",
        f"{_INV} §1.4 BOM B3 — LEFT telltale series to display pin 1, fed FROM THE "
        f"LAMP FEED, not a driver channel (PLAN §6.2.1)"),
-    _r("R427", "BRAIN", "1k", f"{_INV} §1.4 BOM B3 — RIGHT telltale series, display pin 4"),
-    _r("R428", "BRAIN", "1k",
+    _r("R427", "DRV", "1k", f"{_INV} §1.4 BOM B3 — RIGHT telltale series, display pin 4"),
+    _r("R428", "DRV", "1k",
        f"{_INV} §1.4 BOM B3 — headlight telltale series, display pin 5. ⬜ Q22: "
        f"'channel 1 or 2' is undecided; wired to HL_HIGH here because PLAN §7 says "
        f"the high-beam telltale follows the lamp feed so a flash lights it with no "
        f"firmware — ⚠️ which means LOW beam does NOT light it"),
-    _r("R429", "BRAIN", "1k",
+    _r("R429", "DRV", "1k",
        f"{_INV} §1.4 BOM B3 — series in display PIN 9. ⚠️ back-feed protection: the "
        f"FarDriver drives 0-15 V into an unpowered input during a display reset "
        f"(PLAN §3.3). ⛔ Q19: the FarDriver's brown one-line lead reaches no module "
@@ -485,7 +484,7 @@ _GAP_PARTS = (
     # populate-and-go, not a respin. The three telltales are 12 V lamp feeds
     # and DISP_ONELINE is the FarDriver's 0-15 V output, so 5 V is wrong here
     # for the same reason it is wrong on DRV.
-    Part("D406", "TBD-TVS-24V", "TBD (quad array)", "BRAIN", 1.1, vds_max=24.0,
+    Part("D406", "TBD-TVS-24V", "TBD (quad array)", "DRV", 1.1, vds_max=24.0,
          dnp=True, value="⬜ ≥24 V standoff — DNP until D19 un-parks",
          source="gap-fix — TT_L/TT_R/TT_HL/DISP_ONELINE leave the box on J405 "
                 "unprotected. ⏸️ Fitted but not populated, matching the park"),
@@ -512,21 +511,33 @@ _HVLINK_NETS = ("HV_CONV1", "HV_CONV2_PRE", "GND", "V5", "KEY_SENSE", "RUN", "ST
 #: carry the same 9-pin bus here.
 _PWRUP_NETS = ("V12", "V12", "GND", "GND", "GND", "V5", "KEY_SENSE", "RUN", "START")
 
-#: STACK, 2 × 20 with ALTERNATING GROUNDS (BDR §5) = 20 signal contacts, odd
-#: pins, each ground-flanked by construction (which CS1/CS2 require).
-#: ⛔ THE SPINE IS FULL AND FOUR MORE NETS MUST CROSS IT: `V3P3` (Q8) and the
-#: three telltale feeds `HL_HIGH`, `TURN_L`, `TURN_R` (Q18) all have pins on both
-#: DRV and BRAIN and NO CONTACT HERE -- 24 signals demanded against 20 available.
-#: `RUN` and `START` make it 26 if Q10's reading is right that they must cross
-#: STACK too; they are routed here on PWR-UP + HV-LINK, the interfaces whose
-#: documented pin lists do name them, because ⬜ nothing states how PWR-UP
-#: branches to L3/L4. Those four nets carry interface="STACK" with no J308/J406
-#: pin, which is the honest state of the design, not a transcription slip.
+#: STACK, 2 × 25 with ALTERNATING GROUNDS = 25 signal contacts, odd pins, each
+#: ground-flanked by construction (which CS1/CS2 require).
+#:
+#: ⭐ RESIZED 2026-09-18 from 2 × 20. BDR §5's 2 × 20 gave 20 signal contacts
+#: against a real demand of 23, counted from this netlist rather than from the
+#: documented list -- the three telltale feeds carried pins on both boards and
+#: had no contact at all.
+#:
+#: Owner decision 2026-09-18: the display block (J405, its TVS, and the R426-
+#: R429 series resistors) moves to DRV, putting the connector on the board
+#: whose 12 V the telltales already are. ⚠️ Moving the CONNECTOR ALONE makes
+#: it worse (30 crossings -> 36): the telltale nets keep their BRAIN pins
+#: unless the resistors go too. With the whole block moved it is 29, and the
+#: cost of the move is that CANH/CANL now cross instead, since the
+#: SN65HVD230 stays on BRAIN.
+#:
+#: `RUN`, `START` and `KEY_SENSE` are NOT here: they are routed on PWR-UP and
+#: HV-LINK, whose documented pin lists name them, and they must stay copper
+#: end to end (BD-7).
 _STACK_SIGNALS = (
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
     "DIAG_EN", "SEL1", "SEL2", "CS1", "CS2", "FAULT1", "FAULT2",
     "HORN_CMD", "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "BL",
     "IN05_BRAKE_L", "IN06_BRAKE_R",
+    # added with the 2 x 25 resize:
+    "CANH", "CANL",   # the display move sends these across; transceiver stays on BRAIN
+    "V3P3",           # R317/R318 are 3.3 V pull-ups sitting on the 12 V board (Q8)
 )
 
 
@@ -644,8 +655,8 @@ _GND_PINS = (
     ("J402", "1"), ("J403", "1"), ("J404", "4"), ("J405", "3"), ("J401", "4"),
 ) + tuple((cp, "2") for _pu, _s, cp, _n, _b, _c, _t in _CLASS_A) \
   + _hvlink("GND") + _pwrup("GND") \
-  + tuple(("J308", str(n)) for n in range(2, 41, 2)) \
-  + tuple(("J406", str(n)) for n in range(2, 41, 2))
+  + tuple(("J308", str(n)) for n in range(2, 51, 2)) \
+  + tuple(("J406", str(n)) for n in range(2, 51, 2))
 
 _NETS_RAILS = (
     Net("GND", _GND_PINS, domain="GND", interface="HV-LINK", leaves_box=True,
@@ -699,7 +710,7 @@ _NETS_12V = (
     Net("HL_HIGH",
         (("U301", "OUT3"), ("R302", "1"), ("J301", "2"), ("D308", "ch2"),
          ("R428", "1")),
-        domain="12V", interface="STACK", leaves_box=True,
+        domain="12V", leaves_box=True,
         source=f"{_S}.3/§2.6 — J301.2 is GREEN. ⚠️ firmware must break-before-make "
                f"against LOW (never both: 1.96 A). ⬜ Q18/Q22: R428 is on BRAIN, so "
                f"this 12 V feed has to cross STACK to reach the display connector — "
@@ -713,13 +724,13 @@ _NETS_12V = (
     Net("TURN_L",
         (("U302", "OUT2"), ("R305", "1"), ("J302", "4"), ("J303", "1"),
          ("R426", "1"), ("D309", "ch2"), ("D310", "ch1")),
-        domain="12V", interface="STACK", leaves_box=True,
+        domain="12V", leaves_box=True,
         source=f"{_S}.3/§2.6 — rear LEFT is J302.4 BLUE (M6), front pair on J303. "
                f"⬜ Q18: R426 is on BRAIN, so this crosses STACK with no contact"),
     Net("TURN_R",
         (("U302", "OUT3"), ("R306", "1"), ("J302", "5"), ("J303", "3"),
          ("R427", "1"), ("D309", "ch3"), ("D310", "ch2")),
-        domain="12V", interface="STACK", leaves_box=True,
+        domain="12V", leaves_box=True,
         source=f"{_S}.3/§2.6 — rear RIGHT is J302.5 GREEN (M6). ⬜ Q18 as TURN_L"),
     Net("TAIL_STOP", (("Q304", "D"), ("J302", "3"), ("D309", "ch4")),
         domain="12V", leaves_box=True,
@@ -925,11 +936,15 @@ _NETS_BRAIN = (
                f"is fitted though D19 parks the feed"),
     Net("TWAI_RX", (("U404", "R"), ("U401", "IO34")), gpio="GPIO34",
         source=f"{_S}.6 / §4.4 — R7/R14 recovered"),
-    Net("CANH", (("D405", "ch1"), ("U404", "CANH"), ("R401", "1"), ("J405", "8")), leaves_box=True,
+    Net("CANH", (("D405", "ch1"), ("U404", "CANH"), ("R401", "1"), ("J405", "8")),
+        leaves_box=True, interface="STACK",
         source=f"{_S}.6 — display pin 8, RED-BLACK. The panel terminates its own end "
-               f"(132.4 Ω); the pair reading 68 Ω is the CAN pre-flight gate"),
-    Net("CANL", (("D405", "ch2"), ("U404", "CANL"), ("R401", "2"), ("J405", "7")), leaves_box=True,
-        source=f"{_S}.6 — display pin 7, GREEN-BLACK"),
+               f"(132.4 Ω); the pair reading 68 Ω is the CAN pre-flight gate. "
+               f"⚠️ Crosses STACK since the 2026-09-18 display move: J405 is on DRV, "
+               f"the SN65HVD230 stays on BRAIN. This is the cost of the move"),
+    Net("CANL", (("D405", "ch2"), ("U404", "CANL"), ("R401", "2"), ("J405", "7")),
+        leaves_box=True, interface="STACK",
+        source=f"{_S}.6 — display pin 7, GREEN-BLACK. Crosses STACK, as CANH"),
     Net("UART1_TX", (("U401", "IO17"), ("R436", "1")), gpio="GPIO17",
         source=f"{_S}.6 — class E: 1 kΩ series and the PIN IS TRI-STATED WHENEVER "
                f"NOT SENDING"),
@@ -1028,7 +1043,7 @@ def _bus_pins(nets: tuple[str, ...]) -> tuple[ConnPin, ...]:
 
 
 def _stack_conn_pins() -> tuple[ConnPin, ...]:
-    """2 × 20 with alternating grounds: odd = signal, even = GND (BDR §5)."""
+    """2 × 25 with alternating grounds: odd = signal, even = GND."""
     pins = []
     for i, sig in enumerate(_STACK_SIGNALS):
         pins.append(ConnPin(2 * i + 1, sig))
@@ -1037,12 +1052,11 @@ def _stack_conn_pins() -> tuple[ConnPin, ...]:
 
 
 _STACK_NOTE = (
-    "BDR §5 — 2 × 20, alternating grounds, CS1/CS2 ground-flanked. ⛔ THE SPINE "
-    "IS FULL: the 20 signal contacts are spent on the 20 nets §2.5 documents, "
-    "while V3P3 (Q8) and the three telltale feeds HL_HIGH/TURN_L/TURN_R (Q18) "
-    "also have pins on both boards and get none — 24 demanded against 20, and 26 "
-    "if RUN/START must cross here as Q10 reads it. Allocating them silently, or "
-    "dropping the alternating grounds to make room, would have hidden the overrun."
+    "2 × 25, alternating grounds, CS1/CS2 ground-flanked by construction. "
+    "⭐ Resized from BDR §5's 2 × 20, which gave 20 signal contacts against a "
+    "real demand of 23 counted from this netlist. 2 contacts spare. "
+    "⚠️ RUN/START/KEY_SENSE are deliberately NOT here — they route on PWR-UP "
+    "and HV-LINK and stay copper end to end (BD-7)."
 )
 
 _CONNECTORS = (
@@ -1147,7 +1161,7 @@ _CONNECTORS = (
         ConnPin(5, "BOOST_OUT", "⬜ colour unknown (CruisePin PIN17). ⛔ METER FIRST"),
         ConnPin(6, "BL", "yellow/green. ⛔ not grey BH — High Brake stays capped"),
     )),
-    Connector("J405", "BRAIN", "Display, 9-pin (§3.3) — ⏸️ footprint fitted, parked with D19", (
+    Connector("J405", "DRV", "Display, 9-pin (§3.3) — ⏸️ footprint fitted, parked with D19", (
         ConnPin(1, "TT_L", "⬜ — telltale LEFT, 0-15 V in"),
         ConnPin(2, "", "⬜ Q20 — display supply. ⏸️ D11 parked; under D19 the dash "
                        "feeds from switched B+ externally. Carried unconnected"),

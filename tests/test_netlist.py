@@ -102,8 +102,9 @@ def test_the_four_corrections_stuck(d):
     #    array conducts continuously -- a short across the very channel it is
     #    meant to protect.
     drv_tvs = [p for p in d.parts if p.board == "DRV" and p.vds_max in (5.0, 24.0)]
-    assert len(drv_tvs) == 6, "one quad array per DRV harness connector"
-    hv = [p for p in drv_tvs if p.vds_max >= 24.0]
+    # 7, not 6: D406 came across with the display block on 2026-09-18.
+    assert len(drv_tvs) == 7, "six harness connectors + the display array"
+    hv = [p for p in drv_tvs if p.vds_max >= 24.0 and not p.dnp]
     lv = [p for p in drv_tvs if p.vds_max == 5.0]
     assert len(hv) == 5, "J301-J305 are 12 V and need >=24 V standoff"
     assert len(lv) == 1 and lv[0].mpn == "PESD5V0S4UD", \

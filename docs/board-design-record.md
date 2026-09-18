@@ -200,35 +200,27 @@ for headroom — it is a real option, not a default.
 📄 Checkable, not prose: [`../tools/gpio_budget.py`](../tools/gpio_budget.py), asserted by
 `tests/test_gpio_budget.py`. ⚠️ **If `SPARE` ever goes negative the design does not fit.**
 
-### 3.2 ⛔ The STACK spine is over-subscribed
+### 3.2 The STACK spine — sized to the netlist, not to the documented list
 
-BD-5 sized the DRV↔BRAIN connector at 2 × 20 with alternating grounds — **20 signal contacts**.
-Counting what must actually cross it:
+BD-5 sized it at 2 × 20 with alternating grounds: **20 signal contacts**. Counting what actually
+crosses — from `netlist.py`, not from a list — the demand was **23**, because the three telltale feeds
+carried pins on both boards and had no contact at all.
 
-```
- 8  lighting channel inputs (6 used + 2 spare)
- 3  DIAG_EN, SEL1, SEL2
- 2  CS1, CS2          (analog, want ground flanks)
- 2  FAULT1, FAULT2
- 3  horn, fan, buzzer gates
- 2  IN-05/06 brake sense
- 1  IN-15 12 V rail sense
- 1  BL
- 1  V3P3 -- R3L/R3R are 3.3 V pull-ups sitting on the 12 V board
- 3  telltale feeds HL_HIGH / TURN_L / TURN_R, which are 12 V lamp feeds on
-    DRV but land on BRAIN's display connector
----
-26  demanded against 20 available          ⛔ OVER BY 6
-```
+✅ **Owner decision 2026-09-18: move the display block to DRV**, putting the connector on the board
+whose 12 V the telltales already are.
 
-**Three ways out, none free:**
-- **Drop the alternating grounds** — recovers up to 19 contacts, but `CS1`/`CS2` lose the ground
-  flanking that keeps lamp-out sensing honest beside 2.6 A of switched lamp current.
-- **Go to 2 × 25.** Costs ~13 mm of board edge on both boards.
-- ⭐ **Move the display connector to DRV.** The three telltales are *already* 12 V lamp feeds on DRV
-  (§6.2.1 feeds them from the lamp feeds through 1 kΩ, not from driver channels), so they stop
-  crossing at all — and `DISP_ONELINE` and the CAN pair go with it. **Cheapest, and it puts the
-  connector on the board whose voltage it already matches.** ⏸️ Parked with D19 either way.
+⚠️ **Moving the connector alone makes it worse — 30 crossings → 36.** The telltale nets keep their
+BRAIN pins unless `R426`–`R429`, their series resistors, go with it. With the whole block moved it is
+**29**. The move is right on its own merits, but it **did not solve the spine**, and its cost is that
+`CANH`/`CANL` now cross instead, since the `SN65HVD230` stays on BRAIN.
+
+✅ **So STACK is 2 × 25** — 25 signal contacts for 23 signals, 2 spare, every signal still
+ground-flanked by construction (which `CS1`/`CS2` need beside 2.6 A of switched lamp current). Cost:
+~13 mm of board edge on two boards, out of 186 mm.
+
+⚠️ **`RUN`, `START` and `KEY_SENSE` are deliberately NOT on STACK.** They route on PWR-UP and
+HV-LINK, and must stay **copper end to end** (BD-7) — a buffer anywhere on that path puts firmware in
+the start and brake paths, which D23 and D24 exist to prevent.
 
 ---
 
