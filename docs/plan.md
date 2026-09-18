@@ -45,7 +45,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 
 | | Step | Why here |
 |---|---|---|
-| **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10 (DigiKey ×2 submitted; Mouser TDK pending); bar switch sets arriving 2026-09-11. Remaining lines are estimates — **`revv1-module-bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Board F is not in this order — it parks with D11 |
+| **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`revv1-module-bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Board F is not in this order — it parks with D11 |
 | **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ⏳ **right pod in transit — its lighting slider's `OFF/A/B` vs `OFF/A/A+B` pattern is what D21's decode needs** — procedure: **`revv1-inputs-bench-session.md`** | Gates **board C** and the firmware's input map. Needs the *bike*, not the parts — run it while orders ship. ⚠️ **M3** (unpowered lever-type check, `revv1-brake-circuit.md` §4) gates the brake circuit; its step 1 — levers → FarDriver `BL` — goes on as soon as M3 passes |
 | **3** | ⬜ **Firmware** — lighting lookup (§7), read-the-slider-at-boot, the **≤300 ms** watchdog, boost HOLD/TOGGLE, the **WiFi status page** | The WiFi page is the only readout for temps, bus current, boost mode and lamp-out |
 | **4** | ⬜ Breadboard → perfboard prototype (§9.6) → custom PCB (§9.8) | Needs 1–3 |
@@ -1495,10 +1495,9 @@ wetting-current rule · §6 outputs and drivers · §9.5 converters and support 
 §9.8 the custom PCB · §12 sourcing evidence. The brake circuit's parts are **group G**; their reasoning
 is `revv1-brake-circuit.md` §3.
 
-**Totals and order state (from the BOM header, 2026-09-11):** **$374.26 committed** (13 lines) ·
-**~$193.15 estimated** (19 lines) · **≈$568 all-in, ex-duty** — ⚠️ plus tariffs counted in no total:
-$31.97 on the Mouser line and $26.09 on DigiKey order 101547984. Orders placed 2026-09-10 (DigiKey ×2 submitted; Mouser TDK pending); bar
-switch sets arriving 2026-09-11. No unverified part lines remain (the TVS array `PESD5V0S4UD` and the Y2
+**Totals and order state live in the BOM, not here.** Its header carries the committed and estimated
+totals and the tariffs they exclude; its order history shows what has arrived and what is outstanding.
+No unverified part lines remain (the TVS array `PESD5V0S4UD` and the Y2
 cap `VY2472M49Y5US6` were verified from datasheets 2026-09-10). **The BOM header is authoritative.**
 
 - ⏸️ **Board F (display power switch) is not ordered** — it parks with D11 under D19.
