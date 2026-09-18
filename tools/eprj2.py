@@ -16,9 +16,11 @@ opens empty.
     python3 tools/eprj2.py roundtrip  FILE.eprj2
 
 The TEMPLATE is any `.eprj2` the installed editor saved.  The new file copies
-its schema, its db version and the account uuid, so the output always has the
-installed editor's schema; nothing of the editor's is stored here.  With no
---template, `find_template()` looks in the editor's own folders.
+its schema and db version, so the output always has the installed editor's
+schema; nothing of the editor's is stored here.  With no --template,
+`find_template()` looks in the editor's own folders.  The project belongs to
+the account signed in to this editor (`find_account()`), not to the template's
+owner: an example the editor converted keeps its original author.
 
 Self-contained on purpose (stdlib + `cryptography`), so it also runs as a
 script outside the repo.  Needs the `cryptography` package.
@@ -56,6 +58,9 @@ DOC_SUFFIXES = (".esch2", ".ecfg", ".epcb2", ".epan2", ".esym2", ".efoo2",
 #: converted them itself, so they are never this tool's own output.
 EDITOR_DIRS = ("Documents/EasyEDA-Pro/example-projects",
                "Documents/EasyEDA-Pro/projects")
+#: The editor's own database: its `users` table holds the built-in `LCSC` user
+#: and the account signed in to this editor.
+EDITOR_DB = "Documents/EasyEDA-Pro/database/web.db"
 
 
 def _aesgcm(key_hex):
@@ -174,9 +179,28 @@ def check_template(template):
         return [str(exc)]
 
 
-def write(template, out, stream, structure, name, *, seed=None, now=None):
+def find_account(home=None):
+    """The uuid of the account signed in to this editor, or None.
+
+    The editor's `web.db` lists the built-in `LCSC` user and the local account;
+    anything but exactly one other user is ambiguous, and gives None."""
+    path = Path(home or Path.home()) / EDITOR_DB
+    if not path.is_file():
+        return None
+    try:
+        db = _open_ro(path)
+        rows = db.execute("select uuid from users where username != 'LCSC'").fetchall()
+        db.close()
+    except sqlite3.DatabaseError:
+        return None
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def write(template, out, stream, structure, name, *, owner=None, seed=None,
+          now=None):
     """Write a new `.eprj2` at `out` holding `stream` as its one snapshot.
 
+    `owner` is the account the project belongs to; None takes the template's.
     Refuses a malformed stream, a bad template and an existing `out`.  Reads
     the written file back and fails unless it decodes to exactly `stream`.
     """
@@ -194,7 +218,8 @@ def write(template, out, stream, structure, name, *, seed=None, now=None):
                datetime.datetime.now(datetime.timezone.utc)
                .strftime("%Y-%m-%d %H:%M:%S"))
     tpl = _open_ro(template)
-    owner = tpl.execute("select owner_uuid from projects").fetchone()[0]
+    if owner is None:
+        owner = tpl.execute("select owner_uuid from projects").fetchone()[0]
     old_history = _history_table(tpl)
     new_history = "project_history_" + ids["main"]
     ddl = tpl.execute(
@@ -373,19 +398,22 @@ def find_template(home=None):
     return None
 
 
-def convert(folder, out, template, *, name=None, stamp_ms=None):
+def convert(folder, out, template, *, name=None, stamp_ms=None, owner=None):
     """Wrap the `.eprj3` project in `folder` as `out`, replacing an earlier
-    `out`.  Deterministic: the ids and key derive from the content, so the
-    same design gives the same file and a changed design a new project."""
-    tpl_owner = _open_ro(template).execute(
+    `out`.  The project belongs to `owner`, else this editor's signed-in
+    account, else the template's owner.  Deterministic: the ids and key derive
+    from the content, so the same design gives the same file and a changed
+    design a new project."""
+    owner = owner or find_account() or _open_ro(template).execute(
         "select owner_uuid from projects").fetchone()[0]
     stamp = 1788000000000 if stamp_ms is None else stamp_ms
-    stream, structure, found = from_eprj3(folder, tpl_owner, stamp)
+    stream, structure, found = from_eprj3(folder, owner, stamp)
     seed = hashlib.sha256(stream.encode("utf-8")).hexdigest()
     out = Path(out)
     if out.exists():
         out.unlink()
-    write(template, out, stream, structure, name or found, seed=seed)
+    write(template, out, stream, structure, name or found, owner=owner,
+          seed=seed)
     return out
 
 
@@ -444,7 +472,7 @@ def _cmd_from_eprj3(a):
 def _cmd_encode(a):
     write(_template(a), a.out, Path(a.stream).read_text(encoding="utf-8"),
           json.loads(Path(a.structure).read_text(encoding="utf-8")), a.name,
-          seed=a.seed)
+          owner=find_account(), seed=a.seed)
     print(f"wrote {a.out}")
 
 

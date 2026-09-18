@@ -209,8 +209,10 @@ def test_with_this_machines_editor_template_when_there_is_one(gauge_folder, tmp_
     if real is None:
         pytest.skip("no editor-saved .eprj2 on this machine")
     out = eprj2.convert(gauge_folder, tmp_path / "g.eprj2", real)
-    stream, _, _ = eprj2.from_eprj3(gauge_folder, eprj2.read(real)["owner"], 1788000000000)
-    assert eprj2.read(out)["text"] == stream
+    owner = eprj2.find_account() or eprj2.read(real)["owner"]
+    stream, _, _ = eprj2.from_eprj3(gauge_folder, owner, 1788000000000)
+    snap = eprj2.read(out)
+    assert snap["text"] == stream and snap["owner"] == owner
 
 
 # --- the build writes it ------------------------------------------------------------
@@ -230,3 +232,39 @@ def test_no_template_is_said_loudly_not_silently(tmp_path, monkeypatch):
     path, why = build_project.write_eprj2(tmp_path / "revv1-module", None)
     assert path is None and "no template" in why
     assert "NO .eprj2 WRITTEN" in build_project.eprj2_line(path, why)
+
+
+# --- whose project it is --------------------------------------------------------------
+def _web_db(home, users):
+    d = home / "Documents/EasyEDA-Pro/database"
+    d.mkdir(parents=True)
+    db = sqlite3.connect(d / "web.db")
+    db.execute('CREATE TABLE "users" ("uuid" varchar PRIMARY KEY NOT NULL, '
+               '"username" varchar NOT NULL, "nickname" varchar NOT NULL)')
+    db.executemany("insert into users values (?,?,?)", users)
+    db.commit()
+    db.close()
+
+
+def test_the_owner_is_the_editors_signed_in_account_not_the_templates(template, tmp_path):
+    """An example project the editor converted keeps its original author as
+    owner.  A project written from it must belong to whoever uses this editor."""
+    home = tmp_path / "home"
+    me = "f4c6f02f03e4435fb20223c287a18db1"
+    _web_db(home, [("0819f05c4eef4c71ace90d822a990e87", "LCSC", "LCSC"), (me, "me", "me")])
+    assert eprj2.find_account(home) == me
+    out = tmp_path / "a.eprj2"
+    eprj2.write(template, out, STREAM, {}, "A", owner=me)
+    db = sqlite3.connect(out)
+    assert db.execute("select owner_uuid, creator_uuid, modifier_uuid from projects").fetchone() == (me, me, me)
+    assert db.execute("select user_uuid from project_members").fetchone()[0] == me
+
+
+def test_no_account_or_an_ambiguous_one_falls_back_to_the_template(template, tmp_path):
+    assert eprj2.find_account(tmp_path / "nobody") is None
+    home = tmp_path / "two"
+    _web_db(home, [("a" * 32, "one", "one"), ("b" * 32, "two", "two")])
+    assert eprj2.find_account(home) is None
+    out = tmp_path / "a.eprj2"
+    eprj2.write(template, out, STREAM, {}, "A")
+    assert eprj2.read(out)["owner"] == OWNER
