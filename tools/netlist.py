@@ -333,9 +333,13 @@ _CONV_PARTS = (
          source=f"DC-DC #2's input fuse (Cincon: 1 A time-delay). ⛔ Order by "
                 f"part number: FST and SP have NO DC rating. {_DS_SPT} p.2: "
                 f"ø 5.2 × 20 mm; 8.0 mm assumes a ≤2.8 mm clip seat. BOM E11"),
-    _r("R211", "CONV", "0R",
-       "Single-point tie BASEPLATE → GND, so a shorted Y2 blows the KLKD002 "
-       "instead of floating a plate at 84 V", pkg="1206"),
+    Part("R211", "NET-TIE", "copper net-tie, ≥2 mm wide", "CONV", "R", ("1", "2"),
+         0.04, footprint_mm=(4.0, 2.0), value="0R",
+         source="Single-point tie BASEPLATE → GND, so a shorted Y2 blows the "
+                "KLKD002 instead of floating a plate at 84 V. COPPER, not a "
+                "chip jumper: the prospective current is ~200 A, and a 1206 "
+                "0 Ω would race the 2 A fuse and could open first -- leaving "
+                "the plate floating at 84 V, the exact fault this tie prevents"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -402,13 +406,30 @@ _DRV_PARTS = (
        f"15 mA fault current in range"),
     _r("R322", "DRV", "1k00 1%", f"U302 CS → GND, the sense resistor, as R321"),
     _r("R323", "DRV", "10k",
-       f"Series from U301's CS node to CS1. In any fault the pin pulls up to "
-       f"V_CS(H) 4.5-6.5 V; 10 kΩ holds the ADC pin's clamp current to "
-       f"~0.3 mA. {_DS_TPS} p.29: 'TI recommends R(ser) = 10 kΩ'"),
-    _r("R324", "DRV", "10k", "Series from U302's CS node to CS2, as R323"),
+       f"Series from U301's CS node to CS1 -- the TOP of a 10 k / 10 k divider "
+       f"with R339. In any fault the CS pin pulls up to V_CS(H) 4.5-6.5 V "
+       f"({_DS_TPS} p.29); TI's 10 kΩ series advice is written for a 5 V MCU, "
+       f"and alone it leaves ~3.8 V on a 3.3 V pin. Halved, a fault reads "
+       f"2.25-3.25 V: above every real load, below VDD"),
+    _r("R324", "DRV", "10k", "Series from U302's CS node to CS2, as R323 (with R340)"),
+    _r("R343", "DRV", "100k",
+       "ACC+ sense divider, top. The run/off kill's pull-up (R314) is fed from "
+       "the throttle's ACC+; if that wire never arrives the kill cannot cut "
+       "the motor and NOTHING shows it. This divider lets firmware see ACC+: "
+       "5.1 V × 180/280 = 3.28 V at the expander pin (V_IH 2.64 V)"),
+    _r("R344", "DRV", "180k", "ACC+ sense divider, bottom (with R343)"),
+    _r("R341", "DRV", "1k",
+       "IN-05 series resistor, between the D23 sense node and the wire to the "
+       "MCU (plan §4 class A). Without it a negative surge on the lever wire "
+       "runs D313 → D305 → straight into the S3's input clamp"),
+    _r("R342", "DRV", "1k", "IN-06 series resistor, as R341"),
+    _r("R339", "DRV", "10k",
+       "CS1 to GND on the ADC side of R323: the bottom of the divider. Scale is "
+       "1.67 V/A at the pin (0.71 A reads 1.19 V; the 0.05 A tail lamp 83 mV)"),
+    _r("R340", "DRV", "10k", "CS2 to GND on the ADC side of R324, as R339"),
     _c("C301", "DRV", "100nF", 50.0,
        f"CS1 to GND on the ADC side of R323. {_DS_HDG} p.21: 0.1 µF at an ADC "
-       f"input. τ = 1 ms: firmware waits ≥5 ms after moving SEH/SEL"),
+       f"input. With the 10 k / 10 k divider τ ≈ 0.55 ms: firmware waits ≥3 ms after moving SEH/SEL"),
     _c("C302", "DRV", "100nF", 50.0, "CS2 to GND on the ADC side of R324"),
     _c("C303", "DRV", "100nF", 50.0, "U301 VS decoupling, at the pins"),
     _c("C304", "DRV", "10uF", 25.0, "U301 VS bulk decoupling", pkg="1206"),
@@ -489,7 +510,10 @@ _DRV_PARTS = (
     _r("R314", "DRV", "10k",
        f"'R4': pulls the RUN node up FROM ACC+ (the throttle's 5.1 V, in on "
        f"J309). On DRV so an open pod, STACK or BRAIN contact leaves the node "
-       f"pulled up = OFF = motor cut: it fails SAFE. {_BRK} §2.1, BOM G3"),
+       f"pulled up = OFF = motor cut: those opens fail SAFE. ⚠️ An open ACC+ "
+       f"does NOT: with no pull-up the node never rises and the kill goes dead "
+       f"silently -- which is what ACC_SENSE (R343/R344) exists to report. "
+       f"{_BRK} §2.1, BOM G3"),
     _r("R315", "DRV", "100R", f"'R5': Q2 gate series. {_BRK} §2.1, BOM G6"),
     _r("R316", "DRV", "100k",
        f"'R6': Q2 gate to GND, the D14 bias-OFF. {_BRK} §2.1, BOM G6"),
@@ -600,13 +624,14 @@ _BRAIN_PARTS = (
          value="I²C address 0x20 (A2..A0 = 000)",
          source=f"Expander #1: every bar input. {_MCP_SOURCE}"),
     Part("U403", "MCP23017-E/SP", "SPDIP-28", "BRAIN", "IC",
-         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET"),
+         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0"),
          5.08, height_confirmed=True, footprint_mm=(35.56, 10.92),
-         nc=("GPA0", "GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6", "GPA7",
+         nc=("GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6", "GPA7",
              "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5", "GPB6", "GPB7",
              "INTA", "INTB", "NC11", "NC14"),
          value="I²C address 0x21 (A2..A0 = 001)",
-         source=f"Expander #2: all 16 bits spare. {_MCP_SOURCE}"),
+         source=f"Expander #2: GPA0 senses ACC+; the other 13 input-capable "
+                f"bits are spare. {_MCP_SOURCE}"),
     Part("U404", "SN65HVD230DR", "SOIC-8", "BRAIN", "IC",
          ("D", "GND", "VCC", "R", "CANL", "CANH", "RS"), 1.75,
          height_confirmed=True, footprint_mm=(5.0, 6.2), nc=("Vref",),
@@ -725,6 +750,10 @@ _BRAIN_PARTS = (
     _c("C418", "BRAIN", "100nF", 50.0, "U402 VDD decoupling"),
     _c("C419", "BRAIN", "100nF", 50.0, "U403 VDD decoupling"),
     _c("C420", "BRAIN", "100nF", 50.0, "U404 VCC decoupling"),
+    _c("C421", "BRAIN", "100nF", 50.0,
+       "IN-05 to GND at the MCU pin (plan §4 class A). With R341: τ = 100 µs, "
+       "well inside the <10 ms the boost safety-release wants"),
+    _c("C422", "BRAIN", "100nF", 50.0, "IN-06 to GND at the MCU pin, as C421"),
 )
 
 _PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
@@ -749,6 +778,7 @@ _STACK_SIGNALS = (
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2",
     "HORN_CMD", "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "BL_SENSE",
     "IN05_BRAKE_L", "IN06_BRAKE_R", "CANH", "CANL", "V3P3", "RUN",
+    "ACC_SENSE",
 )
 
 
@@ -848,7 +878,7 @@ _NETS_RAILS = (
         # DRV
         + _p("U301.GND U301.PAD U301.THER U301.IN1 U302.GND U302.PAD U302.THER "
              "U302.IN4 R319.2 R320.2 R321.2 R322.2 R325.2 R326.2 "
-             "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 "
+             "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 R344.2 "
              "Q301.S Q302.S Q303.S R307.2 R308.2 R309.2 D315.A "
              "Q305.S R316.2 "
              "J301.1 J302.1 J303.2 J303.4 J306.2 J306.4 J309.3 J310.2 J405.3 "
@@ -867,7 +897,7 @@ _NETS_RAILS = (
              "U404.GND R442.2 C420.2 U405.GND U405.PAD C415.2 C416.2 C417.2 "
              "Q401.S R425.2 R431.2 R440.2 R441.2 R445.2 "
              "C401.2 C402.2 C403.2 C404.2 C405.2 C406.2 C407.2 C408.2 C409.2 "
-             "C410.2 C411.2 "
+             "C410.2 C411.2 C421.2 C422.2 "
              "D401.A2 D401.A5 D402.A2 D402.A5 D402.K6 D403.A2 D403.A5 "
              "D404.A2 D404.A5 D404.K4 D404.K6 "
              "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.2 "
@@ -962,8 +992,10 @@ _NETS_12V = (
 # ════════════════════════════════════════════════════════════════════════════
 # NETS — D23, the brake and kill hardware. Complete on DRV: BRAIN only listens.
 # ⚠️ brake-circuit.md §2's '|◄' = CATHODE ON THE LEVER-NODE SIDE.
-# ⭐ RUN fails safe: an open bar wire, pod, STACK contact or BRAIN leaves the
-# node pulled up by R314 on DRV, which reads as OFF and stops drive.
+# ⭐ An open bar wire, pod, STACK contact or BRAIN leaves the RUN node pulled up
+# by R314 on DRV, which reads as OFF and stops drive. ⚠️ The exception is ACC+
+# itself: open, there is nothing to pull the node up with, and the kill is dead
+# without a sign -- ACC_SENSE reports it to firmware; the levers still cut.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_BRAKE = (
     Net("LEVER_L", _p("J306.1 D301.K D303.K D305.K D313.K1"), domain="12V",
@@ -984,7 +1016,12 @@ _NETS_BRAKE = (
     Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
         domain="3V3", interface="STACK",
         source="The 100 kΩ-isolated copy of BL that firmware reads"),
-    Net("ACC_PLUS", _p("J309.2 R314.1 D316.K3"), domain="5V",
+    Net("ACC_SENSE", _p("R343.2 R344.1") + _stack("ACC_SENSE") + _p("U403.GPA0"),
+        domain="3V3", interface="STACK",
+        source="ACC+ divided to 3.28 V for expander #2. LOW with the key on "
+               "means the run/off kill has no pull-up and cannot cut the "
+               "motor -- firmware must raise it; hardware cannot know"),
+    Net("ACC_PLUS", _p("J309.2 R314.1 R343.1 D316.K3"), domain="5V",
         source=f"The throttle's 5.1 V supply, in from the FarDriver harness. "
                f"It feeds R314 alone, so the kill works with the module's own "
                f"rails dead ({_BRK} §2.1)"),
@@ -996,13 +1033,18 @@ _NETS_BRAKE = (
                f"for IN-11. 4.52 V when open ({_BRK} §2.1)"),
     Net("Q2_GATE", _p("R315.2 Q305.G R316.1"), domain="5V",
         source="The run/off kill inverter's gate; R316 biases it OFF"),
+    Net("IN05_NODE", _p("D305.A R317.1 R341.1"), domain="3V3",
+        source="The D23 sense node for the left lever: D3L's anode and its "
+               "10 kΩ pull-up (R3L), ahead of the class-A series resistor"),
+    Net("IN06_NODE", _p("D306.A R318.1 R342.1"), domain="3V3",
+        source="As IN05_NODE, for the right lever"),
     Net("IN05_BRAKE_L",
-        _p("D305.A R317.1") + _stack("IN05_BRAKE_L") + _p("U401.IO15"),
+        _p("R341.2") + _stack("IN05_BRAKE_L") + _p("U401.IO15 C421.1"),
         domain="3V3", interface="STACK", gpio="GPIO15",
         source="Stays NATIVE: the boost safety-release wants it in <10 ms "
                "(plan §3.1.1). The lever wire's TVS is D313 at J306"),
     Net("IN06_BRAKE_R",
-        _p("D306.A R318.1") + _stack("IN06_BRAKE_R") + _p("U401.IO16"),
+        _p("R342.2") + _stack("IN06_BRAKE_R") + _p("U401.IO16 C422.1"),
         domain="3V3", interface="STACK", gpio="GPIO16",
         source="As IN05_BRAKE_L, for the right lever"),
     Net("IN11_SENSE", _p("R430.2 R431.1 U402.GPB2"), domain="3V3",
@@ -1063,11 +1105,11 @@ _NETS_STACK = (
         source="CS channel-select HIGH bit (TI's SEH, pad 7), bussed"),
     Net("SEH_IN", _p("R335.2 U301.SEH U302.SEH"), domain="3V3",
         source="Device side of R335"),
-    Net("CS1", _p("R323.2 C301.1") + _stack("CS1") + _p("U401.IO4"),
+    Net("CS1", _p("R323.2 R339.1 C301.1") + _stack("CS1") + _p("U401.IO4"),
         domain="3V3", interface="STACK", gpio="GPIO4",
         source="U301's current sense behind R323. ⚠️ ADC1 ONLY (ADC2 dies with "
                "WiFi), and it faces a ground contact across STACK"),
-    Net("CS2", _p("R324.2 C302.1") + _stack("CS2") + _p("U401.IO5"),
+    Net("CS2", _p("R324.2 R340.1 C302.1") + _stack("CS2") + _p("U401.IO5"),
         domain="3V3", interface="STACK", gpio="GPIO5",
         source="U302's current sense behind R324. ⚠️ ADC1 only"),
     Net("FAULT1", _p("U301.FAULT") + _stack("FAULT1") + _p("R432.1 U401.IO11"),

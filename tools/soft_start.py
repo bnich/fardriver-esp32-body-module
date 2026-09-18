@@ -255,12 +255,75 @@ def static_v_sg(v_pack: float, c: Circuit = SPEC) -> float:
     return min(c.v_zener, v_pack * c.r_gs / (c.r_gs + c.r_pd))
 
 
-def enable_delay_s(v_pack: float) -> float:
+#: (top ohms, bottom ohms, farads) of the divider on the level shifter's gate.
+SPEC_ENABLE = (R_EN_TOP, R_EN_BOTTOM, C_EN)
+
+
+def enable_from(d, switch: str = "Q101", key_net: str = "KSW"):
+    """The level shifter's gate divider as netlisted: (top, bottom, cap).
+
+    Follows the copper from the grounded N-FET under `switch`'s pull-down: the
+    resistor(s) from its gate to GND are the bottom, the series chain from its
+    gate to the key wire is the top, the capacitor(s) from its gate to GND the
+    filter. Raises if the shifter's gate has no divider -- a gate nobody drives.
+    """
+    parts = {p.refdes: p for p in d.parts if not p.dnp and len(p.pins) == 2}
+    shifter = None
+    for p in d.parts:
+        if p.kind == "NFET" and not p.dnp:
+            low, dr = d.net_of(p.refdes, "S"), d.net_of(p.refdes, "D")
+            if low is not None and low.domain == "GND" and dr is not None \
+                    and d.net_of(switch, "G") is not None:
+                shifter = p
+                break
+    if shifter is None:
+        raise ValueError("no grounded N-FET level shifter found")
+    gate = d.net_of(shifter.refdes, "G")
+    if gate is None:
+        raise ValueError(f"{shifter.refdes} has no gate net")
+
+    def far(ref, near):
+        nets = [n for n in d.nets_of(ref) if n.name != near.name]
+        return nets[0] if len(nets) == 1 else None
+
+    bottom = [parts[r] for r, _ in gate.pins if r in parts and parts[r].kind == "R"
+              and (far(r, gate) is not None and far(r, gate).domain == "GND")]
+    caps = [parts[r] for r, _ in gate.pins if r in parts and parts[r].kind == "C"
+            and (far(r, gate) is not None and far(r, gate).domain == "GND")]
+
+    def chain(net, seen):
+        if net.name == key_net:
+            return 0.0
+        for r, _ in net.pins:
+            if r in parts and parts[r].kind == "R" and r not in seen:
+                nxt = far(r, net)
+                if nxt is None or nxt.domain == "GND":
+                    continue
+                rest = chain(nxt, seen | {r})
+                if rest is not None:
+                    return _value(parts[r]) + rest
+        return None
+
+    top = chain(gate, frozenset())
+    if not bottom or top is None:
+        raise ValueError(f"{shifter.refdes}: its gate has no divider from "
+                         f"{key_net} -- nothing drives the level shifter")
+    return (top, 1.0 / sum(1.0 / _value(p) for p in bottom),
+            sum(_value(p) for p in caps))
+
+
+def enable_level_v(v_pack: float, en=SPEC_ENABLE) -> float:
+    top, bottom, _c = en
+    return min(V_EN_CLAMP, v_pack * bottom / (top + bottom))
+
+
+def enable_delay_s(v_pack: float, en=SPEC_ENABLE) -> float:
     """Key on -> Q105 conducting: D13_EN's RC up to the BSS127's worst threshold."""
-    v_final = min(V_EN_CLAMP, v_pack * R_EN_BOTTOM / (R_EN_TOP + R_EN_BOTTOM))
+    top, bottom, c_en = en
+    v_final = enable_level_v(v_pack, en)
     if v_final <= Q105_VTH_MAX:
         return math.inf
-    tau = (R_EN_TOP * R_EN_BOTTOM / (R_EN_TOP + R_EN_BOTTOM)) * C_EN
+    tau = (top * bottom / (top + bottom)) * c_en
     return -tau * math.log(1.0 - Q105_VTH_MAX / v_final)
 
 
@@ -480,9 +543,21 @@ def solve_r_pd(target_ramp_s: float, v_pack: float = V_PACK_FULL,
     return r_pd
 
 
-def assess(c: Circuit = SPEC) -> list[str]:
-    """Every way `c` fails. Empty means PASS."""
+#: The converters run down to 43 V. The level shifter must still be hard on
+#: there, or the module browns out before the pack reaches its cutoff.
+V_CONVERTER_MIN = 43.0
+
+
+def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
+    """Every way `c` (and the level shifter's gate divider `en`) fails."""
     fails = []
+    for v in (V_CONVERTER_MIN, V_LVC):
+        level = enable_level_v(v, en)
+        if level <= Q105_VTH_MAX:
+            fails.append(
+                f"level shifter: D13_EN is only {level:.2f} V at a {v:.0f} V pack, "
+                f"not above the BSS127's {Q105_VTH_MAX} V worst-case threshold -- "
+                f"Q105 may not turn on, so Q101 never does")
     for v in (V_PACK_FULL, V_LVC):
         for name, fet in (("fast", FAST), ("nominal", NOMINAL), ("slow", SLOW)):
             r = simulate_key_on(v, c, fet)
@@ -495,9 +570,12 @@ def assess(c: Circuit = SPEC) -> list[str]:
                     f"{tag}: over the SOA target -- {r.p_peak_w:.0f} W peak as a "
                     f"{r.pulse_s*1e3:.1f} ms pulse, {r.soa_limit_w:.0f} W allowed "
                     f"(x{SOA_DERATE} derate)")
-            if r.v_sg_on >= VGS_ABS_MAX:
-                fails.append(f"{tag}: settled V_GS {r.v_sg_on:.1f} V is at the "
-                             f"{VGS_ABS_MAX:.0f} V gate rating")
+            # (the settled V_GS is already clamped by the zener, so comparing IT
+            # with the rating could never fire -- the clamp itself is checked
+            # once, below)
+    if c.v_zener >= VGS_ABS_MAX:
+        fails.append(f"D102 clamps at {c.v_zener:.0f} V, which is not inside the "
+                     f"{VGS_ABS_MAX:.0f} V gate rating it exists to protect")
     nominal = simulate_key_on(V_PACK_FULL, c, NOMINAL)
     if nominal.turns_on and not RAMP_TARGET_S[0] <= nominal.ramp_s <= RAMP_TARGET_S[1]:
         fails.append(
@@ -519,24 +597,39 @@ def _netlisted() -> tuple[Circuit | None, str]:
         sys.path.insert(0, root)
     try:
         from tools import netlist
-        return circuit_from(netlist.current()), ""
-    except Exception as exc:              # any failure: say so and use SPEC
+        d = netlist.current()
+        return (circuit_from(d), enable_from(d)), ""
+    except Exception as exc:              # any failure is reported, never hidden
         return None, f"{type(exc).__name__}: {exc}"
 
 
 def main(argv=None, c: Circuit | None = None) -> int:
     print("D13 SOFT START -- Q101 IXTP26P20P into "
           f"{C_LOAD*1e6:.0f} µF + {I_LOAD_MAX} A (constant power above {V_LVC:.0f} V)")
+    en = SPEC_ENABLE
     if c is None:
-        c, why_not = _netlisted()
-        if c is None:
+        if argv and "--spec" in argv:
             c = SPEC
-            print(f"  ⚠️ circuit: the SPECIFIED values -- the netlist could not be read "
-                  f"({why_not})")
+            print("  circuit: the SPECIFIED values (--spec). This says nothing about "
+                  "the netlist.")
         else:
+            read, why_not = _netlisted()
+            if read is None:
+                # A tool that cannot read the design must not report on it. Falling
+                # back to the specified values here once printed PASS for a netlist
+                # whose gate-source resistor had been deleted.
+                print(f"⛔ FAIL -- the D13 gate network could not be read off the "
+                      f"netlist: {why_not}\n   (use --spec to simulate the specified "
+                      f"values instead)")
+                return 1
+            c, en = read
             print("  circuit: read off tools/netlist.py")
             for diff in differences(c, SPEC):
                 print(f"  ⚠️ netlist vs specified -- {diff}")
+            print(f"  level shifter gate: {en[0]/1e3:.0f} k over {en[1]/1e3:.0f} k, "
+                  f"{en[2]*1e9:.0f} nF -> {enable_level_v(V_PACK_FULL, en):.1f} V at "
+                  f"{V_PACK_FULL:.0f} V, {enable_level_v(V_CONVERTER_MIN, en):.1f} V at "
+                  f"{V_CONVERTER_MIN:.0f} V (BSS127 V_th ≤ {Q105_VTH_MAX} V)")
     r_pd = "ABSENT" if c.r_pd is None else f"{c.r_pd/1e3:.0f} k"
     print(f"  R110 {c.r_gs/1e3:.0f} k   R101 {r_pd}   C105 {c.c_gd*1e9:.0f} nF"
           f"   C107 {c.c_gs*1e6:.1f} µF   D102 {c.v_zener:.0f} V\n")
@@ -585,7 +678,7 @@ def main(argv=None, c: Circuit | None = None) -> int:
         print(f"  {ms} ms -> {solve_r_pd(ms/1e3, c=c)/1e3:5.0f} k")
     print()
 
-    fails = assess(c)
+    fails = assess(c, en)
     if fails:
         print("⛔ FAIL")
         for f in fails:

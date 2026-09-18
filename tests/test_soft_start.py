@@ -318,3 +318,30 @@ def test_adding_c107_alone_does_not_rescue_the_100k_pull_down():
     fails = ss.assess(replace(WRONG_100K, c_gs=4.7e-6))
     assert ss.simulate_key_on(84.0, replace(WRONG_100K, c_gs=4.7e-6)).ramp_s < 0.015
     assert any("ms target" in f for f in fails)
+
+
+# --- the tool must never report on a design it could not read -------------------
+def test_main_fails_when_the_netlist_cannot_be_read(monkeypatch, capsys):
+    monkeypatch.setattr(ss, "_netlisted", lambda: (None, "ValueError: gate not biased"))
+    assert ss.main([]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "PASS" not in out
+
+
+def test_the_level_shifter_divider_is_read_off_the_netlist():
+    from tools import netlist
+    top, bottom, cap = ss.enable_from(netlist.current())
+    assert top == pytest.approx(998e3) and bottom == pytest.approx(100e3)
+    assert cap == pytest.approx(100e-9)
+
+
+def test_a_weak_level_shifter_divider_fails():
+    # bottom resistor 10 k instead of 100 k: 0.43 V at 43 V -- Q105 never turns on
+    fails = ss.assess(ss.SPEC, en=(998e3, 10e3, 100e-9))
+    assert any("level shifter" in f for f in fails)
+    assert not any("level shifter" in f for f in ss.assess(ss.SPEC))
+
+
+def test_a_zener_at_the_gate_rating_fails():
+    from dataclasses import replace as _replace
+    assert any("D102" in f for f in ss.assess(_replace(ss.SPEC, v_zener=20.0)))

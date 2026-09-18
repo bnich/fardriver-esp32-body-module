@@ -6,7 +6,7 @@ footprint, height, whether that height was ever confirmed -- come from
 `board_params`, which also DERIVES the stack height. This file only adds the
 area arithmetic and says PASS or FAIL.
 
-    python3 -m tools.board_fit          # exit 1 when a budget fails
+    python3 -m tools.board_fit          # exit 1: a budget fails · 2: over the ESTIMATED envelope
     python3 tools/board-fit.py          # the same
 
 Three budgets, three plain answers:
@@ -216,14 +216,20 @@ def report(d: Design) -> str:
     out.append("")
     for verdict in stack.envelope_verdicts:
         out.append(f"⚠️  PROVISIONAL -- {verdict}")
+        if stack.total_mm > bp.CAVITY_H:
+            out.append(
+                f"    ⛔ {stack.total_mm:.1f} mm exceeds even the RAW cavity estimate "
+                f"({bp.CAVITY_H:.0f} mm) -- no choice of enclosure can absorb it. "
+                f"Only a taller measured cavity (M18) or a shorter stack can.")
     if errs:
         out.append(f"⛔ FAIL -- {len(errs)} problem(s)")
         out += [f"  - {e}" for e in errs]
+    elif stack.envelope_verdicts:
+        out.append("⚠️  NOT A PASS -- the stack overruns the ESTIMATED envelope. It is "
+                   "not a failure only because the envelope is not yet a fact.")
     else:
-        out.append("✅ PASS" + (" -- PROVISIONAL: see the first line"
-                                + (f", and {len(stack.load_bearing)} unconfirmed "
-                                   f"height(s) set gaps" if stack.load_bearing else "")
-                                if stack.provisional else ""))
+        out.append("✅ PASS" + (f" -- provisional: {len(stack.load_bearing)} unconfirmed "
+                                f"height(s) set gaps" if stack.load_bearing else ""))
     return "\n".join(out)
 
 
@@ -232,7 +238,10 @@ def main(argv=None, d: Design | None = None) -> int:
         from . import netlist
         d = netlist.current()
     print(report(d))
-    return 1 if problems(d) else 0
+    if problems(d):
+        return 1
+    # 2 = over the ESTIMATED envelope: not a failure yet, and never a pass.
+    return 2 if bp.stack_height(d).envelope_verdicts else 0
 
 
 if __name__ == "__main__":

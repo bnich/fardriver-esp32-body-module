@@ -595,9 +595,17 @@ def test_the_run_node_reads_as_a_valid_high_everywhere_it_is_read(w):
 
 
 def test_brake_inputs_are_pulled_up_on_drv_from_a_3v3_that_really_arrives(d, w):
-    for net in ("IN05_BRAKE_L", "IN06_BRAKE_R"):
-        pull = w.between(net, "V3P3", {"R"})
+    # The pull-up sits on the D23 sense node, AHEAD of the class-A series
+    # resistor -- so the lever, its diode and its pull-up are all on DRV, and
+    # only the conditioned signal crosses to the MCU.
+    for node, wire in (("IN05_NODE", "IN05_BRAKE_L"), ("IN06_NODE", "IN06_BRAKE_R")):
+        pull = w.between(node, "V3P3", {"R"})
         assert pull and pull[0].board == "DRV"
+        series = w.between(node, wire, {"R"})
+        assert series and series[0].board == "DRV", f"{wire} has no series resistor"
+        assert series[0].value == "1k"
+        assert any(p.kind == "C" and p.board == "BRAIN" for p in w.parts_on(wire, {"C"})), \
+            f"{wire} has no capacitor at the MCU pin (plan §4 class A)"
     on_drv = [c for c in w.connectors_on("V3P3") if c.board == "DRV" and c.interface]
     assert on_drv, "V3P3 has no contact onto DRV"
 
@@ -688,6 +696,9 @@ STACK_CONTRACT = {
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2", "HORN_CMD",
     "FAN_CMD", "BUZZ_CMD", "IN05_BRAKE_L", "IN06_BRAKE_R", "V12_SENSE", "RUN",
     "CANH", "CANL", "V3P3", "BL_SENSE",
+    # ACC+ divided down for firmware: without it, a missing ACC+ wire leaves the
+    # run/off kill dead and nothing shows it
+    "ACC_SENSE",
 }
 
 

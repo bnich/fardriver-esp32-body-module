@@ -376,7 +376,7 @@ input on them, and have firmware set `IODIR` bit 7 to output on both ports. That
 expander offers 14 inputs.
 **Expander #2 — outputs (8 of 16):** TPS4H160B #1 `IN3`/`IN4` and #2 `IN1`–`IN4` for headlight HIGH,
 DRL, tail running, turn L, turn R (5 channels + 1 spare) · `DIAG_EN` · `SEL` · `SEH`.
-TPS4H160B #1 `IN1` is unconnected — its internal pulldown holds it OFF. **Six of the eight channels
+TPS4H160B #1 `IN1` is tied to ground on the custom board (on the prototype it is left to its internal pulldown). **Six of the eight channels
 are used; two are spare.**
 *(Two devices, same bus, different addresses — 2 GPIO total.)*
 
@@ -759,7 +759,9 @@ part** — a dash that can be power-cycled from the module is worth having which
   through the brake circuit's steering diodes): GPIO input, pull-up to
   3.3V, 1k series into the pin, 100 nF to ground at the pin, a TVS/ESD array on any wire that leaves
   the box — `PESD5V0S4UD` (BOM C2) on these ≤3.3 V lines; the brake-lever nodes idle near 11.4 V and
-  take the 15 V array instead (§6.2.4). Firmware debounce 20 ms (≤10 ms for flash-to-pass, §7).
+  take the 15 V array instead (§6.2.4). The two native brake inputs carry the same network split across
+  the stack: the pull-up and the 1 k series resistor on DRV, the 100 nF at the MCU pin on BRAIN
+  (τ = 100 µs, well inside their <10 ms budget). Firmware debounce 20 ms (≤10 ms for flash-to-pass, §7).
   ⚠️ **Wetting current sets the pull-up.** 4.7 kΩ to 3.3 V puts only **0.70 mA** through the contacts —
   fine for gold-plated domes, marginal for a cheap automotive switch: tin and silver contacts commonly
   specify a **1–10 mA minimum**, below which oxide and sulfide films make contact resistance erratic,
@@ -772,7 +774,8 @@ part** — a dash that can be power-cycled from the module is worth having which
   ~1.2 mA through the lever contact, and 10 kΩ keeps the low level, seen through a 1N4148, near
   0.55 V — inside the S3's input-low limit of 0.25 × VDD ≈ 0.8 V (`brake-circuit.md` §3).
 - **Class B — 12V or 72V level sense:** resistor divider to < 3.3V (72V: 330k / 10k, the top resistor
-  as a series pair of 2 × 165 k for voltage rating), 3.3V clamp, 100 nF.
+  as a series pair of 2 × 165 k for voltage rating) and 100 nF. No separate clamp: the 330 k top
+  resistor holds the injected current to microamps even at the input TVS's 146 V clamp level.
 - **Class D — analog:** ADC pin with divider and 100 nF; average in firmware.
 - **Class E — FarDriver serial:** direct 3.3V, 1k series on the module's TX, TX pin tri-stated (input
   mode) whenever the module isn't sending; both RX lines are listen-only taps.
@@ -969,16 +972,20 @@ Quad-channel, 160 mΩ, 4–40 V, **2.5 A nominal per channel**, AEC-Q100 Grade 1
   D15's fault containment is gone.
 - **`CS` is a current SOURCE (I<sub>OUT</sub> / 300), not a voltage:** **1.00 kΩ 1 %** to ground turns
   it into 3.33 V/A (0.71 A reads 2.37 V). In any fault — an unplugged lamp included — the pin drives
-  **4.5–6.5 V**, so **10 kΩ in series** and 100 nF at the ADC side stand between it and the S3's 3.3 V
-  pin.
+  **4.5–6.5 V**, so it reaches the S3 only through a **10 kΩ / 10 kΩ divider** with 100 nF at the
+  ADC side: a fault reads 2.25–3.25 V — above any real load, below VDD — and the working scale at the
+  pin is **1.67 V/A** (0.71 A reads 1.19 V). ⚠️ TI's "10 kΩ series" advice is written for a 5 V MCU;
+  on its own it leaves ~3.8 V on a 3.3 V pin.
 - **TI's pin names are `VS` (supply), `SEL` and `SEH` (sense-channel select, low and high bit)** — not
-  VBAT / SEL1 / SEL2. Decouple each `VS` with 100 nF + 10 µF / 25 V. `THER` left open selects
-  auto-retry after a thermal shutdown.
+  VBAT / SEL1 / SEL2. Decouple each `VS` with 100 nF + 10 µF / 25 V. `THER` tied to ground selects auto-retry
+  after a thermal shutdown. Unused `INx` tie to ground, and each unused `OUTx` takes 10 kΩ to ground so
+  an idle channel is not reported as an open load on the shared `FAULT` line.
 
 ⚠️ **Diagnostics cost firmware.**
 - **OFF-state open-load needs an external 20 kΩ pullup from each `OUTx` to `VS` — 6 resistors.**
 - **ON-state open-load is not reported on `FAULT`/`STx`.** The MCU must multiplex `SEL`/`SEH` and
-  **ADC the current-sense pin** (~50 µs settling per channel), and only **Version B** can do it.
+  **ADC the current-sense pin**, and only **Version B** can do it. ⚠️ The divider and its 100 nF
+  settle in τ ≈ 0.55 ms — firmware waits **≥ 3 ms** after moving `SEL`/`SEH`, not TI's 50 µs.
 - `STx` / `FAULT` are open-drain and need their own 3.3 V pullups.
 - ⚠️ The HTSSOP thermal pad must reach real copper or the current limiting and thermal shutdown will not
   behave as specified (BOM D1).
@@ -992,8 +999,7 @@ rises to V<sub>IH</sub> + V<sub>F</sub> ≈ **2.7 V**, while an ESP32-S3 guarant
 under load. Omitting it is defensible because these switches sit on a regulated DC-DC output, not a
 reversible battery.
 
-💡 **Two channels are spare** — their `INx` pins stay unconnected and the internal pulldown holds
-them OFF. One could drive the §3.3 display switch on a 12 V feed.
+💡 **Two channels are spare** — their `INx` pins tie to ground. One could drive the §3.3 display switch on a 12 V feed.
 
 **Not Infineon `BTS7008-2EPA`** — the only candidate that detects open load in the ON state (8/21/35 mA
 thresholds), but it has **no internal input pulldown** (an external 10 kΩ per channel) and **no lamp-scale
@@ -1376,6 +1382,12 @@ in the design yet carries PWR-UP down from DRV to CONV across the 18.2 mm gap.
 own connectors, and the real `BL` never crosses to BRAIN. The run/off toggle's contact arrives from
 BRAIN's right-pod connector over STACK as plain copper; its pull-up is on DRV, so an open contact — a
 lifted BRAIN included — reads as OFF and cuts the motor.
+
+⚠️ **One open wire does NOT fail safe: `ACC+`.** The kill's pull-up is fed from the throttle's `ACC+`
+(so it works with the module's own rails dead). If that wire never arrives, the node cannot rise, Q2
+never turns on, and the run/off toggle silently stops cutting the motor — the levers still do. Hardware
+cannot know, so `ACC+` is divided down (100 k / 180 k → 3.28 V) onto expander #2 and **firmware must
+raise an alarm when it reads low with the key on.**
 
 📄 The netlist is the design: `tools/netlist.py`, gated by `python3 -m tools.integrity` and the test
 suite (repository README).

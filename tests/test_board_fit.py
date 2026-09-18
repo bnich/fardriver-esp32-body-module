@@ -214,6 +214,26 @@ def test_the_real_netlist_runs_through_it(capsys):
         pytest.skip(f"tools.netlist does not build a Design: {type(exc).__name__}: {exc}")
     code = bf.main([], design)
     out = capsys.readouterr().out
-    assert code in (0, 1)
+    # 0 pass · 1 a budget fails · 2 over the ESTIMATED envelope (never a pass)
+    assert code in (0, 1, 2)
     assert ("✅ PASS" in out) == (code == 0)
     assert ("⛔ FAIL" in out) == (code == 1)
+    assert ("NOT A PASS" in out) == (code == 2)
+
+
+def test_an_overrun_of_an_estimated_envelope_is_never_printed_as_a_pass(capsys, monkeypatch):
+    """The tool once printed 'OVER by 7.1 mm' and then '✅ PASS', exit 0."""
+    from tools import board_params as bp
+    monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
+    tall = good().replace_part("L101", height_mm=22.0)      # 69.6 mm of 64
+    code, out = run(capsys, tall)
+    assert code == 2
+    assert "✅ PASS" not in out and "NOT A PASS" in out and "OVER by 5.6 mm" in out
+
+
+def test_an_overrun_past_the_raw_cavity_says_no_enclosure_can_absorb_it(capsys, monkeypatch):
+    from tools import board_params as bp
+    monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
+    taller = good().replace_part("L101", height_mm=24.0)    # 71.6 mm > the 70 mm cavity
+    out = run(capsys, taller)[1]
+    assert "exceeds even the RAW cavity estimate" in out
