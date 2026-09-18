@@ -1,18 +1,20 @@
 # REVV1 ESP32 body module — planning document
 
-**Status:** v0.9, 2026-09-11 — planning; first parts ordered 2026-09-10, nothing built.
+**Status:** v0.10, 2026-09-18 — design; first parts ordered 2026-09-10, most received 2026-09-18.
+The left bar pod is wired and tested; no module hardware is built.
 
 ⏸️ **The Chaojie CAN dash feed (§7.2 / D8) is parked by owner decision D19, 2026-09-10** — *"the
 display we have now will either not work, or take too long to setup … we will come back to the
 display later, and either figure it out or replace it."* **The rest of the module carries on.**
 Parked is neither solved nor abandoned: the CAN findings stay correct, the CAN hardware stays fitted,
 and the work resumes unchanged when the display question re-opens. Also parked with it: **D11** and
-**board F** (`revv1-module-bom.md`).
+**block F** (`bom.md`).
 
 ⭐ **Construction path (owner, 2026-09-08): breadboard → generic perfboard prototype (§9.6) → custom
-PCB (§9.8).** The DevKitC-1 is the prototype board only. Most of §3.1.3's pin constraints are DevKit
-artifacts — a custom board with a bare WROOM-1 recovers pins and may let D16 go full native,
-removing I2C from the lighting path. Carry the *rules* across, not the GPIO numbers.
+PCB (§9.8).** The DevKitC-1 is the prototype board only, and most of §3.1.3's pin constraints are
+DevKit artifacts. The custom build is **four stacked boards — HVIN · CONV · DRV · BRAIN (§9.2)** —
+around a bare WROOM-1, with **D16 full native**, which takes I2C out of the lighting path. Carry the
+*rules* across, not the GPIO numbers.
 
 ✅ **M13 is closed:** the module is an `ESP32-S3-WROOM-1-N8` (8 MB quad flash, no PSRAM,
 −40…+85 °C) on a DevKitC-1 **v1.0** (RGB LED on GPIO48). GPIO35/36/37 and GPIO38 are usable: clean
@@ -24,12 +26,17 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 - ✅ **12 V rail measured: 2.62 A / 31 W worst case** (§3.2.3).
 - ✅ **TVS: `SMCJ90A`** — holds the rail under TDK's 160 V ceiling to 13.4 A of surge (§3.2.1).
   ⬜ **M17** confirms it on the bike.
-- ✅ **D13 soft-start FET: `IXTP26P20P`**, selected on SOA (§3.2.5). Low-side FET: `AO3400A` (§6.2.3).
-- ✅ **Pin map drawn, D16 decided (§3.1.3)** — slow outputs on the I2C expanders; low beam and boost on
-  native pins so one bus fault cannot take the headlight.
+- ✅ **D13 soft-start FET: `IXTP26P20P`**, selected on SOA and ramped over **~50 ms** (§3.2.5).
+  Low-side FET: `AO3400A` (§6.2.3).
+- ✅ **D16 decided: full native on the custom board** — every lighting channel on its own S3 pin, the
+  I2C expanders carrying bar inputs only (§9.8.2). The pin map drawn in §3.1.3 is the **DevKit
+  prototype's**, which keeps low beam and boost native and puts the slow outputs on expander #2.
+- ✅ **Starting (D24, owner 2026-09-18):** the key switch feeds the FarDriver KEY wire directly
+  (§3.2.5). There is no start latch; the right pod's start button is a spare sensed input.
 - ✅ **Brake circuit (D23, 2026-09-11)** — each lever cuts the motor (FarDriver `BL`), lights the brake
   lamp through P-FET Q1 and signals IN-05/06, all through 1N4148 steering diodes with no firmware in
-  the path (`revv1-brake-circuit.md`, board G). The brake lamp is not a module output.
+  the path (`brake-circuit.md`; the hardware sits on DRV, §9.2). The brake lamp is not a module
+  output, but it is fed from the module's 12 V rail; the motor cut needs nothing from the module.
 - ✅ **D17: the module has no screen** — the Chaojie is the only display; with D8 parked the **WiFi
   page is the primary readout** for motor temp, controller temp, bus current, boost mode and lamp-out.
 - ✅ **Controls (D20–D22):** both original bar pods are replaced by bought switch sets — plain class-A dry
@@ -37,18 +44,22 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 
 **⬜ Open:**
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time.
-- **M3** — the brake-lever switch type gates the brake circuit build (`revv1-brake-circuit.md` §4).
-- **D13 gate ramp** — ~10 ms today; slowing it to ~50 ms cuts the FET's SOA demand 3.2× (owner call, §3.2.5).
-- Measurements: **M2 · M3 · M8 · M9 · M10** (bench session), M14 current at exactly 12 V, M15, M17.
+- **M3** — the brake-lever switch type gates the brake circuit build (`brake-circuit.md` §4).
+- **M18** — the enclosure cavity. Gates every board outline, and the enclosure material is decided
+  after it (§9.7).
+- **DC-DC #1's dissipation at the real 31 W load** — unverified; measure it before any thermal
+  budget is trusted (§3.2.3).
+- Measurements: **M2 · M3 · M8 · M9 · M10** (bench session), M14 current at exactly 12 V, M15, M17,
+  M18, M19.
 
-**⭐ CRITICAL PATH (re-sequenced 2026-09-10 after the D19 park — every step is display-independent):**
+**⭐ CRITICAL PATH (every step is display-independent, D19):**
 
 | | Step | Why here |
 |---|---|---|
-| **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`revv1-module-bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Board F is not in this order — it parks with D11 |
-| **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ⏳ **right pod in transit — its lighting slider's `OFF/A/B` vs `OFF/A/A+B` pattern is what D21's decode needs** — procedure: **`revv1-inputs-bench-session.md`** | Gates **board C** and the firmware's input map. Needs the *bike*, not the parts — run it while orders ship. ⚠️ **M3** (unpowered lever-type check, `revv1-brake-circuit.md` §4) gates the brake circuit; its step 1 — levers → FarDriver `BL` — goes on as soon as M3 passes |
+| **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Block F is not in this order — it parks with D11 |
+| **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ✅ **right pod in hand 2026-09-12 — its lighting slider measured `OFF / A / A+B`, which is what D21's decode needs (§2.0)** — procedure: **`inputs-bench-session.md`** | Gates the input conditioning (**block C**) and the firmware's input map. Needs the *bike*, not the parts. ⚠️ **M3** (unpowered lever-type check, `brake-circuit.md` §4) gates the brake circuit; its step 1 — levers → FarDriver `BL` — goes on as soon as M3 passes |
 | **3** | ⬜ **Firmware** — lighting lookup (§7), read-the-slider-at-boot, the **≤300 ms** watchdog, boost HOLD/TOGGLE, the **WiFi status page** | The WiFi page is the only readout for temps, bus current, boost mode and lamp-out |
-| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → custom PCB (§9.8) | Needs 1–3 |
+| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the four-board custom set (§9.2, §9.8) | Needs 1–3. ⬜ **M18** (the cavity) gates the board outlines |
 
 ## Contents
 
@@ -62,7 +73,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
   - **§3.2** Power architecture (D9, D10)
     - **§3.2.1** Two converters, the 160 V rule, the TVS · **§3.2.2** Orderly shutdown ·
       **§3.2.3** Current budget and input fusing · **§3.2.4** Grounding · **§3.2.5** Module power
-      switching (D13) · **§3.2.6** Fuse and diode sizing
+      switching (D13) · **§3.2.5a** How the bike starts (D24) · **§3.2.6** Fuse and diode sizing
   - **§3.3** Display power and reset
 - **§4** Electrical interface classes
 - **§5** Bench discovery — the measurements this plan depends on
@@ -78,12 +89,18 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
     **§7.2.3** community evidence · **§7.2.4** M16
 - **§8** Decisions
 - **§9** Component breakdown and build plan
-  - **§9.1** Breadboard rules · **§9.2** The seven blocks · **§9.3** Breadboard allocation ·
+  - **§9.1** Breadboard rules · **§9.2** Functional blocks and the four-board set · **§9.3** Breadboard allocation ·
     **§9.4** Bench supply · **§9.5** Converters and support parts · **§9.6** Perfboard prototype ·
     **§9.7** Housing · **§9.8** Custom PCB and module variant (D18)
-- **§10** BOM → `revv1-module-bom.md`
+- **§10** BOM → `bom.md`
 - **§11** Sources
 - **§12** Appendix — sourcing evidence for the selected parts
+
+📄 **Documents cited by file name:** `bom.md` and `inputs-bench-session.md` sit beside this file;
+`brake-circuit.md`, the work order, checklist, build sheet and issues log are in the build repository
+(`Revv1-FS-72v-Conversion/docs/`); `can18-investigation.md` and `pinout-3in-cj-v3-01.md` belong to
+`chaojie-display-protocol`, and `harness-pinout.md` and `heb_decode.py` to
+`fardriver-nd72450-reference` — two repositories that are not yet published (§11).
 
 ---
 
@@ -97,7 +114,7 @@ An ESP32 box on the **72V side** that:
    over CAN** once that work resumes (⏸️ D19).
 3. **Owns the body electronics:** headlight (LOW / HIGH / DRL), horn, tail running light, front + rear
    turn signals, dash telltales, and the boost button. **The brake light is not a module output** —
-   the brake circuit switches it in hardware (D23, `revv1-brake-circuit.md`); the module senses the
+   the brake circuit switches it in hardware (D23, `brake-circuit.md`); the module senses the
    levers.
 
 ⚠️ **The module has no screen of its own (D17): the Chaojie is the only display.**
@@ -125,37 +142,38 @@ class A dry contact to the module** (D20).
 | **High/Low** | ✅ **2-position** — confirmed on the pod | 1 | IN-04 | Only has a consumer when the slider says headlight, so **the interlock holds in hardware**. HIGH replaces LOW |
 | **Horn** | ✅ **momentary** — confirmed | 1 | IN-03 | Sounds while held; no latch, no timeout |
 | **Hazard** | ✅ **latching** — confirmed | 1 | IN-10 | Both signals together; works with every other light off. **Required** — a push-push latch gives no "both" gesture either |
-| **Flash-to-pass** | ⭐ **the REAR momentary on the left pod** (headlight symbol) | 1 | IN-09 | **REASSIGNED 09-11** off the "e-start" button to this one — rear-facing, index-finger, headlight-marked: the conventional position. ⚠️ **Break-before-make** against LOW; ≤10 ms debounce; no-op if already HIGH |
-| **Run/off toggle** | ✅ latching — **right pod**, `red` + `blue` common | 1 | IN-11 (sense) | **The secondary kill.** It holds `BL` low through the brake circuit's Q2 inverter (`revv1-brake-circuit.md` §2.1) — hardware, not firmware; the module only senses it. ⛔ Not the 84 V KEY line — no DC rating on a bar switch |
-| **Start button** | ✅ momentary — **right pod**, `green` + `blue` common | 1 | spare (sense) | **Starts the controller** (D24): run switch ON + this held ~2 s sets the hardware latch that feeds the FarDriver KEY (§3.2.5a). The module only senses it. The dash power-cycle moves to the module's own button pad (D3) |
+| **Flash-to-pass** | ⭐ **the REAR momentary on the left pod** (headlight symbol) | 1 | IN-09 | Rear-facing, index-finger, headlight-marked: the conventional position. ⚠️ **Break-before-make** against LOW; ≤10 ms debounce; no-op if already HIGH |
+| **Run/off toggle** | ✅ latching — **right pod**, `red` + `blue` common | 1 | IN-11 (sense) | **The secondary kill.** It holds `BL` low through the brake circuit's Q2 inverter (`brake-circuit.md` §2.1) — hardware, not firmware; the module only senses it. ⛔ Not the 84 V KEY line — no DC rating on a bar switch |
+| **Start button** | ✅ momentary — **right pod**, `green` + `blue` common | 1 | spare (sense) | **Spare.** A class-A contact sensed on expander #1 with no function assigned — the key switch alone starts the controller (D24, §3.2.5a). Wired now, assigned in firmware later |
 | **Boost** | momentary | 1 | IN-07 | On the FarDriver throttle, not a pod. HOLD/TOGGLE, D4 |
-| **Brakes** | lever switches (type per **M3**) | 2 | IN-05/06 | The lever itself cuts the motor and lights the brake lamp in hardware (D23); the module reads it through the brake circuit's D3L/D3R with 10 kΩ pull-ups (`revv1-brake-circuit.md` §2) |
+| **Brakes** | lever switches (type per **M3**) | 2 | IN-05/06 | The lever itself cuts the motor and lights the brake lamp in hardware (D23); the module reads it through the brake circuit's D3L/D3R with 10 kΩ pull-ups (`brake-circuit.md` §2) |
 
-**12 of expander #1's 16 bits** — the left pod's 7 (the selector takes two), the right pod's 4, and the throttle's boost button. Rule for the spares: **wire them now, assign them in firmware later**
-— the bar-to-box cable is the irreversible part; the function is one line of code.
+**12 of expander #1's 14 input-capable bits** (GPA7/GPB7 are output-only, §3.1.3) — the left pod's 7
+(the selector takes two), the right pod's 4, and the throttle's boost button. Rule for the spares:
+**wire them now, assign them in firmware later** — the bar-to-box cable is the irreversible part; the
+function is one line of code.
 ⬜ **Still to ohm out:** ⭐ **that the left pod's push-push latch really breaks contact on unlatch**
 (latched = closed, unlatched = open).
 ⚠️ **The two pods share colours for different jobs:** on the right pod (rewired 2026-09-12) **`blue` is
 the ground** for all three controls, `black`/`yellow` are the slider bits, `red` the toggle and `green`
 the start button; on the **left** pod `blue` is the HIGH-beam signal and `black` carries hazard.
-colours · ⚠️ **how each 3-position switch is wired (OFF/A/B vs OFF/A/A+B changes the decode).**
 
 **Other controls and interfaces on the bike:**
 
 | Item | Where | What it is | Source |
 |---|---|---|---|
-| Brake levers | both | One switch or sensor each. Type, NO/NC and wiring **to be measured (M3)** — the brake circuit's gate | `revv1-brake-circuit.md` §4; `revv1-inputs-bench-session.md` §6 |
+| Brake levers | both | One switch or sensor each. Type, NO/NC and wiring **to be measured (M3)** — the brake circuit's gate | `brake-circuit.md` §4; `inputs-bench-session.md` §6 |
 | Throttle red button | FarDriver throttle (installed, D2) | One momentary button on a **2-pin lead** — a dry contact | checklist Phase 5; FarDriver pinout doc |
 | Chaojie dash keys | 3" display housing | Five keys, `M` / `+` / `−` functional, two reserved, all internal to the display — the 9-pin plug has no key-output position | `CJ-V3-01` manual; M11 |
-| PAS cadence sensor | cranks / bottom bracket | **3-pin connector — +5 V, GND, Hall pulse.** Orphaned: it belonged to the retired stock controller, and **the FarDriver has no PAS input**. Using it for assist would mean the module synthesising a throttle signal, putting firmware in the motor-control path — which D10, the open-drain boost output and the D23 brake circuit all exist to avoid. ⬜ **Cap it, or wire it as telemetry only** (expander #1 has 4 free bits; nothing would act on it). ⬜ Confirm it is cadence: ~5 V across two pins, third pulses several times per crank revolution | this session, 2026-09-11 |
+| PAS cadence sensor | cranks / bottom bracket | **3-pin connector — +5 V, GND, Hall pulse.** Orphaned: it belonged to the retired stock controller, and **the FarDriver has no PAS input**. Using it for assist would mean the module synthesising a throttle signal, putting firmware in the motor-control path — which D10, the open-drain boost output and the D23 brake circuit all exist to avoid. ⬜ **Cap it, or wire it as telemetry only** (the expanders have free input bits; nothing would act on it). ⬜ Confirm it is cadence: ~5 V across two pins, third pulses several times per crank revolution | seen on the bike, 2026-09-11 |
 | Key switch | frame | 2-wire switch feeding the FarDriver KEY wire; it also gates the module's power switch (§3.2.5) | work order §2 |
-| FarDriver serial | controller harness | TXD / RXD / BW5V / GND, 3.3V TTL, 16-byte CRC frames | `revv1-fardriver-nd72450-pinout.md` §4 |
-| Chaojie dash | bars | telltale inputs L / R / headlight (0–15V), one-line in, CAN | `revv1-display-chaojie-3in-pinout.md` |
+| FarDriver serial | controller harness | TXD / RXD / BW5V / GND, 3.3V TTL, 16-byte CRC frames | `harness-pinout.md` §4 |
+| Chaojie dash | bars | telltale inputs L / R / headlight (0–15V), one-line in, CAN | `pinout-3in-cj-v3-01.md` |
 
 ### 2.1 Harness — where the lever and lamp wires run
 
 The **brake-lever wires run in the handlebar loom to connector "1T3 10"**; the **lamp feeds run in the
-"2T4 18" loom**. The lever wires go to the brake circuit (`revv1-brake-circuit.md`) and the lamps to
+"2T4 18" loom**. The lever wires go to the brake circuit (`brake-circuit.md`) and the lamps to
 the §6 outputs; the handlebar pods are replaced (D20). **M2** identifies the lever wires in the loom,
 **M3** the lever type.
 
@@ -173,14 +191,14 @@ Interface classes are defined in §4. "Measure" = a row in the §5 bench table.
 | IN-02 | Turn RIGHT | left pod — **`green-white`** (turn trio) | push-push latch | dry contact | **A** | As IN-01. Both sides latch independently, so **press opposite = switch sides** is a firmware case | ✅ **Built and tested** |
 | IN-03 | Horn | left pod — **`brown`** | momentary | dry contact | **A** | horn while held; no latch, no timeout | ✅ **Built and tested** |
 | IN-04 | High/low selector — **2 bits** | left pod — **`light blue`** (LOW) + **`blue`** (HIGH) | 2-position changeover | dry contact | **A** | `highbeam = slider in pos 3 AND selector HIGH`. ⭐ **Both legs are read:** exactly one must be asserted, so **both or neither = broken wire or dirty contact** — reading only `light blue` would make an open circuit look like a valid HIGH | ✅ **Built and tested** |
-| IN-05 | Brake, left lever | lever switch or sensor (**M3**) | momentary | normally-open dry contact, or a sinking open-collector output (M3) | **A**, through the brake circuit | boost safety-release (§7); telemetry. The lever itself cuts the motor and lights the brake lamp in hardware (D23) | **M3.** Read through the brake circuit's D3L with a **10 kΩ** pull-up — not the 1 kΩ bar value: the circuit's R1 already wets the contact (`revv1-brake-circuit.md` §2) |
+| IN-05 | Brake, left lever | lever switch or sensor (**M3**) | momentary | normally-open dry contact, or a sinking open-collector output (M3) | **A**, through the brake circuit | boost safety-release (§7); telemetry. The lever itself cuts the motor and lights the brake lamp in hardware (D23) | **M3.** Read through the brake circuit's D3L with a **10 kΩ** pull-up — not the 1 kΩ bar value: the circuit's R1 already wets the contact (`brake-circuit.md` §2) |
 | IN-06 | Brake, right lever | lever switch or sensor (M3) | momentary | as IN-05 | **A**, through the brake circuit | as IN-05 | M3. Through D3R |
 | IN-07 | Red button | FarDriver throttle 2-pin lead | momentary | dry contact | A | **boost request → module → controller** (D4): hold or toggle mode, long-press switches mode | M8 |
 | IN-08 | Lighting slider — 3 position | right pod — **`black`** (IN-08a) + **`yellow`** (IN-08b), common **`blue`** | latching, 3-position | dry contact — **two bits** | **A** | **D21: 1 = OFF · 2 = running · 3 = headlight.** ✅ **`OFF / A / A+B` confirmed 2026-09-12:** `black` closes in 2 and 3, `yellow` only in 3 — so "headlight implies running" is in the hardware. ⭐ Decode **`headlight = yellow`, `running = black OR yellow`**, so a broken `black` still lights the bike. Full table: §7 | ✅ measured. Read at boot |
 | IN-09 | Flash-to-pass | left pod — **`red-gold`**, the rear headlight-marked button | momentary | dry contact | **A** | Holds HIGH while pressed, any lighting state. **Break-before-make** against LOW; ≤10 ms debounce; no-op if already HIGH | ✅ **Built and tested.** Needed two cuts in the pod: `red-white` off the shared feed and the `red-gold`–`blue` tie opened |
 | IN-10 | Hazard | left pod — **`green-black`** (hazard trio) | latching | dry contact | **A** | Both signals together; works with every other light off. ⭐ **Its own input rather than "LEFT+RIGHT both asserted" because a turn signal must auto-cancel and hazard must never** — and two independent push-push latches make that inference ambiguous | ✅ **Built and tested** |
-| IN-11 | Run/off toggle | right pod — **`red`**, common **`blue`** | latching, **closed in RUN** (confirmed 2026-09-12) | 0–5 V node (R4 pulls it to `ACC+`) | **B** — 10 k / 15 k divider, 3.0 V at 5 V in (sense only) | The cut itself is hardware: the toggle drives the brake circuit's **Q2** inverter, which holds `BL` low in OFF (`revv1-brake-circuit.md` §2.1). The module reads the same node for the WiFi page and telltales. ⛔ **Never the FarDriver KEY line** — it sits at 72–84 V and a 12 V-market bar switch has no DC rating; it would also take the lights down with the motor | wire it now |
-| IN-12 | KEY state | the FarDriver KEY node, downstream of the start latch (§3.2.5a) | level | 72–84V | B (divider) | orderly shutdown, wake logic, and "is the controller running" for the WiFi page | M10 |
+| IN-11 | Run/off toggle | right pod — **`red`**, common **`blue`** | latching, **closed in RUN** (confirmed 2026-09-12) | 0–5 V node (R4 pulls it to `ACC+`) | **B** — 100 k / 180 k divider into expander #1 (sense only): ≈2.9 V at the pin with `ACC+` at 5.1 V and the node also loaded by Q2's 100 kΩ gate resistor, against the `MCP23017`'s 2.64 V V<sub>IH</sub>. ⬜ Meter it — the margin is 0.25 V | The cut itself is hardware: the toggle drives the brake circuit's **Q2** inverter, which holds `BL` low in OFF (`brake-circuit.md` §2.1). The module reads the same node for the WiFi page and telltales. ⛔ **Never the FarDriver KEY line** — it sits at 72–84 V and a 12 V-market bar switch has no DC rating; it would also take the lights down with the motor | wire it now |
+| IN-12 | KEY state | the key-switch output node `KSW`, **upstream of the hold-up diode** (§3.2.2) — the same node that feeds the FarDriver KEY wire (§3.2.5) | level | 72–84V | B (divider) | orderly shutdown, wake logic, and key state for the WiFi page | M10 |
 | IN-13 | FarDriver telemetry | serial TXD/RXD | UART 3.3V | 16-byte frames | E | gear, faults, brake/throttle state as cross-checks, temps and currents for the WiFi page (and the parked CAN feed, §7.2) | M9 — direction must be measured, the label is ambiguous |
 | IN-14 | Dongle activity | BT dongle's TX to the controller | UART 3.3V | | E | "polite listener": module sends keepalive only when the dongle is silent | M9 |
 | IN-15 | 12V rail sense | DC-DC output | analog | 0–15V | D | diagnostics, lamp-out detection later | |
@@ -236,8 +254,8 @@ GPIO1–10** (ADC2 dies with WiFi), alongside IN-12, IN-15 and IN-16 — 5 of AD
 - The other class-A inputs go behind an `MCP23017`.
 
 💡 **Pins to buy back if ever needed:** skip ON-state open-load diagnostics — tie `DIAG_EN` low and
-the budget drops by **5 pins**, 2 of them ADC1 (`DIAG_EN`, `SEL1/2` and both `CS` pins exist only for
-lamp-out detection, §6.2.2a).
+the budget drops by **5 pins**, 2 of them ADC1 (`DIAG_EN`, `SEL`/`SEH` and both `CS` pins exist only
+for lamp-out detection, §6.2.2a).
 
 #### 3.1.2 S3 pin constraints — read before changing the pin map
 
@@ -245,7 +263,9 @@ Verified against IDF v5.5 headers unless noted:
 - **ADC1 = GPIO1–10 · ADC2 = GPIO11–20.** ADC2 is unusable while WiFi is on, so **IN-12, IN-15 and
   IN-16 must land on GPIO1–10.**
 - **GPIO26–32 are the SPI flash (MSPI)** — never available. On octal-PSRAM parts (`R8`/`R16V`)
-  GPIO33–37 are also gone; ours is an `N8`, so they are free.
+  GPIO33–37 are also gone; ours is an `N8`, so GPIO35–37 are free.
+- ⛔ **GPIO33 and GPIO34 exist on the silicon but not on the module.** The `ESP32-S3-WROOM-1` /
+  `-WROOM-1U` has no pads for them (module datasheet, pin table), so nothing can ever land there.
 - **GPIO22–25 do not exist on the S3.** Every existing pin can drive an output.
 - **GPIO19/20 are USB D−/D+** — reserved; the console/flash path is native USB, which frees a UART.
 - **GPIO43 = U0TXD** emits the ROM boot log at 115200 baud on every reset → **never a load driver.**
@@ -295,7 +315,8 @@ The `TPS4H160B` inputs are ordinary logic inputs, so the slow half can move onto
 power up as **high-Z inputs**, and every `TPS4H160B` input has a specified **100/175/250 kΩ internal
 pulldown** — a high-Z drive is a hard OFF.
 
-✅ **D16 (b), owner, 2026-09-08.** An I2C bus failure takes out everything on the bus at once, and this
+✅ **The prototype runs D16 (b)** (owner, 2026-09-08); the custom board runs **(a) full native**
+(§9.8.2). An I2C bus failure takes out everything on the bus at once, and this
 box sits beside a controller chopping 80 A on a protocol whose only error check is an ACK bit.
 Mitigations — short traces inside one sealed box, strong pull-ups, the §3.2.4 star ground, a firmware
 bus-recovery routine (clock SCL nine times to free a slave holding SDA) — are mitigations. **So the
@@ -305,7 +326,7 @@ channels that matter when things go wrong stay native, in hardware:**
 |---|---|
 | **Headlight LOW** — the one lamp whose loss at night is dangerous | headlight HIGH · headlight DRL · tail running · turn L · turn R |
 | **Boost** — a garbled bus frame must never assert boost (§7.1) | the bar inputs |
-| **Brake inputs IN-05/06** — the boost safety-release wants < 10 ms | `DIAG_EN` · `SEL1` · `SEL2` |
+| **Brake inputs IN-05/06** — the boost safety-release wants < 10 ms | `DIAG_EN` · `SEL` · `SEH` |
 | **Fan and buzzer** — need LEDC PWM | |
 | **All analog** — ADC1 only | |
 
@@ -336,18 +357,22 @@ The brake lamp is not on this list at all: the brake circuit switches it in hard
 | **40** | **Buzzer** — LEDC PWM (tones + the turn-signal click, §6.1) | JTAG MTDO |
 | **42** | **Headlight LOW** → TPS4H160B #1 `IN2` | native by design (D16) |
 | **47** | **Boost** → controller | dedicated pin, open-drain, hard external pull-down; never on a bus |
-| — | **Spare: GPIO10, 35, 36, 37, 38, 41**, plus GPIO44 as a last resort — **7 spare** | plus the 4 strapping pins for internal-only signals in a pinch. An SPI CAN controller (~4 pins) fits if one is ever needed |
+| — | **Spare: GPIO10, 35, 36, 37, 38, 41**, plus GPIO44 as a last resort — **7 spare** | plus the 4 strapping pins for internal-only signals in a pinch. ⚠️ This margin is the prototype's; the custom board has none to give (§9.8.2) |
 
 💡 **Full-native lighting is reachable on the prototype** — moving expander #2's six `TPS4H160B` inputs
 native costs 6 of the 7 spare pins and drops the second `MCP23017`, leaving 1 spare. **Don't** — the
-custom board (§9.8) gets full-native for free; keep the prototype's margin.
+custom board (§9.8) is where full native lives; keep the prototype's margin.
 
-**Expander #1 — inputs (10 of 16 bits):** IN-01 turn L · IN-02 turn R · IN-03 horn · IN-04 high/low ·
-IN-07 red button · **IN-08 lighting slider (two bits)** · IN-09 flash-to-pass · IN-10 hazard ·
-IN-11 spare. IN-05/06 (brakes) are **not** here — native for §7's <10 ms. 6 bits spare, so a bar
-control added later needs only a wire.
+**Expander #1 — inputs (12 of its 14 input-capable bits):** IN-01 turn L · IN-02 turn R · IN-03 horn ·
+**IN-04 high/low (two bits)** · IN-07 red button · **IN-08 lighting slider (two bits)** · IN-09
+flash-to-pass · IN-10 hazard · IN-11 run/off sense · the spare start button. IN-05/06 (brakes) are
+**not** here — native for §7's <10 ms. 2 input bits spare, so a bar control added later needs only a
+wire.
+⛔ **`MCP23017` pins GPA7 and GPB7 are OUTPUT-ONLY** (Microchip DS20001952 rev D) — never land an
+input on them, and have firmware set `IODIR` bit 7 to output on both ports. That is why a 16-bit
+expander offers 14 inputs.
 **Expander #2 — outputs (8 of 16):** TPS4H160B #1 `IN3`/`IN4` and #2 `IN1`–`IN4` for headlight HIGH,
-DRL, tail running, turn L, turn R (5 channels + 1 spare) · `DIAG_EN` · `SEL1` · `SEL2`.
+DRL, tail running, turn L, turn R (5 channels + 1 spare) · `DIAG_EN` · `SEL` · `SEH`.
 TPS4H160B #1 `IN1` is unconnected — its internal pulldown holds it OFF. **Six of the eight channels
 are used; two are spare.**
 *(Two devices, same bus, different addresses — 2 GPIO total.)*
@@ -374,7 +399,7 @@ real trade, still recommended.
 | | Input | Output | Feeds |
 |---|---|---|---|
 | **DC-DC #1** | **43–160 V** | **12 V** — load **2.62 A / 31 W** (§3.2.3) | headlight, tail, signals, horn, fan, display switch |
-| **DC-DC #2** | **43–160 V** | **5 V** | S3 `5V` pin → its onboard 3.3 V regulator |
+| **DC-DC #2** | **43–160 V** | **5 V** | the logic. Prototype: the DevKit's `5V` pin and its onboard 3.3 V regulator. BRAIN: a bare module has no regulator, so a `TLV76733` (5 V → 3.3 V, 1 A) feeds it |
 
 ⚠️ **The input rating is 160 V — and that is architectural, not margin.** A 100 V-rated die **cannot be
 protected at all**: the TVS must not conduct below the controller's **90.7 V** OV-protect, and every
@@ -458,11 +483,22 @@ The whole lighting system is LED; the horn is an **electronic 12 V horn drawing 
 ⚠️ **Use 2.62 A / 31 W everywhere.** Never count both headlight beams — D14 forbids it (worst case one
 beam + DRL = **1.25 A**).
 
-**Thermal — the `HAQ-10T` alone is adequate.** At 31 W out and 91.5% efficiency the TDK dissipates
-**~2.9 W**; with the `HAQ-10T`'s 7.5 °C/W the baseplate sits **ΔT ~22 °C → ~82 °C at a 60 °C
-ambient**, inside the 85–90 °C target and under the 100 °C limit. Forced air is not required.
-⚠️ The 60 °C ambient is an assumption — re-check it once the box has a mounting position.
-The metal enclosure is still the right build (§9.7) — conduction-cooled brick, EMC, the 84 V node.
+**Thermal — ⬜ DC-DC #1's dissipation at this load is unverified.** TDK's **91.5 %** is the
+*full-load* efficiency (150 W). The measured 31 W is **~21 % of rating**, where a brick's fixed
+losses dominate and efficiency is lower. Applying 91.5 % anyway gives **~2.9 W** — a floor, not an
+estimate. ⬜ **Measure it; the converter, the bench supply and a load are in hand:** draw 2.6 A from
+the 12 V output and read the input power, at the bench supply's 64 V ceiling (§9.4) and again at pack
+voltage. No baseplate temperature is final until that number exists.
+- **Limits:** baseplate −40…+100 °C, over-temperature trip at 105–120 °C, so target T<sub>b</sub>
+  ≤ 85–90 °C. ⚠️ The 60 °C ambient used for that target is an assumption — re-check it once the box
+  has a mounting position.
+- **The brick is conduction-cooled, so it bolts to a thermal interface** — metal that carries its heat
+  out of the enclosure — whichever enclosure is built. The enclosure material is decided after
+  **M18** (owner, 2026-09-18), and the boards assume neither answer; §9.7 states the requirement.
+- **Not the `HAQ-10T`** (7.5 °C/W, a free-air figure; BOM E5): a finned sink sealed inside a box only
+  heats the trapped air, and 25.4 mm of fin on a 12.7 mm brick does not fit the stack (§9.2).
+- ⚠️ **An over-temperature trip takes the whole 12 V rail down** — every lamp, the horn, and the brake
+  lamp with them (§7). The thermal path is a lighting-safety item.
 
 ✅ **Converter: keep the TDK `CN150B110-12`** — ~4.8× oversized, but smaller parts in this series cost
 *more* (§9.5.1).
@@ -518,11 +554,11 @@ from ~237 ms to **~20 ms**.
 XT90-S out ─┬──────────────────────────────────────────── Controller B+
             │
             ├─[2A fuse]─● KEY SWITCH ●─┬─────────────────  FarDriver KEY wire
-            │           (unchanged)     └───────────────── gate drive, ~0.25 mA
+            │                           └───────────────── D13 enable + IN-12 sense, ~0.32 mA
             │                                                      │
             │                                                      ▼
             └─[2A FAST]── P-MOSFET high-side switch ──┬──[C1 ≥100µF/200V]──┐
-              KLKD002     (soft-start ~10 ms, §3.2.6a) │   TDK's EMC bulk,  │
+              KLKD002     (soft-start ~50 ms, §3.2.6a) │   TDK's EMC bulk,  │
               600VDC                                   │   at #1's terminals│
                                                        ├────────────────────┴── DC-DC #1  84V→12V
                                                        │                          LOAD rail
@@ -538,14 +574,34 @@ XT90-S out ─┬─────────────────────
 immediately while C2 keeps the logic alive.
 
 Why this is the right answer:
-1. **The key switch carries only the FarDriver KEY wire plus a resistor-divider gate drive — ~0.25 mA.**
-   An ordinary 72 V e-bike key switch is correct (~$10–15, already in the build sheet); its documented
-   12–96 V spec governs and no current rating is needed.
+1. **The key switch carries only the FarDriver KEY wire plus two resistor dividers — ~0.32 mA at
+   84 V** (the D13 enable divider, 0.08 mA, and the IN-12 sense divider, 0.25 mA). An ordinary 72 V
+   e-bike key switch is correct (~$10–15, already in the build sheet); its documented 12–96 V spec
+   governs and no current rating is needed.
 2. **Soft-starting the gate eliminates the inrush** rather than making a contact survive it. The
-   ~10 ms ramp also keeps input dv/dt inside TDK's ≤10 V/µs limit.
-3. **It is the same circuit as the §3.3 display switch** — one design, two instances.
-4. **The work order, checklist and build sheet need no changes** — "~2 A inline fuse, low-current
-   logic" stays literally true, and golden rule #2 is untouched.
+   ~50 ms ramp also keeps input dv/dt far inside TDK's ≤10 V/µs limit.
+3. **The §3.3 display switch is the same idea at a far smaller C** — a soft-started high-side P-FET
+   (parked with D11).
+4. **The work order, checklist and build sheet keep their wiring** — the key switch still feeds the
+   FarDriver KEY wire through its ~2 A inline fuse, low-current logic only, and golden rule #2 is
+   untouched. The module adds one tap on the key-switch output.
+
+**The gate network** (on HVIN, §9.2). Q101 is the `IXTP26P20P`, source on the fused B+ tap, drain to
+the converters:
+
+| Part | Value | What it protects |
+|---|---|---|
+| `R110`, gate → source | 100 kΩ | D14's bias-OFF: V<sub>GS</sub> = 0 with the key off |
+| `D102`, gate → source | 15 V zener | the FET's ±20 V gate rating |
+| `C105`, gate → **drain** | 68 nF, C0G or film, **≥250 V** | the Miller capacitor: it sets the output slew, and so the ramp. With the switch off it sees the full pack — check its voltage line |
+| `C107`, gate → source | 4.7 µF, ≥25 V | divides down the dV/dt that `C105` couples into the gate when the XT90-S is mated with the key OFF: 84 V × 68 n / (68 n + 4.7 µ) ≈ 1.2 V, under V<sub>GS(th)</sub>, so the FET stays off |
+| `R101`, gate → pull-down switch | 560 kΩ, as 2 × 270 kΩ in series | the turn-on current; two parts share the voltage |
+| `Q105`, the pull-down switch | **`BSS127`** — 600 V **enhancement-mode** N-FET, SOT-23, V<sub>GS(th)</sub> 1.4–2.6 V | the only path that turns Q101 on. ⛔ **Not `BSS126`**, its depletion-mode sibling, which conducts at V<sub>GS</sub> = 0 and would hold the module on with the key off |
+| `Q105`'s gate drive | key-switch output → 2 × 499 kΩ → gate → 100 kΩ to ground, with a 10 V zener and 100 nF at the gate | 84 V → 7.6 V · 60 V → 5.5 V · 43 V → 3.9 V, all above the `BSS127`'s threshold. Key off → 0 V → Q105 off → Q101 off, with zero quiescent drain |
+
+This gives V<sub>GS</sub>(Q101) = −12.7 V at 84 V and −9.1 V at the 60 V LVC, and a ramp of ≈ 54 ms at
+84 V. ⬜ Both are computed, not measured: scope the switched node at the first key-on, and again while
+mating the XT90-S with the key off.
 
 **The tap fuse is `KLKD002`, 2 A FAST-blow** (600 VDC, 50 kA DC) in an inline holder (§9.5.2) — 3.2×
 the 0.62 A LVC draw. Sitting upstream in series, it also satisfies **TDK's fast-blow mandate for
@@ -559,74 +615,64 @@ inconvenient, not dangerous.
 ⚠️ **The MOSFET is selected on SOA, not Vds/Id.** The soft-start moves the inrush energy out of the
 key-switch contacts and **into the MOSFET**, which absorbs it:
 - **Capacitance downstream of D13: 440 µF** — both `EKXJ221ELL221MM25S` caps (C1 and C2, BOM E8).
-- **Energy:** ½CV² = **1.55 J**, **1.81 J** with the 0.62 A load during the ramp.
-- **Current at a 10 ms ramp:** C·dV/dt = **3.70 A**, **4.32 A** with the load.
-- **Stress to check: 363 W @ 5 ms.** TI's conversion for V<sub>DS</sub> falling linearly at constant
+- **Energy:** ½CV² = **1.55 J**, **2.85 J** with the 0.62 A load during the 50 ms ramp.
+- **Current at the 50 ms ramp:** C·dV/dt = **0.74 A**, **1.36 A** with the load.
+- **Stress to check: 114 W @ 25 ms.** TI's conversion for V<sub>DS</sub> falling linearly at constant
   I<sub>DS</sub> over t₁ (exactly a soft-start): the equal-energy square pulse is **P<sub>MAX</sub> at
-  t₁/2** — so read the **5 ms** line at full V<sub>DS</sub>, not the 10 ms line at the average.
+  t₁/2** — so read an SOA line at or beyond **25 ms** at full V<sub>DS</sub>, not a line at the average.
 
-✅ **Selected: IXYS `IXTP26P20P`** (TO-220AB + gate zener) — the only candidate publishing a 10 ms SOA
-line at both 25 °C and 70 °C (BOM E13). `IRF9640PbF` is a marginal alternate (~335 W on its 10 ms line
-at 84 V, ~241 W derated for 60 °C). Not `FQP12P20` — it publishes no SOA plot at all.
+✅ **Selected: IXYS `IXTP26P20P`** (TO-220AB, laid flat and bolted; BOM E13). Its datasheet
+**DS99913D** draws forward-bias SOA at both T<sub>C</sub> = 25 °C and **70 °C**, each with 25 µs,
+100 µs, 1 ms, **10 ms, 100 ms and DC** lines, and guarantees 160 W at −200 V / 5 s / 70 °C. Read off the
+70 °C plot at 84 V (±10 %): **≈460 W on the 10 ms line · ≈254 W on the 100 ms line · ≈191 W DC.**
+**The 114 W demand clears even the DC line at T<sub>C</sub> 70 °C, by 1.7×.** At key-on the FET's
+case sits at ambient, which this plan puts at 60 °C — under the plot's 70 °C, so no further derating
+applies.
+⚠️ **Use DS99913D.** The 2007 "Preliminary" sheet some distributors still serve states a different
+T<sub>JM</sub> and draws constant-power lines that stop at 80–100 V.
+`IRF9640PbF` is an alternate, checked only on its 10 ms line (~335 W at 84 V, ~241 W derated for
+60 °C). Not `FQP12P20` — it publishes no SOA plot at all.
 
-⭐ **The ramp time is the cheapest margin available.** Nothing pushes it down: at 10 ms the input dv/dt
-is **0.0084 V/µs, 1190× inside TDK's ≤10 V/µs limit**, and slowing it helps the diode too.
+⭐ **The ramp time is the cheapest margin available.** Nothing pushes it down: even at 10 ms the input
+dv/dt is **0.0084 V/µs, 1190× inside TDK's ≤10 V/µs limit**, and a slower ramp helps the diode too.
 
 | Gate ramp | Charge current | Total | **P<sub>peak</sub>** | Equivalent square pulse |
 |---|---|---|---|---|
-| 10 ms (current spec) | 3.70 A | 4.32 A | **363 W** | 363 W @ 5 ms |
+| 10 ms | 3.70 A | 4.32 A | **363 W** | 363 W @ 5 ms |
 | 25 ms | 1.48 A | 2.10 A | **176 W** | 176 W @ 12.5 ms |
-| ⭐ **50 ms** | 0.74 A | 1.36 A | **114 W** | 114 W @ 25 ms |
+| ✅ **50 ms — the spec** | 0.74 A | 1.36 A | **114 W** | 114 W @ 25 ms |
 | 100 ms | 0.37 A | 0.99 A | 83 W | 83 W @ 50 ms |
 
-⬜ **Recommendation (owner call): slow the D13 gate ramp from ~10 ms to ~50 ms** — 3.2× less peak SOA
-demand for one capacitor value and an imperceptible key-on delay. It matters most in the high-V<sub>DS</sub>
-/ low-I<sub>D</sub> **Spirito (thermal-instability) corner**, where the limit is local current density, so
-less current at high V<sub>DS</sub> is strictly better. Past ~50 ms the gain flattens (the 0.62 A load
-dominates).
+✅ **The D13 gate ramp is ~50 ms (owner, 2026-09-18)** — 3.2× less peak SOA demand than a 10 ms ramp,
+for an imperceptible key-on delay. It matters most in the high-V<sub>DS</sub> / low-I<sub>D</sub>
+**Spirito (thermal-instability) corner**, where the limit is local current density, so less current at
+high V<sub>DS</sub> is strictly better. Past ~50 ms the gain flattens (the 0.62 A load dominates).
 
 ⚠️ **Why headline ratings cannot substitute for the curve:** SOA has five limits — R<sub>DS(on)</sub>,
 current, maximum power, **thermal instability**, BV<sub>DSS</sub> — and Vds/Id cover two. Two 100 V
 parts with near-identical R<sub>DS(on)</sub> and I<sub>D</sub> can differ 4× in SOA at 50 V / 10 ms. The
-Spirito inflexion moves to *lower* V<sub>DS</sub> as the pulse lengthens, so a 1 ms curve cannot be scaled
-to 10 ms — the 10 ms line itself must be published. SOA plots are drawn at T<sub>C</sub> = 25 °C: at
-T<sub>Jmax</sub> 150 °C and a 60 °C ambient derate by (150−60)/(150−25) = **0.72**. ⛔ **No SOT-23 part
-here on the strength of its Vds and Id.**
+Spirito inflexion moves to *lower* V<sub>DS</sub> as the pulse lengthens, so a short-pulse curve cannot
+be scaled to a long one — a line at or beyond the real pulse length must be published. Where a plot is
+drawn only at T<sub>C</sub> = 25 °C, derate it for T<sub>Jmax</sub> 150 °C and a 60 °C ambient by
+(150−60)/(150−25) = **0.72**; the `IXTP26P20P`'s 70 °C plot needs none. ⛔ **No SOT-23 part as the main
+switch on the strength of its Vds and Id.**
 
 ℹ️ The same arithmetic applies to the §3.3 display switch at a much smaller C — parked with D11.
 
-#### 3.2.5a Start latch — the key powers the module, the start button starts the controller (D24)
+#### 3.2.5a How the bike starts — the key switch feeds KEY directly (D24)
 
-The key switch no longer feeds the FarDriver's KEY wire directly. It powers the **module** (above) and
-the start latch; the controller comes up only on the **start gesture: run switch ON + start button
-held ~2 s**.
+**The key switch starts the controller, and nothing else does** (owner, 2026-09-18). Its output feeds
+the FarDriver KEY wire directly, exactly as the §3.2.5 diagram draws it; the module takes one tap off
+that node, for the D13 enable and the IN-12 sense.
 
-```
- KEY SWITCH out ─┬───────────────────────── module supply (§3.2.5, unchanged)
-                 │
-                 ├── 5 V rail ── start button (`green`) ──[ RC ≈ 2 s ]── Schmitt ──▶ SET
-                 │                                                                    │
-                 │                                          run switch (`red`) ──▶ HOLD/RESET
-                 │                                                                    │
-                 └────────── Q3 P-MOSFET high-side (soft-start) ◀── latch ────────────┘
-                                    │
-                                    └──────────────────────── FarDriver KEY wire
-```
-
-- **The latch is hardware, not firmware.** Once set it holds Q3 on by itself, so a module hang, a
-  watchdog reset or a reflash **cannot** switch the controller off under way — which is what **D10**
-  protects and why the module is not in the holding path.
-- **Reset is the run switch or the key.** Opening the run switch drops the latch and the controller
-  powers down; the same switch also holds `BL` low through Q2 (`revv1-brake-circuit.md` §2.1), so
-  drive stops even if the latch sticks. Key off removes the latch's supply, so it always comes up
-  cleared and a start gesture is always required.
-- **The 2 s comes from an RC into a Schmitt input**, not from firmware, so the gesture works with the
-  module unflashed. The latch's 5 V comes from the module's logic rail, which is up whenever the key
-  is on.
-- **The module senses both ends** — the start button, the run switch (IN-11) and the KEY node
-  (IN-12) — and drives none of them.
-- ⬜ **To size:** the FarDriver KEY input's actual draw (M10), then Q3 and its soft-start ramp, and
-  the RC values that land on ~2 s with the Schmitt's threshold.
+- **The module never sources or switches KEY (D10).** No module part is in series with the KEY wire,
+  so a hung, reflashing, unpowered or absent module cannot switch the controller on or off.
+- **There is no start latch and no start gesture.** The right pod's start button is a **spare sensed
+  input** on expander #1 (§2.0).
+- **The secondary kill is the run/off toggle**, which holds `BL` low through the brake circuit's Q2
+  (`brake-circuit.md` §2.1) — hardware, sensed by the module on IN-11. It stops drive; it does
+  not remove KEY.
+- ⬜ **M10** still measures the KEY node — its voltage, and where the module's tap lands.
 
 #### 3.2.6 Fuse and diode sizing
 
@@ -637,12 +683,12 @@ key-on**, set by the D13 soft-start rate:
 | D13 soft-start ramp | Peak diode current (I = C·dV/dt) |
 |---|---|
 | 1 ms | 18.5 A |
-| **10 ms** ✅ | **1.85 A** |
-| 50 ms | 0.4 A |
+| 10 ms | 1.85 A |
+| **50 ms** ✅ | **0.4 A** |
 
 **Spec:** ≥150 V reverse, ~1 A continuous, surge ≥3 A, plain silicon — **`1N4007`** (§9.5.2). Its 1 ms
-rating (45 A) covers even the 1 ms case, and at 10 ms the surge is trivial for a non-repetitive rating
-exercised twice a day. A Schottky's low V<sub>f</sub> buys nothing at 0.1 A; fast recovery buys nothing on
+rating (45 A) covers even the 1 ms case, and at the 50 ms ramp the key-on surge (0.4 A) is inside the
+part's continuous rating. A Schottky's low V<sub>f</sub> buys nothing at 0.1 A; fast recovery buys nothing on
 a diode that switches once per key cycle.
 
 **(b) DC-DC #1's input draws 0.41 A at 84 V, 0.58 A at the LVC.** A **2 A fast-blow** gives 3.4× — ample
@@ -661,8 +707,9 @@ reset clears.
 - **Default state = ON.** If the S3 hangs, the display stays powered and its one-line feed still shows
   speed, volts and faults — a dead module degrades to a dumb dash, not a black one. **"Reset" is a
   deliberate momentary pull-off of ~2 s.**
-- **Soft-start the gate** (~1 ms, via a gate-source cap) — the display's input is an internal buck, a
-  capacitive load. (The module's own D13 switch uses ~10 ms, §3.2.6(a); this load is far smaller.)
+- **Soft-start the gate** (~1 ms) — the display's input is an internal buck, a capacitive load. (The
+  module's own D13 switch ramps over ~50 ms with a gate-to-drain Miller capacitor, §3.2.5; this load
+  is far smaller. Size the network the same way when D11 re-opens.)
 - **Pin 2 keeps its own ~2 A fuse** (work order §3.1); the module's switch goes in series with it.
 - ⚠️ **Fit a ~1k series resistor in pin 9.** While the module holds the display dark, the FarDriver
   still drives its one-line output (0–15 V on the brown lead) into an unpowered input — current flows
@@ -690,8 +737,9 @@ part** — a dash that can be power-cycled from the module is worth having which
 
 - **Class A — dry contact to module ground** (the bar switch sets, red button, and the brake levers
   through the brake circuit's steering diodes): GPIO input, pull-up to
-  3.3V, 1k series into the pin, 100 nF to ground at the pin, TVS/ESD diode on any wire that leaves the
-  box (BOM C2, `PESD5V0S4UD`). Firmware debounce 20 ms (≤10 ms for flash-to-pass, §7).
+  3.3V, 1k series into the pin, 100 nF to ground at the pin, a TVS/ESD array on any wire that leaves
+  the box — `PESD5V0S4UD` (BOM C2) on these ≤3.3 V lines; the brake-lever nodes idle near 11.4 V and
+  take the 15 V array instead (§6.2.4). Firmware debounce 20 ms (≤10 ms for flash-to-pass, §7).
   ⚠️ **Wetting current sets the pull-up.** 4.7 kΩ to 3.3 V puts only **0.70 mA** through the contacts —
   fine for gold-plated domes, marginal for a cheap automotive switch: tin and silver contacts commonly
   specify a **1–10 mA minimum**, below which oxide and sulfide films make contact resistance erratic,
@@ -702,26 +750,26 @@ part** — a dash that can be power-cycled from the module is worth having which
   button, IN-07.
   **The brake inputs IN-05/06 take a 10 kΩ pull-up, not 1 kΩ:** the brake circuit's R1 already puts
   ~1.2 mA through the lever contact, and 10 kΩ keeps the low level, seen through a 1N4148, near
-  0.55 V — inside the S3's input-low limit of 0.25 × VDD ≈ 0.8 V (`revv1-brake-circuit.md` §3).
-- **Class B — 12V or 72V level sense:** resistor divider to < 3.3V (72V: 330k / 10k, top resistor as a
-  1/4 W series pair for voltage rating), 3.3V clamp, 100 nF.
+  0.55 V — inside the S3's input-low limit of 0.25 × VDD ≈ 0.8 V (`brake-circuit.md` §3).
+- **Class B — 12V or 72V level sense:** resistor divider to < 3.3V (72V: 330k / 10k, the top resistor
+  as a series pair of 2 × 165 k for voltage rating), 3.3V clamp, 100 nF.
 - **Class D — analog:** ADC pin with divider and 100 nF; average in firmware.
 - **Class E — FarDriver serial:** direct 3.3V, 1k series on the module's TX, TX pin tri-stated (input
   mode) whenever the module isn't sending; both RX lines are listen-only taps.
 
 ## 5. Bench discovery — the measurements this plan depends on
 
-📄 **M2 · M3 · M8 · M9 · M10 have a written bench procedure: `revv1-inputs-bench-session.md`** —
-unpowered sittings (sitting B is the brake levers, M3) and a 72 V bench-supply sitting. The session
+📄 **M2 · M3 · M8 · M9 · M10 have a written bench procedure: `inputs-bench-session.md`** —
+unpowered sittings (sitting B is the brake levers, M3) and a 72 V bench-supply sitting. The procedure
 carries four traps: **the ohmmeter cannot see through an LED assembly**, **colour is never evidence on
 this bike**, **a floating reference lies**, and **"it fits so it must be right"**. ⚠️ **M3 gates the
-brake circuit build** (`revv1-brake-circuit.md` §4).
+brake circuit build** (`brake-circuit.md` §4).
 
 | # | Measure | How | Result |
 |---|---|---|---|
 | M1 | **The new switch sets (D20)**, unplugged: each switch's contact pair, momentary or latching, and ⚠️ **how the 3-position slider is wired** (OFF/A/B or OFF/A/A+B — the D21 decode depends on it). Bench session A2 | ohmmeter, new parts on the bench | ⬜ on arrival |
 | M2 | Handlebar loom ("1T3 10"): which wires are the **brake-lever wires** — the only wires in that loom the build re-uses | ohmmeter unplugged | ⬜ |
-| M3 | **Brake levers, unpowered** (`revv1-brake-circuit.md` §4): wire count per lever; NO/NC by ohmmeter, released vs squeezed; a three-wire sensor must have a **sinking open-collector output rated ≥15 V** (push-pull does not work); one pair per lever or shared. **Gates the brake circuit build** | ohmmeter unplugged (bench session sitting B) | ⬜ |
+| M3 | **Brake levers, unpowered** (`brake-circuit.md` §4): wire count per lever; NO/NC by ohmmeter, released vs squeezed; a three-wire sensor must have a **sinking open-collector output rated ≥15 V** (push-pull does not work); one pair per lever or shared. **Gates the brake circuit build** | ohmmeter unplugged (bench session sitting B) | ⬜ |
 | M4 | ✅ **Headlight (2026-09-08):** stamped on the housing (PN `25012001WX`): **LOW 12 V / 8.5 W = 0.71 A · HIGH 12 V / 8.5 W = 0.71 A · DRL 12 V / 6.5 W = 0.54 A.** Wire map: **BLACK = common ground · GREEN = HIGH · BLUE = LOW · YELLOW = DRL · RED = unused.** ⚠️ **Identify LED assemblies by powered sweep, never by ohmmeter** — all 10 pairs read O.L, because a 12 V LED driver + string cannot be forward-biased by a meter | housing + DP2031 | ✅ |
 | M5 | ✅ **Tail (2026-09-08):** shares a 5-wire connector with the rear signals. **BLACK common · YELLOW running 0.05 A · RED STOP 0.12 A**, 12 V. Running and stop are **separate feeds**, not PWM | DP2031 | ✅ |
 | M6 | ✅ **Rear signals (2026-09-08):** in the tail connector, **BLUE = left · GREEN = right**, 12 V, **0.05 A each**. Front pair: isolated 2-wire each. ⬜ Front currents assumed equal to rear; ⬜ confirm the front pair's return can share the tail common before paralleling | DP2031 | ✅ |
@@ -732,10 +780,12 @@ brake circuit build** (`revv1-brake-circuit.md` §4).
 | M11 | ◐ **Chaojie keys:** the `CJ-V3-01` manual gives **five keys, `M`/`+`/`−` functional, two reserved**, all internal; backend entry is **hold `+` and `−` together within 15 s of power-on**. Software version read: `CJ-YQ25-250418`. ⏸️ Remainder (meter pins 1, 4–9 to pin 3 while pressing each key, to confirm no key drives a wire) parked with the display (D19) | voltmeter | ◐ |
 | M12 | ✅ **Closed — impossible by design.** `CANConfig` 60 saved and exported: the `.heb` CAN block is empty, because `CAN` is an *instruction number* selecting a firmware-internal protocol, not a table (§7.2.1). Do not retry with other values | app + decoder | ✅ negative |
 | M13 | ✅ **Closed.** Module `ESP32-S3-WROOM-1-N8` (8 MB quad flash, no PSRAM, −40…+85 °C) — GPIO35/36/37 usable, 25 °C clear of the 60 °C ambient. Board **DevKitC-1 v1.0** (RGB LED on GPIO48) — GPIO48 excluded, GPIO38 usable. Pool **28**, spare **7** (§3.1.3). Does not carry to the custom PCB (§9.8) | off the board | ✅ |
-| M14 | ◐ **Display supply.** ✅ Boots at 12 V — and at 7 V. The `CJ-V3-01` manual rates **DC 12–120 V** and **70 mA ± 20 mA at 12 V**; the bench read **~0.22 A** at an unconfirmed supply voltage. ⬜ **Re-measure at exactly 12 V**, noting backlight level (`revv1-display-chaojie-3in-pinout.md` §1.1); ⬜ sweep 12/24/48/64 V to confirm constant-power behaviour. ⚠️ **Set the bench current limit to 500 mA** — at 100 mA the supply goes into CC and the panel brown-out loops, which reads exactly like "won't boot". The dash's V field reads pin 2, not the link (D11) | bench PSU + ammeter | ◐ |
+| M14 | ◐ **Display supply.** ✅ Boots at 12 V — and at 7 V. The `CJ-V3-01` manual rates **DC 12–120 V** and **70 mA ± 20 mA at 12 V**; the bench read **~0.22 A** at an unconfirmed supply voltage. ⬜ **Re-measure at exactly 12 V**, noting backlight level (`pinout-3in-cj-v3-01.md` §1.1); ⬜ sweep 12/24/48/64 V to confirm constant-power behaviour. ⚠️ **Set the bench current limit to 500 mA** — at 100 mA the supply goes into CC and the panel brown-out loops, which reads exactly like "won't boot". The dash's V field reads pin 2, not the link (D11) | bench PSU + ammeter | ◐ |
 | M15 | Proto-board geometry, on arrival: (a) DevKit header rows centre-to-centre — expect **0.9" (22.86 mm)**; (c) **copper weight** (1 vs 2 oz — sets the ~2.4 A vs ~3.6 A trace limit, §9.6.2); (d) meter top-to-bottom continuity to see whether plated through-holes join the layers | calipers + ohmmeter | ⬜ |
-| M16 | ⏸️ **Answered, then parked (D19).** The Chaojie never ACKs: 17 bitrates (10K–1M), standard and extended IDs, TEC pinned at 128, 0 ACKs, panel silent — with the bus proven one node at **68 Ω** at the breakout, grounds bonded, the display's transceiver proven live, and the rig validated (loopback 8/8 correct · 0/8 disconnected · 0/8 reversed). The vendor says the panel speaks **FarDriver CAN 18** by default, so it reads as a **receive-only node** (confidence MEDIUM): the module transmits in `TWAI_MODE_NO_ACK` and the remaining gap is the **CAN 18 byte map (D8)**. 📄 `revv1-m16-can-bench-test.md` — ⛔ its §4.1 pre-flight gate is mandatory before any CAN bench work | MSO5074 + ohmmeter + a CAN node | ⏸️ parked |
+| M16 | ⏸️ **Answered, then parked (D19).** The Chaojie never ACKs: 17 bitrates (10K–1M), standard and extended IDs, TEC pinned at 128, 0 ACKs, panel silent — with the bus proven one node at **68 Ω** at the breakout, grounds bonded, the display's transceiver proven live, and the rig validated (loopback 8/8 correct · 0/8 disconnected · 0/8 reversed). The vendor says the panel speaks **FarDriver CAN 18** by default, so it reads as a **receive-only node** (confidence MEDIUM): the module transmits in `TWAI_MODE_NO_ACK` and the remaining gap is the **CAN 18 byte map (D8)**. 📄 `can18-investigation.md` — ⛔ its §4.1 pre-flight gate is mandatory before any CAN bench work | MSO5074 + ohmmeter + a CAN node | ⏸️ parked |
 | M17 | **Transients on the 84 V node.** MSO5074 on the module's B+ tap, referenced to controller B−. Capture (i) hard acceleration at the 80 A cap, (ii) a deliberate key-off under load, (iii) XT90-S mate/unmate with the key OFF. Record worst peak voltage, current into the clamp, duration. Expectation (§3.2.1): nothing near the `SMCJ90A`'s 13.4 A / 160 V limit. Does not block ordering | MSO5074 + current probe | ⬜ |
+| M18 | **The enclosure cavity** — the old-controller cavity under the battery compartment, where the four-board stack lives (§9.2). Usable length; width **at the narrowest point along the run**; clear height **along the whole run**, floor to the underside of the battery tray; what the floor is made of and whether it sees moving air; where cables can exit; any intrusion partway along. Working figure until measured: **200 × 50 × 70 mm — an estimate.** Gates every board outline and the enclosure-material decision (§9.7) | tape + calipers | ⬜ |
+| M19 | **Part heights that set each layer's ceiling in the stack** — the right-angle harness connector family first, then every part not yet read from a manufacturer drawing. Read so far: CM choke `7448022010` **22.0 mm** tall (18.0 × 14.0 mm footprint); `IXTP26P20P` upright 17.5–21.8 mm and the Y2 discs upright 15.5–16.5 mm, so both lie **flat**; JST PA right-angle (latched, 3 A) 7.0 mm; the Schurter `FAC 0031.3803` holder is a **47.5 mm vertical** part and cannot go in the stack (§9.5.2) | datasheets + calipers | ◐ |
 
 ## 6. Outputs
 
@@ -745,13 +795,13 @@ brake circuit build** (`revv1-brake-circuit.md` §4).
 | Headlight **DRL / running** (yellow) | 12 V / 6.5 W = **0.54 A** | high-side, default-OFF | M4 |
 | Headlight **HIGH** (green) | 12 V / 8.5 W = **0.71 A** | high-side, default-OFF | From IN-04 / IN-09. **HIGH replaces LOW** (D14), enforced in firmware |
 | Tail **running** (yellow) | 0.05 A, 5-wire assembly, common = black | high-side, default-OFF | M5 |
-| Tail **STOP / brake** (red) | 0.12 A, separate feed | **not a module output** — the brake circuit's P-FET Q1 switches it from the levers, in hardware, off the module's 12 V rail (D23, `revv1-brake-circuit.md`) | M5 |
+| Tail **STOP / brake** (red) | 0.12 A, separate feed | **not a module output** — the brake circuit's P-FET Q1 switches it from the levers, in hardware, off the module's 12 V rail (D23, `brake-circuit.md`) | M5 |
 | Turn **LEFT** (front + rear) | rear = **blue** in the tail plug; front = its own 2-wire pair | high-side (rear shares the tail common) | M6. 85 flashes/min — no relay (§6.1). ⬜ Confirm the front pair's return can sit on the same common before paralleling |
 | Turn **RIGHT** (front + rear) | rear = **green**; front = own pair | high-side | M6 |
 | Horn | electronic, 12 V / 0.10 A | **low-side** N-MOSFET on a native pin (its own pair: blue `+`, black `−`); TVS on the wire leaving the box, **no flyback needed** | M7. **D12 = MOSFET** |
 | Dash telltales L / R / headlight | Chaojie pins 1 / 4 / 5, **0–15 V inputs** | **from the corresponding lamp feed through ~1 k** — not a driver channel (§6.2.1) | costs zero channels; mirrors the feed actually energised |
 | **Boost to controller** | FarDriver boost input (an unused pull-down input re-assigned to `BoostPin`, §7.1) | open-drain N-MOSFET (100 Ω series) or PC817 opto; **off = no boost** by default | **D4: through the module** |
-| **CAN to the Chaojie** | display pins 8 (H) / 7 (L) | ESP32 TWAI + `SN65HVD230`, 120 Ω | ⏸️ **Deferred (D19).** Build the hardware anyway — transceiver in hand, 2 of 7 spare GPIO, and a replacement panel is likelier to need CAN than not. Transmit in `TWAI_MODE_NO_ACK` |
+| **CAN to the Chaojie** | display pins 8 (H) / 7 (L) | ESP32 TWAI + `SN65HVD230`, 120 Ω | ⏸️ **Deferred (D19).** Build the hardware anyway — transceiver in hand, 2 GPIO, and a replacement panel is likelier to need CAN than not. Transmit in `TWAI_MODE_NO_ACK` |
 | Buzzer | small 12V buzzer | low-side MOSFET, LEDC PWM | boost chirps (§7), turn-signal click (§6.1) |
 | **Display power (pin 2)** | Chaojie supply | high-side switch, **default-ON**, soft-started | **§3.3.** ⏸️ D11 parked. ⚠️ Never switch pin 3 / B− |
 | **Cooling fan** | 12V fan on the controller heatsink | low-side MOSFET, PWM | thermostatic from the MOS/motor temps the module already reads — this is what makes an enclosed controller bay viable (checklist Phase 3) |
@@ -773,7 +823,7 @@ independently is to switch each feed between +12 V and the lamp — high-side.**
 lighting channels are high-side**: headlight LOW / HIGH / DRL, tail running, turn L, turn R — and so is
 the brake circuit's STOP switch (Q1). Only the **horn** (its own `+`/`−` pair) is low-side, and the
 telltales are fed from the lamp feeds.
-**Board D is a high-side board** with a few low-side channels.
+**The driver board (block D, DRV) is a high-side board** with a few low-side channels.
 
 - Every lighting feed gets a **high-side switch** — the `TPS4H160B` smart switch (D15, §6.2.2a). An
   open-drain low-side sink (e.g. the `TPIC6B595`) cannot drive a shared-ground lamp at all.
@@ -883,14 +933,30 @@ current-limits *per channel*, keeping the fault local.
 Quad-channel, 160 mΩ, 4–40 V, **2.5 A nominal per channel**, AEC-Q100 Grade 1 (−40…+125 °C),
 28-HTSSOP (DigiKey `296-44711-1-ND`). **Two packages = 8 channels for the 6 needed — 2 spare.**
 
-**It clears both hard gates with no external parts:**
+**It clears both hard gates by device design — no level shifter, no external pulldown:**
 - ✅ **3.3 V drive, no level shifter.** V<sub>IH</sub> min **2 V** / V<sub>IL</sub> max 0.8 V across
-  −40…+150 °C. With TI's recommended 4.7 kΩ series protection resistor the divider still delivers 3.15 V.
+  −40…+150 °C. TI recommends a **4.7 kΩ series protection resistor** on every logic line from a 3.3 V
+  MCU — fitted on the six used `INx` and on `DIAG_EN`, `SEL` and `SEH`; through it the divider still
+  delivers 3.15 V.
 - ✅ **Floating input = output OFF.** Every `INx` has a specified **100/175/250 kΩ internal pulldown**,
   so the S3's ~200 ms high-Z boot window is safe **by device design** — D14's requirement.
 
+⚠️ **Current limit and current sense DO need external parts — `CL` and `CS` each take a resistor:**
+- **`CL` sets the per-channel current limit:** R<sub>CL</sub> = 0.8 V × 2500 / I<sub>limit</sub>, to
+  ground. **1.00 kΩ → ≈2 A** on package #1 (the 0.71 A and 0.54 A headlight loads); **2.0 kΩ → ≈1 A**
+  on package #2 (the 0.05–0.10 A tail and turn loads). With `CL` strapped to ground the part falls back
+  to its internal **8–14 A** limit — on a 12.5 A converter that is no per-channel limit at all, and
+  D15's fault containment is gone.
+- **`CS` is a current SOURCE (I<sub>OUT</sub> / 300), not a voltage:** **1.00 kΩ 1 %** to ground turns
+  it into 3.33 V/A (0.71 A reads 2.37 V). In any fault — an unplugged lamp included — the pin drives
+  **4.5–6.5 V**, so **10 kΩ in series** and 100 nF at the ADC side stand between it and the S3's 3.3 V
+  pin.
+- **TI's pin names are `VS` (supply), `SEL` and `SEH` (sense-channel select, low and high bit)** — not
+  VBAT / SEL1 / SEL2. Decouple each `VS` with 100 nF + 10 µF / 25 V. `THER` left open selects
+  auto-retry after a thermal shutdown.
+
 ⚠️ **Diagnostics cost firmware.**
-- **OFF-state open-load needs an external 20 kΩ pullup from each `OUTx` to VBAT — 6 resistors.**
+- **OFF-state open-load needs an external 20 kΩ pullup from each `OUTx` to `VS` — 6 resistors.**
 - **ON-state open-load is not reported on `FAULT`/`STx`.** The MCU must multiplex `SEL`/`SEH` and
   **ADC the current-sense pin** (~50 µs settling per channel), and only **Version B** can do it.
 - `STx` / `FAULT` are open-drain and need their own 3.3 V pullups.
@@ -906,8 +972,8 @@ rises to V<sub>IH</sub> + V<sub>F</sub> ≈ **2.7 V**, while an ESP32-S3 guarant
 under load. Omitting it is defensible because these switches sit on a regulated DC-DC output, not a
 reversible battery.
 
-💡 **Two channels are spare** (#1 `IN1` and one on expander #2) — one could drive the §3.3 display
-switch on a 12 V feed.
+💡 **Two channels are spare** — their `INx` pins stay unconnected and the internal pulldown holds
+them OFF. One could drive the §3.3 display switch on a 12 V feed.
 
 **Not Infineon `BTS7008-2EPA`** — the only candidate that detects open load in the ON state (8/21/35 mA
 thresholds), but it has **no internal input pulldown** (an external 10 kΩ per channel) and **no lamp-scale
@@ -920,16 +986,31 @@ chose smart switches.
 
 N-MOSFET, source to ground, drain to the load's return, **10k gate pull-down** (default OFF), gate
 driven from the S3 through ~100 Ω. Part: **`AO3400A`** — genuinely logic-level (48 mΩ guaranteed max at
-V<sub>GS</sub> 2.5 V); SOT-23, 30 V, with open caveats in `revv1-module-bom.md` (D3).
-- **Horn** (GPIO8), **buzzer** (GPIO40, LEDC) and **fan** (GPIO39, LEDC) are each a discrete FET on a
-  native pin — the fan and buzzer need PWM, which only native LEDC pins provide.
+V<sub>GS</sub> 2.5 V); SOT-23, 30 V, with open caveats in `bom.md` (D3).
+- **Horn**, **buzzer** (LEDC) and **fan** (LEDC) are each a discrete FET on a native pin — GPIO8, 40
+  and 39 on the prototype map — because the fan and buzzer need PWM, which only native LEDC pins
+  provide. ⚠️ Never put a FET gate on GPIO44 (U0RXD): its boot-time pull-up sits at the FET's
+  threshold.
 - ⚠️ **Boost (S1) is on its own dedicated native pin with a hard external pull-down** (§3.1.1).
   ⚠️ Meter the boost wire before connecting a 30 V FET to it — the controller-side pull-up voltage is
   unmeasured, and the same harness carries pink `60VC` at pack voltage (§7.1).
 
 #### 6.2.4 Protection on every wire that leaves the box
 
-- **TVS at the connector** on each output (§4). The horn needs **no flyback** — it is electronic (M7).
+- **A TVS array at the connector, on the same board as the connector, on every line that leaves the
+  box — chosen by the line's idle voltage:**
+  - **onsemi `SMS15T1G`** (SC-74 quad, V<sub>RWM</sub> 15 V, V<sub>BR</sub> 16.7–18.5 V; clamps 24.0 V at
+    5 A and 29.0 V at 12 A, under the `AO3400A`'s 30 V) on every switched 12 V-class line, on the
+    brake-lever nodes (they idle near 11.4 V), on `BL`, and on the boost output (its pull-up voltage is
+    unmeasured, §7.1).
+  - **`PESD5V0S4UD`** (same SC-74 pinout, V<sub>RWM</sub> 5 V) **only** on lines that never exceed
+    3.3 V-class levels — pod inputs, UART, CAN, USB. ⛔ A 5 V array on a 12 V line conducts
+    continuously: a dead short across the channel it was meant to protect.
+  - ⚠️ **No array on the raw 12 V rail pins** that leave the box (horn +, fan +, buzzer +): the TDK's
+    over-voltage window (15.0–17.4 V) overlaps the array's minimum breakdown. One **`SMBJ15A`** at
+    those connectors covers them instead.
+- **Flyback:** the horn needs none — it is electronic (M7). The fan and the buzzer are inductive, and
+  each gets an `SS14`-class Schottky (1 A / 40 V) across its load connector.
 - **Reverse-polarity and load-dump** are bounded by the 12 V rail's own TVS rather than per channel.
 - **No per-channel fuses** — the `TPS4H160B`'s per-channel current limit keeps a shorted lamp wire local
   instead of hiccuping the whole rail (D15).
@@ -975,8 +1056,8 @@ What the slider buys:
 the worst-case headlight load is **one beam + DRL = 1.25 A**, never 1.96 A. The assembly can physically
 run both; firmware must enforce the exclusion — do not rely on the toggle alone.
 
-**Flash-to-pass (IN-09, owner 2026-09-10)** — reverses D14's "no flash-to-pass". It costs only the input
-wire and firmware; the HIGH channel already exists.
+**Flash-to-pass (IN-09, owner 2026-09-10).** It costs only the input wire and firmware; the HIGH
+channel already exists.
 
 | Slider | Pass button held | Result |
 |---|---|---|
@@ -997,8 +1078,8 @@ wire and firmware; the HIGH channel already exists.
   is a third bit.
 
 ⚠️ **Independent of the lighting state — these work with every light off:**
-- **The brake light** lights whenever a lever is pulled — the brake circuit switches it in hardware
-  (D23), independent of the lighting state and of firmware.
+- **The brake light** lights whenever a lever is pulled and the module's 12 V rail is up — the brake
+  circuit switches it in hardware (D23), independent of the lighting state and of firmware.
 - **Turn signals and hazard** follow their own inputs **always**.
 
 **Restore-on-boot: read the slider.** At boot the module reads the switch position and re-asserts
@@ -1012,9 +1093,12 @@ is a safety figure: ≤300 ms** (below), and ⬜ the real reset-to-lamp-on time 
 
 ✅ **The brake light does not depend on firmware (D23).** Each lever, through the brake circuit's
 steering diodes, switches the STOP lamp on through P-FET Q1 and cuts the motor through the FarDriver
-`BL` — both in hardware (`revv1-brake-circuit.md`). The module only senses the levers (IN-05/06). A
-hung, dead or unpowered module leaves the brake light and the motor cut working. There is no
-hard-brake flash: the lamp is on whenever a lever is pulled.
+`BL` — both in hardware (`brake-circuit.md`). The module only senses the levers (IN-05/06).
+**Firmware state cannot affect either:** a hung, crashed, reflashing or unflashed module leaves the
+brake light and the motor cut working. ⚠️ **Loss of the module's 12 V rail takes the lamp with it —
+and not the motor cut.** The STOP lamp is fed from that rail, so a blown tap fuse, an open key tap or
+a tripped converter means a dark brake lamp; `BL` is pulled low by the lever itself and needs nothing
+from the module. There is no hard-brake flash: the lamp is on whenever a lever is pulled.
 
 - **Brake inputs (IN-05/06):** read within 10 ms — they clear boost (below) and feed the WiFi page.
 - **Boost (IN-07) — module in the middle (D4).** Two rider-selectable modes:
@@ -1031,8 +1115,9 @@ hard-brake flash: the lamp is on whenever a lever is pulled.
   `app_main`.** A 2 s watchdog plus S3 boot (~200 ms ROM + app init) is **≥2.2 s dark ≈ 37 m at
   60 km/h**; ≤300 ms gives ~0.5 s total. ✔ **Measure the real reset-to-lamp-on time on the bench** and
   record it here.
-- **Safety:** the module is **never in the brake-cutoff or brake-light path** — both are the brake
-  circuit's hardware (D23) — and never writes controller parameters.
+- **Safety:** the module's **firmware is never in the brake-cutoff or brake-light path** — both are
+  the brake circuit's hardware (D23), and the lamp's only dependence on the module is its 12 V rail —
+  and the module never writes controller parameters.
 
 ### 7.1 Boost path — controller-side setup and the current-cap catch
 
@@ -1063,7 +1148,7 @@ hard-brake flash: the lamp is on whenever a lever is pulled.
 > **byte map (D8)**. **The CAN hardware stays in the design** — `SN65HVD230`, the 120 Ω, display pins
 > 7/8, 2 GPIO: the park is on the software, not the copper. Consequences: D11 and board F park too; the
 > WiFi page is the primary readout; D17 is the decision to re-open if the panel is *replaced*. Stop-list
-> and re-open triggers: `revv1-m16-can-bench-test.md` §0.
+> and re-open triggers: `can18-investigation.md` §0.
 
 **Design.** The Chaojie shows temperatures, phase current, amps and the status/alarm flags **only over
 CAN** — the one-line frame has no room for them — and our controller has no CAN. So the module
@@ -1095,7 +1180,7 @@ data".** The controller's CAN output is *table-driven*, and the table format is 
   over-temp, over-current, over-voltage, under-voltage, blocked, anti-theft, controller).
 - Each item = **Length (bits), Position (LSB bit 0–63 in the 8-byte frame), Gain, Send-ID (0–5), Valid
   flag, Bias**; byte order **Intel or Motorola**; standard or extended frames.
-- The `.heb` file's 0x180-byte CAN section stores exactly this table — **`fardriver/heb_decode.py`
+- The `.heb` file's 0x180-byte CAN section stores exactly this table — **`fardriver-nd72450-reference/tools/heb_decode.py`
   decodes it** (`CAN_block`). Ours is empty (`CAN: None`).
 - The controller also *receives* frames: **SOP** (BMS max discharge current), **SOC**, charge,
   side-stand, **3-speed** (0/1/2 gear, **3 = boost**), **gear N/F/R**, **Control** (display-type word),
@@ -1119,7 +1204,7 @@ data".** The controller's CAN output is *table-driven*, and the table format is 
    captions verified 2026-09-09) shows a CAN-SKU FarDriver 72450 populating speed, power, voltage, bus
    current and both temperatures on a Chaojie 3", with **phase current blank**. ⚠️ Our 3"'s build
    `CJ-YQ25-250418` does not show the Controller-information page. Detail:
-   `revv1-display-chaojie-3in-pinout.md` §3.2.
+   `pinout-3in-cj-v3-01.md` §3.2.
 
 #### 7.2.2 Active probing — the D8 route when the park lifts
 
@@ -1151,12 +1236,12 @@ on `SendID0` = `0x100` (§7.2.3). The **Rigol MSO5074** verifies what is actuall
    tractable. A working decoder's ID/bit map *is* the answer to D8.
 7. **Do not enable CAN on our controller** — A11/A12 = the Hi/Low speed sense lines (§7.2 design).
 
-Routes to the map, in order, for when the park lifts: `revv1-m16-can-bench-test.md` §8.
+Routes to the map, in order, for when the park lifts: `can18-investigation.md` §8.
 
 #### 7.2.4 M16 — done, parked
 
 M16 established that the panel does not ACK and reads as a receive-only node (§5 M16 row). The
-procedure, firmware, results and the three method traps are in `revv1-m16-can-bench-test.md` — ⛔ its
+procedure, firmware, results and the three method traps are in `can18-investigation.md` — ⛔ its
 §4.1 pre-flight gate is mandatory reading before any CAN bench work.
 
 With no module screen (D17) and D8 parked (D19), the Chaojie shows only the one-line fields (speed, its
@@ -1172,25 +1257,25 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **D3** | Where do the "dashboard buttons" go? | **(d) a bought handlebar switch set** — extended to both pods by D20 | **DECIDED 2026-09-10 (owner).** A new switch set is plain dry contacts to the module (§4 class A). No printed pad, inserts or sealing job. **Selection criteria:** ⚠️ **wetting current** — prefer gold-plated or sealed contacts and use **1 kΩ pull-ups** (§4) · latching vs momentary per control (D21/D22) · ⛔ **avoid sets with built-in LEDs or a controller/USB module** (they need their own 12 V feed and ground reference) · the pair must cover turn (3-position), horn, high/low, lighting (3-position) and hazard — ⛔ the evaluated `B0CT897DDX` has **no horn button** · ⬜ measure the bar clamp Ø (22.2 mm / ⅞″ expected, some 25.4 mm) and ⬜ check right-bar space (throttle grip, switch set and brake perch compete). Two sets, **~$30–50** |
 | **D4** | Boost button routing | **(b) through the module** — HOLD / TOGGLE, long-press mode switch, safety clears | **DECIDED 2026-09-06.** The modes exist only with the module in the middle; mitigations: open-drain default-off output, brake/key/timeout clears, the controller's own boost timer |
 | **D5** | Lamp voltage class | **12 V** | **RESOLVED 2026-09-08.** The headlight housing is stamped `LOW BEAM 12V/8.5W`, `HIGH BEAM 12V/8.5W`, `DAYTIME RUNNING 12V/6.5W`; the horn measured 12 V / 0.10 A. The module's 12 V rail drives the bike's lamps directly |
-| **D6** | Board | **ESP32-S3 DevKitC-1** | **DECIDED 2026-09-07 (§3.1).** Pins (21 native used, 7 spare of a 28-pin clean pool, §3.1.3; ~32 on a custom board, §9.8), 3 UARTs for the two RX taps, two cores to keep bus timing off the WiFi core. Not the H2 (no WiFi); the C6's second TWAI is the only thing given up — an `MCP2515`/`TCAN330` on SPI recovers it if ever needed. The module *variant* is a thermal choice (D18) |
-| **D7** | Use the IN-11 spare as **FarDriver gear select** (Low / Mid / High via `LowSpeedPin` PIN2 / `HighSpeedPin` PIN3)? | **(b) no for first ride** — stay `HighOnly`; (a) is cheap to add later | Options: (a) module grounds SDL/SDH through an open-drain MOSFET with `SPModeConfig` set to a 3-speed mode (currently `HighOnly`) · (b) stay `HighOnly`, gear changes in the app · (c) a hardware 3-speed switch. It is a **power limiter, not a ratio**: **Low** = 25% line / 50% phase (**20 A / 100 A**), **Mid** = 50% / 75% (**40 A / 150 A**), `MidSpeed_rpm` 4500, **High** = full 80 A / 200 A. ⚠️ **`LowSpeed_rpm` = 0 is vendor-shipped and ambiguous** (0 rpm cap, or no cap?) — resolve on the bench before enabling. ⚠️ Costs 2 module outputs and competes with boost for PIN2 (§7.1 — boost uses PIN17). Mid ≈ the "everyday 60 A" of §7.1. Its real value is a **persistent** low-power mode (lending the bike, wet roads) — IN-11's latching switch fits it |
-| ⏸️ **D8** | How to obtain the CAN table the Chaojie parses (§7.2) | ⏸️ **PARKED (D19)** — do not work this row | **Known:** protocol **`CAN` = 18** (Chaojie, 2026-09-10); **`CANBaud` = 0 = 250K** (reseller text — "0-250 kbps" is an enum index, `fardriver/heb_decode.py:24`); the panel is a receive-only node, so the module transmits in `TWAI_MODE_NO_ACK` (MEDIUM); the goal is demonstrated on this display model (NRGZ28: motor temp, controller temp, bus current populate; **phase current stays blank**); **M12 is closed** — the map is firmware-internal (§7.2.1). **Missing:** the byte map. Routes when it re-opens: `revv1-m16-can-bench-test.md` §8. ⛔ Do not enable CAN on our controller (§7.2) |
+| **D6** | Board | **ESP32-S3 DevKitC-1** | **DECIDED 2026-09-07 (§3.1).** Pins (21 native used, 7 spare of a 28-pin clean pool, §3.1.3; a pool of 30 on the custom board, §9.8), 3 UARTs for the two RX taps, two cores to keep bus timing off the WiFi core. Not the H2 (no WiFi); the C6's second TWAI is the only thing given up — on the prototype an `MCP2515`/`TCAN330` on SPI recovers it from the spare pins. The module *variant* is a thermal choice (D18) |
+| **D7** | Use a spare latching bar input as **FarDriver gear select** (Low / Mid / High via `LowSpeedPin` PIN2 / `HighSpeedPin` PIN3)? | **(b) no for first ride** — stay `HighOnly`; (a) is cheap to add later | Options: (a) module grounds SDL/SDH through an open-drain MOSFET with `SPModeConfig` set to a 3-speed mode (currently `HighOnly`) · (b) stay `HighOnly`, gear changes in the app · (c) a hardware 3-speed switch. It is a **power limiter, not a ratio**: **Low** = 25% line / 50% phase (**20 A / 100 A**), **Mid** = 50% / 75% (**40 A / 150 A**), `MidSpeed_rpm` 4500, **High** = full 80 A / 200 A. ⚠️ **`LowSpeed_rpm` = 0 is vendor-shipped and ambiguous** (0 rpm cap, or no cap?) — resolve on the bench before enabling. ⚠️ Costs 2 module outputs and competes with boost for PIN2 (§7.1 — boost uses PIN17). Mid ≈ the "everyday 60 A" of §7.1. Its real value is a **persistent** low-power mode (lending the bike, wet roads) — a latching switch fits it |
+| ⏸️ **D8** | How to obtain the CAN table the Chaojie parses (§7.2) | ⏸️ **PARKED (D19)** — do not work this row | **Known:** protocol **`CAN` = 18** (Chaojie, 2026-09-10); **`CANBaud` = 0 = 250K** (reseller text — "0-250 kbps" is an enum index, `fardriver-nd72450-reference/tools/heb_decode.py:24`); the panel is a receive-only node, so the module transmits in `TWAI_MODE_NO_ACK` (MEDIUM); the goal is demonstrated on this display model (NRGZ28: motor temp, controller temp, bus current populate; **phase current stays blank**); **M12 is closed** — the map is firmware-internal (§7.2.1). **Missing:** the byte map. Routes when it re-opens: `can18-investigation.md` §8. ⛔ Do not enable CAN on our controller (§7.2) |
 | **D9** | What stays live at key-off? | **(a) nothing** — module + 12V rail off the key-switched path | **DECIDED 2026-09-07.** Zero parasitic drain; the §3.2.2 ride-out cap still gives a clean shutdown. **Hazards die with the key** — accepted |
-| **D10** | May the module drive the FarDriver **KEY** line? | **(b) no — sense only via IN-12** | **DECIDED 2026-09-07.** The module never holds the KEY line, so a hung module can neither cut motor power nor switch the bike on. Starting is a **hardware** latch, not a module output (**D24**) |
-| ⭐ **D24** | **How the bike starts** (§3.2.5a) | ~~(a) key switch feeds KEY directly~~ · **(b) start gesture: run switch ON + start button held ~2 s sets a hardware latch that feeds KEY** · ~~(c) the module drives KEY in firmware~~ | ✅ **DECIDED (b) 2026-09-12 by the owner** — *"the run switch must be on, and the ignition held down for 2 seconds, then the fardriver will be started."* The key switch now powers the **module**; the controller comes up on the gesture. ⭐ **(c) was rejected to keep D10:** a firmware-held KEY means a watchdog reset or a reflash cuts motor power under way. The latch holds in hardware; **reset is the run switch or the key**, both of which the rider operates. The RC timing also sits in hardware, so the gesture works with the module unflashed. ⬜ Size Q3, its ramp and the RC (§3.2.5a) |
-| ⏸️ **D11** | Display supply: 12 V or pack voltage, and so which high-side switch? | ⏸️ **PARKED with the display (D19)** | Options: (a) 12 V + a 60 V P-MOSFET off the load rail · (b) pack V + a 150 V P-MOSFET or a photovoltaic MOSFET SSR. The right answer depends on which panel ends up fitted, so **board F leaves the first order** and the dash feeds from switched B+ (work order §3.1) meanwhile. **The gate when it re-opens:** M14 shows the panel boots at 12 V, but its **V field reads pin 2, not the link** — under (a) the dash reads **12 V / 0 %** unless a transmitted voltage overrides the internal ADC. `SpecialFrame` 21 (16 + DATA9 *power* + DATA10 *current %*) sends **no voltage byte**; frames **25 / 24 / 16**, or **31 with ByteOption 2**, do (`revv1-display-chaojie-3in-pinout.md` §4). Under (b), V and battery % stay a direct measurement, truthful through a module hang |
+| **D10** | May the module drive the FarDriver **KEY** line? | **(b) no — sense only via IN-12** | **DECIDED 2026-09-07.** The module never holds the KEY line, so a hung module can neither cut motor power nor switch the bike on. Starting is the key switch alone, feeding KEY directly (**D24**) |
+| ⭐ **D24** | **How the bike starts** (§3.2.5a) | **(a) the key switch feeds the FarDriver KEY wire directly** — no start latch, no start gesture | ✅ **DECIDED 2026-09-18 (owner).** The topology is the §3.2.5 diagram: XT90-S out → 2 A fuse → key switch → FarDriver KEY wire, with one tap into the module for the D13 enable and the IN-12 sense. The module never sources or switches KEY (**D10**), so no module state — hung, reflashing, unpowered, absent — can start or stop the controller; a firmware-held KEY would mean a watchdog reset cuts motor power under way. The right pod's start button is a **spare sensed input** (§2.0). The run/off toggle remains the secondary kill, through Q2 onto `BL` (D23) |
+| ⏸️ **D11** | Display supply: 12 V or pack voltage, and so which high-side switch? | ⏸️ **PARKED with the display (D19)** | Options: (a) 12 V + a 60 V P-MOSFET off the load rail · (b) pack V + a 150 V P-MOSFET or a photovoltaic MOSFET SSR. The right answer depends on which panel ends up fitted, so **board F leaves the first order** and the dash feeds from switched B+ (work order §3.1) meanwhile. **The gate when it re-opens:** M14 shows the panel boots at 12 V, but its **V field reads pin 2, not the link** — under (a) the dash reads **12 V / 0 %** unless a transmitted voltage overrides the internal ADC. `SpecialFrame` 21 (16 + DATA9 *power* + DATA10 *current %*) sends **no voltage byte**; frames **25 / 24 / 16**, or **31 with ByteOption 2**, do (`pinout-3in-cj-v3-01.md` §4). Under (b), V and battery % stay a direct measurement, truthful through a module hang |
 | **D12** | Horn driver | **(a) MOSFET** | **DECIDED 2026-09-08.** M7: an electronic 12 V horn at 0.10 A — no coil, no inductive kick, no flyback diode needed (keep a TVS on the wire leaving the box) |
-| **D13** | Inrush into the module's bulk capacitance must not land on the key-switch contacts (§3.2.5) | **(b) key switch gates a soft-started P-MOSFET high-side switch; module on its own fused B+ tap** | **DECIDED 2026-09-07.** Closing a contact onto the module's bulk capacitance at 84 V is tens of amps every key-on; (b) removes it instead of making a contact absorb it. Key switch carries **~0.25 mA** — an ordinary 72 V e-bike key switch, 12–96 V. Tap fuse **2 A fast (`KLKD002`)**. FET **`IXTP26P20P`**, selected on SOA (363 W @ 5 ms). ⬜ **Owner call: slow the ramp from ~10 ms to ~50 ms** (3.2× less SOA demand). No changes needed to the work order, checklist or build sheet |
+| **D13** | Inrush into the module's bulk capacitance must not land on the key-switch contacts (§3.2.5) | **(b) key switch gates a soft-started P-MOSFET high-side switch; module on its own fused B+ tap** | **DECIDED 2026-09-07.** Closing a contact onto the module's bulk capacitance at 84 V is tens of amps every key-on; (b) removes it instead of making a contact absorb it. Key switch carries the KEY wire plus **~0.32 mA** of dividers — an ordinary 72 V e-bike key switch, 12–96 V. Tap fuse **2 A fast (`KLKD002`)**. FET **`IXTP26P20P`**, selected on SOA. **Gate ramp ~50 ms (owner, 2026-09-18):** 114 W @ 25 ms, under the part's DC SOA line at T<sub>C</sub> 70 °C (§3.2.5). The gate's pull-down switch is a **`BSS127`** — enhancement-mode; its sibling `BSS126` is depletion-mode, on at V<sub>GS</sub> = 0. The work order, checklist and build sheet keep their wiring |
 | **D14** | Lighting defaults | **All lights OFF at key-on · HIGH replaces LOW · hardware default-ON fail-safe dropped** | **DECIDED 2026-09-08 (owner).** ⚠️ **Accepted risk: a firmware hang at night leaves the bike dark**; mitigation is the ≤300 ms watchdog and reading the slider at boot (§7). Gate bias is uniform default-OFF (§3.1.2). The control mapping is now D21; flash-to-pass is IN-09 (§7). The brake light is outside this risk — it is hardware (D23) |
 | **D15** | High-side driver type | **(a) smart high-side switch on all 6 module lighting channels** — TI `TPS4H160BQPWPRQ1` (§6.2.2a) | **DECIDED 2026-09-08.** Per-channel current limiting stops a shorted lamp wire hiccuping the whole rail and killing the headlight; thermal shutdown and lamp-out detection come with it. 3.3 V input compatible, floating input = OFF |
-| **D16** | Which channels are native GPIO, which ride the I2C expander (§3.1.3)? | **(b) low beam + boost native; the other 5 lighting channels on expander #2** | **DECIDED 2026-09-08 (owner).** All-native did not fit the DevKit's pins; all-on-the-expander puts every lamp and bar switch behind one bus, so a single I2C fault at night costs the headlight and signals in one event. (b) keeps the headlight LOW on a private wire, and boost on its own pin (§7.1). The brake lamp is not a module output (D23). 7 spare remain. Revisit full-native at custom-PCB layout (§9.8.2) |
+| **D16** | Which channels are native GPIO, which ride the I2C expander? | **(a) FULL NATIVE on the custom board** — all six lighting channels, their diagnostics, boost, the brake inputs, PWM and analog on S3 pins; the expanders carry bar inputs only (§9.8.2). **The DevKit prototype runs (b):** low beam + boost native, the other 5 lighting channels on expander #2 (§3.1.3) | **(a) DECIDED 2026-09-18 (owner)** for the custom board; **(b) DECIDED 2026-09-08 (owner)** for the prototype, where all-native does not fit the DevKit's pins. Putting every lamp and bar switch behind one bus means a single I2C fault at night costs the headlight and signals in one event. (a) takes the bus out of the lighting path entirely; (b) keeps the headlight LOW on a private wire, and boost on its own pin (§7.1), with 7 pins spare. The brake lamp is not a module output (D23) |
 | **D17** | Status screen on the module | **(c) no screen** | **DECIDED 2026-09-08 (owner).** The Chaojie 3" is the only display; simplifies board A, the housing and the firmware. With D8 parked the dash shows only the one-line fields and the **WiFi page is the primary readout**. ⚠️ **Re-open trigger (D19): if the panel is replaced rather than fixed**, revisit what the module must display itself |
-| **D18** | Module variant for the custom PCB (§9.8.3) | **(a) `ESP32-S3-WROOM-1-N8`** (8 MB, no PSRAM, −40…+85 °C) | Same part as the prototype (M13), so firmware, pin availability and thermal envelope carry across unchanged. Keep **(b) `-H4`** (4 MB, −40…+105 °C) in reserve only if a thermal survey of the finished box shows it above ~75 °C — ⬜ confirm two OTA app partitions fit 4 MB first. ⛔ **Never an `R8` / `R16V`** — −40…+65 °C against a 60 °C ambient |
-| ⏸️ **D19** | Keep spending time on the Chaojie CAN dash feed? | **(b) PARK it** — finish the rest of the module, re-open the display later | **DECIDED 2026-09-10 (owner):** *"the display we have now will either not work, or take too long to setup … we will come back to the display later, and either figure it out or replace it."* Parking costs almost nothing to hold open (the CAN hardware is in hand and spends 2 of 7 spare GPIO), and every remaining step is display-independent. **Consequences:** ① D8 parked (the vendor thread with Peri stays open passively) · ② the CAN hardware stays fitted · ③ D11 parks and board F leaves the first order · ④ the WiFi page becomes the primary readout — a firmware deliverable · ⑤ the dash keeps its one-line feed (issue #7) · ⑥ D17 gains its re-open trigger. **Cost:** temperatures on the glass are deferred — the rider sees them on a phone, not while riding. Telltales are unaffected (pins 1/4/5 off the lamp feeds) and port to any 0–15 V sense-input dash |
-| **D20** | Handlebar pods | **(c) replace BOTH with bought switch sets** — every bar control is a new dry contact | **DECIDED 2026-09-10 (owner):** *"we are going to replace the right pod as well. this will be all of our buttons."* IN-01…IN-04 are plain **class A** dry contacts. The original pods come off whenever the switch sets are wired. **M1** is the unpowered ohm-out of the new sets. **10 input bits on expander #1** (§3.1.3); 1 kΩ pull-ups on every bar input (§4); ⬜ check right-bar space; ⬜ measure bar Ø |
+| **D18** | Module variant for the custom PCB (§9.8.3) | **(a) `ESP32-S3-WROOM-1-N8`** (8 MB, no PSRAM, −40…+85 °C) — or its external-antenna twin **`-WROOM-1U-N8`** on the same footprint (§9.8.1) | Same part as the prototype (M13), so firmware, pin availability and thermal envelope carry across unchanged. Keep **(b) `-H4`** (4 MB, −40…+105 °C) in reserve only if a thermal survey of the finished box shows it above ~75 °C — ⬜ confirm two OTA app partitions fit 4 MB first. ⛔ **Never an `R8` / `R16V`** — −40…+65 °C against a 60 °C ambient |
+| ⏸️ **D19** | Keep spending time on the Chaojie CAN dash feed? | **(b) PARK it** — finish the rest of the module, re-open the display later | **DECIDED 2026-09-10 (owner):** *"the display we have now will either not work, or take too long to setup … we will come back to the display later, and either figure it out or replace it."* Parking costs almost nothing to hold open (the CAN hardware is in hand and spends 2 GPIO), and every remaining step is display-independent. **Consequences:** ① D8 parked (the vendor thread with Peri stays open passively) · ② the CAN hardware stays fitted · ③ D11 parks and block F leaves the first order · ④ the WiFi page becomes the primary readout — a firmware deliverable · ⑤ the dash keeps its one-line feed (issue #7) · ⑥ D17 gains its re-open trigger. **Cost:** temperatures on the glass are deferred — the rider sees them on a phone, not while riding. Telltales are unaffected (pins 1/4/5 off the lamp feeds) and port to any 0–15 V sense-input dash |
+| **D20** | Handlebar pods | **(c) replace BOTH with bought switch sets** — every bar control is a new dry contact | **DECIDED 2026-09-10 (owner):** *"we are going to replace the right pod as well. this will be all of our buttons."* IN-01…IN-04 are plain **class A** dry contacts. The original pods come off whenever the switch sets are wired. **M1** is the unpowered ohm-out of the new sets. **12 input bits on expander #1** (§3.1.3); 1 kΩ pull-ups on every bar input (§4); ⬜ check right-bar space; ⬜ measure bar Ø |
 | **D21** | Lighting control | **(b) a 3-position slider + a high/low toggle**, as the bought set provides | **DECIDED 2026-09-10 (owner):** *"for the lighting, there is a high/low toggle, and a 3 position slider."* The slider's positions **are** D14's three states in order, with "low beam implies running" built into the hardware; the state is visible; and at boot the module reads the actual switch, not a remembered value. It improves **recovery**, not **immunity** — a hung module still drives no lamps. Lighting becomes a combinational lookup (§7). ⬜ Ohm the slider out before wiring (OFF/A/B vs OFF/A/A+B) |
-| **D22** | Turn-signal control | **A push-push latch whose button self-centres** — a fact of the bought left pod, in hand 2026-09-11 | ⭐ **It is a PUSH-PUSH (alternate-action) latch whose BUTTON SELF-CENTRES:** push left → latched left, the button springs back; press again to unlatch. **The latch is electrical and hidden.** ⛔⛔ **Supersedes D22**, which assumed a position-following 3-position switch and concluded *"no latch state machine"* and *"no auto-cancel"*. ✅✅ **AUTO-CANCEL IS RESTORED — by D22's own argument.** D22 dropped it because *"the switch position plus the dash telltale is the visible state"*; **a self-centring latch has NO visible state**, which makes it a button in exactly the sense D22 said auto-cancel exists to compensate for. Restore **20 s above 15 km/h, or 60 s regardless**. ⭐ **Implement on EDGES, not levels:** `open→closed` starts · `closed→open` stops · **auto-cancel stops the lamp and marks that latch cycle spent** so the still-closed contact cannot restart it · the next `open→closed` is a fresh signal. ⛔ **The latch state machine comes back** — press = on · same side = off · **press opposite = switch sides**, a real firmware case since both sides latch independently. ⚠️ **It re-adds the serial-link dependency on speed that D22 had removed** — degrade to the 60 s timeout alone when speed is unavailable. ✅ Also confirmed on this pod: **horn momentary · hazard latching · high/low 2-position.** ⭐ **The rear headlight-marked momentary is the natural flash-to-pass** — IN-09 moves there, off the "e-start" button |
-| **D23** | Does the brake light depend on firmware? | **No — the brake circuit switches it in hardware** (`revv1-brake-circuit.md`) | **DECIDED 2026-09-11 (owner).** Each lever, through 1N4148 steering diodes, pulls the FarDriver `BL` low (motor cut), pulls P-FET Q1 (`AO3407A`)'s gate low so Q1 switches +12 V to the tail STOP lamp (0.12 A, M5), and signals the module on IN-05/06 (10 kΩ pull-ups). A hung, dead or unpowered module leaves the brake light and the motor cut working; the module only senses. The lever carries only a few mA. **Consequences:** the brake lamp is not a module output — GPIO41 and one `TPS4H160B` channel are free (§3.1.3, §6.2.1; still two packages for 6 channels) · no hard-brake flash — the lamp is on whenever a lever is pulled · IN-05/06 are class A through the circuit's diodes, still native. **Gate:** **M3**, the lever switch type (§5), before the circuit is built. **Build order:** step 1 levers → `BL` now; step 2 the lamp when the 12 V rail is in; step 3 the module inputs — board G (§9.2) |
+| **D22** | Turn-signal control | **A push-push latch whose button self-centres, with auto-cancel** — a fact of the bought left pod, in hand 2026-09-11 | ⭐ **It is a PUSH-PUSH (alternate-action) latch whose BUTTON SELF-CENTRES:** push left → latched left, the button springs back; press again to unlatch. **The latch is electrical and hidden, so the switch has NO visible state** — the dash telltale is the only indicator, and that is what auto-cancel exists to compensate for. ✅ **Auto-cancel: 20 s above 15 km/h, or 60 s regardless.** ⭐ **Implement on EDGES, not levels:** `open→closed` starts · `closed→open` stops · **auto-cancel stops the lamp and marks that latch cycle spent** so the still-closed contact cannot restart it · the next `open→closed` is a fresh signal. ⛔ **A latch state machine is required** — press = on · same side = off · **press opposite = switch sides**, a real firmware case since both sides latch independently. ⚠️ **Auto-cancel depends on speed from the serial link** — degrade to the 60 s timeout alone when speed is unavailable. ✅ Also confirmed on this pod: **horn momentary · hazard latching · high/low 2-position.** ⭐ **The rear headlight-marked momentary is the natural flash-to-pass** — IN-09 |
+| **D23** | Does the brake light depend on firmware? | **No — the brake circuit switches it in hardware** (`brake-circuit.md`) | **DECIDED 2026-09-11 (owner).** Each lever, through 1N4148 steering diodes, pulls the FarDriver `BL` low (motor cut), pulls P-FET Q1 (`AO3407A`)'s gate low so Q1 switches +12 V to the tail STOP lamp (0.12 A, M5), and signals the module on IN-05/06 (10 kΩ pull-ups). **Firmware state cannot affect either function** — a hung, crashed or unflashed module leaves the brake light and the motor cut working; the module only senses. ⚠️ **The lamp is fed from the module's 12 V rail, so loss of that rail takes the lamp with it — not the motor cut**, which the lever makes by itself. The lever carries only a few mA. **Consequences:** the brake lamp is not a module output — GPIO41 and one `TPS4H160B` channel are free (§3.1.3, §6.2.1; still two packages for 6 channels) · no hard-brake flash — the lamp is on whenever a lever is pulled · IN-05/06 are class A through the circuit's diodes, still native. **Gate:** **M3**, the lever switch type (§5), before the circuit is built. **Build order:** step 1 levers → `BL` now; step 2 the lamp when the 12 V rail is in; step 3 the module inputs. On the custom build the whole circuit sits on **DRV** (block G, §9.2) |
 
 ## 9. Component breakdown and build plan
 
@@ -1204,20 +1289,52 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **The 12 V load rail with real lamps** | ❌ **never** | breadboard tie points are good for ~1 A |
 | ⚠️ **Anything fed from the pack** | ❌ **never** | 34 Ah of Molicel P42A ≈ **8P** ≈ **~360 A continuous** and far more into a short. A jumper working loose on B+ is an arc-welding event next to a lithium pack. **The bench supply is the safety device** |
 
-### 9.2 The seven blocks
+### 9.2 Functional blocks and the four-board set
 
-| | Block | Domain | Prototype on | **Final unit** | Phase |
-|---|---|---|---|---|---|
-| **A** | **Brain** — S3 + the two `MCP23017` expanders (no screen, D17) | 3.3 / 5 V | breadboard | proto board → custom PCB | P0 · P1 · P3 |
-| **B** | **Bus interface** — 2 × serial tap, CAN transceiver + 120 Ω, one-line | 3.3 V signals | breadboard | proto board → custom PCB | P0 · P1 · P3 |
-| **C** | **Input conditioning** — the class-A networks (§4) | 3.3 V, wires leave the box | breadboard | proto board → custom PCB | P2 |
-| **D** | **Output drivers** — 6 high-side lighting channels, horn, fan, buzzer; 2.62 A worst case | 12 V | breadboard **with LED stand-ins only** | stripboard with a reinforced bus (§9.6) + screw terminals → custom PCB | P2 |
-| **E** | **Power supply** — 84 V → 12 V + 5 V (§3.2) | **84 V** | — (bench supply direct) | **bought modules on a carrier PCB, metal enclosure** — never proto board | P2 |
-| **F** | **Display high-side switch** (§3.3) | 12 V or 84 V per D11 | breadboard (12 V case) | rides on **D** (12 V) or **E** (84 V) | ⏸️ parked (D11) |
-| **G** | **Brake circuit** — 1N4148 steering diodes, P-FET Q1 for the brake lamp, module pull-ups (`revv1-brake-circuit.md`; parts = BOM group G) | 3.3 V / 12 V signals | step 1: in-line in the lever-to-`BL` harness under heat-shrink | a small junction board in the module enclosure (from step 2) | step 1 now · steps 2–3 with P2 |
+**Blocks A–G are functional names.** This plan and the BOM use them throughout ("board E" is block
+E); on the prototype each is its own breadboard or perfboard (§9.3, §9.6).
+
+| | Block | Domain | Prototype on | Phase |
+|---|---|---|---|---|
+| **A** | **Brain** — S3 + the two `MCP23017` expanders (no screen, D17) | 3.3 / 5 V | breadboard → proto board | P0 · P1 · P3 |
+| **B** | **Bus interface** — 2 × serial tap, CAN transceiver + 120 Ω, one-line | 3.3 V signals | breadboard → proto board | P0 · P1 · P3 |
+| **C** | **Input conditioning** — the class-A networks (§4) | 3.3 V, wires leave the box | breadboard → proto board | P2 |
+| **D** | **Output drivers** — 6 high-side lighting channels, horn, fan, buzzer; 2.62 A worst case | 12 V | breadboard **with LED stand-ins only** → stripboard with a reinforced bus (§9.6) | P2 |
+| **E** | **Power supply** — 84 V → 12 V + 5 V (§3.2) | **84 V** | — (bench supply direct). Bought modules on a carrier PCB — never proto board | P2 |
+| **F** | **Display high-side switch** (§3.3) | 12 V or 84 V per D11 | breadboard (12 V case) | ⏸️ parked (D11) |
+| **G** | **Brake circuit** — 1N4148 steering diodes, P-FET Q1 for the brake lamp, module pull-ups (`brake-circuit.md`; parts = BOM group G) | 3.3 V / 12 V signals | step 1: in-line in the lever-to-`BL` harness under heat-shrink | step 1 now · steps 2–3 with P2 |
 
 **A + B are all that P0, P1 and P3 need, and both are breadboard-safe on USB power.** The power block
 (E) gates only P2.
+
+**The custom build is four stacked boards in one enclosure**, in the old-controller cavity under the
+battery compartment (**M18**). Power flows from the floor up with the voltage falling, which puts the
+most distance between the 84 V node and the 3.3 V serial taps (§3.2.4).
+
+| Layer | Board | Domain | Holds | Blocks |
+|---|---|---|---|---|
+| 1 — floor | **HVIN** | 84 V | B+ / B− entry and the key tap, an `SMCJ90A` on each, the D13 soft-start switch and its gate network (§3.2.5), one CM choke per converter, the IN-12 divider | E |
+| 2 | **CONV** | 84 V → 12 V / 5 V | both converters, C1 and C2, the hold-up diode and its 1 A fuse (§3.2.2), the Y2 capacitors, the TDK's output capacitors, one single-point tie from the baseplate to ground | E |
+| 3 | **DRV** | 12 V | both `TPS4H160B` with their `CL` / `CS` resistors (§6.2.2a), the three low-side FETs, **the whole brake circuit**, the 15 V TVS arrays at its connectors (§6.2.4), the parked display connector block | D · G · F |
+| 4 — lid | **BRAIN** | 3.3 V | the `ESP32-S3-WROOM-1` / `-1U` (§9.8.1), its 3.3 V regulator, both `MCP23017`, the CAN transceiver, USB-C and a service header, the pod and serial connectors with their input conditioning | A · B · C |
+
+**Three inter-board interfaces, all on 2.54 mm pitch**, so that any one board can be stood in for by a
+breadboard or perfboard section during bring-up (owner, 2026-09-15: *"both. i want full options for
+pcb and breadboard."*):
+- **HV-LINK**, HVIN → CONV — each converter's filtered +/− input, ground, and the IN-12 sense. It uses
+  alternate pins (5.08 mm effective pitch) for 84 V creepage.
+- **PWR-UP**, CONV → DRV and BRAIN — 12 V on three contacts, ground on four, 5 V, the IN-12 sense.
+- **STACK**, DRV ↔ BRAIN, 2 × 25 with alternating grounds — the six lighting commands, `DIAG_EN` /
+  `SEL` / `SEH`, both current-sense lines and fault flags, the horn / fan / buzzer commands, the two
+  brake inputs, the 12 V sense, `RUN`, CAN, 3.3 V, and a 100 kΩ-isolated copy of `BL` for firmware.
+
+⚠️ **D23's hardware is complete on DRV alone.** The levers, `BL` out and `ACC+` in all land on DRV's
+own connectors, and the real `BL` never crosses to BRAIN. The run/off toggle's contact arrives from
+BRAIN's right-pod connector over STACK as plain copper; its pull-up is on DRV, so an open contact — a
+lifted BRAIN included — reads as OFF and cuts the motor.
+
+📄 The netlist is the design: `tools/netlist.py`, gated by `python3 -m tools.integrity` and the test
+suite (repository README).
 
 ### 9.3 Breadboard allocation (prototype stage)
 
@@ -1277,7 +1394,8 @@ not the wattage** — smaller parts cost more:
 | TDK `CN50B110-12` | 12 V / 4.2 A / 50 W | ~$170 (RS, regional listing); TME 0 in stock |
 | RECOM `RP40-11012SFR/P` | 12 V / 3.33 A / 40 W | **$126.52** |
 
-The thermal case for downsizing is gone too (§3.2.3 — the `HAQ-10T` holds the baseplate near 82 °C).
+Downsizing has no thermal case either: what any of these bricks dissipates at 31 W is unmeasured
+(§3.2.3).
 
 **Converter #1 — 12 V load rail**
 
@@ -1307,14 +1425,14 @@ absolute-maximum, 1 A** parts, and none can be protected on this rail (§3.2.1).
 |---|---|---|
 | **Input fuse, DC-DC #1 — FAST-blow**, ≤10 A, on the **+Vin leg** (−Vin grounded), with I²t headroom for turn-on inrush | TDK-Lambda instruction manual | **Littelfuse `KLKD002`** — 2 A, **600 VAC / 600 VDC**, 100 kA AC / **50 kA DC**, 10.3 × 38.1 mm midget, fitted at the **module's B+ tap** so it serves the tap and DC-DC #1 together (§3.2.5). Holder: **Mersen `FEB-11-11`** inline + **`FSB1`** boots (BOM E4) |
 | **Input fuse, DC-DC #2 — 1 A TIME-DELAY** | Cincon datasheet | **Schurter `0001.2504`** (SPT 5×20 ceramic) — 250 VAC / **300 VDC**, UL 1500 A breaking at 300 VDC |
-| Fuse holder, per-module, on the carrier PCB | — | **Schurter `FAC 0031.3803`** — PCB THT, **600 VAC/VDC UL**, 10 A VDE / 16 A UL, −40…+85 °C, IP40 |
+| Fuse holder for that link, on CONV | — | **Two PCB fuse clips for a 5×20 link** — ⬜ part to choose: check its voltage line, and the clip-to-clip creepage at 84 V. ⛔ **Not the Schurter `FAC 0031.3803`** (PCB THT, 600 VAC/VDC UL, 10 A VDE / 16 A UL, −40…+85 °C, IP40) in the stack: it is a **47.5 mm-tall vertical** holder. It suits a free-standing carrier only |
 | **Bulk input electrolytic ≥100 µF**, low-impedance, Chemi-Con KXJ class, at the terminals; two in parallel below −20 °C | TDK | **Chemi-Con `EKXJ221ELL221MM25S`** — 220 µF / 220 V (the requirement is ≥200 V), −40…+105 °C, 18 × 25 mm. ⚠️ **×2** (§3.2.2) |
 | **4700 pF from +Vin AND from −Vin to the module BASEPLATE**, close to the terminals, HV rated | TDK — its *primary* EMI-and-stability measure | **Vishay `VY2472M49Y5US6`** Y2 (BOM E9) |
 | **Input dv/dt ≤ 10 V/µs** | TDK | delivered by D13(b)'s soft-start |
-| **Common-mode choke — one PER CONVERTER**, **before** the bulk capacitor. The Cincon meets its EN 50155 EMC rating only *"WITH EXTERNAL FILTER"*; TDK: *"when using multiple power supplies, add choke to each power supply input"* | Cincon + TDK | **Würth `7448022010`** (WE-CMBNC) **×2** — 10 mH, 2 A @ 70 °C, 85 mΩ, 300 V, 2100 V hipot, −55…+125 °C, **AEC-Q200 Grade 1**. Runs at **29% of rating**; I²R ≈ 57 mW |
+| **Common-mode choke — one PER CONVERTER**, **before** the bulk capacitor. The Cincon meets its EN 50155 EMC rating only *"WITH EXTERNAL FILTER"*; TDK: *"when using multiple power supplies, add choke to each power supply input"* | Cincon + TDK | **Würth `7448022010`** (WE-CMBNC) **×2** — 10 mH, 2 A @ 70 °C, 85 mΩ, 300 V, 2100 V hipot, −55…+125 °C, **AEC-Q200 Grade 1**. Runs at **29% of rating**; I²R ≈ 57 mW. **A four-terminal part** (windings 1–4 and 2–3): each converter's −Vin is its own net, joined to ground only through its choke winding. **22.0 mm tall** × 18.0 × 14.0 mm |
 | **Input TVS** | Cincon (names `P6KE180A` for railway surge) | **`SMCJ90A`** (1500 W, DO-214AB) — §3.2.1 |
 | Hold-up blocking diode | §3.2.6(a) | **`1N4007`** — 1000 V, I<sub>FSM</sub> 30 A @ 8.3 ms / 45 A @ 1 ms |
-| Heatsink for the conduction-cooled quarter brick | TDK | **`HAQ-10T`** — 7.5 °C/W, 57.9 × 25.4 × 36.8 mm; baseplate −40…+100 °C, OTP trips 105–120 °C, so **target Tb ≤ 85–90 °C** (~82 °C at the real load). ◐ Fit ~85% confident (BOM E5) |
+| Cooling path for the conduction-cooled quarter brick | TDK | **Bolt the baseplate to a thermal interface** (§3.2.3). Baseplate −40…+100 °C, OTP trips 105–120 °C, so **target Tb ≤ 85–90 °C**; the dissipation that sets it is ⬜ unmeasured. TDK's **`HAQ-10T`** finned sink (7.5 °C/W in free air, 57.9 × 25.4 × 36.8 mm, BOM E5) is a free-air part and does not fit the stacked build |
 
 ##### ⛔ Fuse traps — read before substituting anything
 
@@ -1354,8 +1472,8 @@ route.** That is why the fast-blow is a 10×38 midget.
 
 #### 9.5.3 Prices
 
-**`revv1-module-bom.md` owns prices and order state** — the 2026-09-10 orders logged what was actually
-paid.
+**`bom.md` owns prices and order state** — it logs what the 2026-09-10 orders actually
+cost.
 
 ### 9.6 Prototype construction — generic FR4 prototype board (owner's choice, 2026-09-08)
 
@@ -1377,8 +1495,10 @@ conformal-coat anything above 12 V whatever board you buy.
 
 #### 9.6.1 Board sizes and the DevKit
 
-- **Board D** wants ~**100 × 100 mm or larger** — ~15 screw terminals at 5 mm pitch (~75 mm of edge)
-  plus the drivers, gate resistors, pull-downs and the reinforcement wire. One board.
+- **Board D** (the prototype's) wants ~**100 × 100 mm or larger** — ~15 screw terminals at 5 mm pitch
+  (~75 mm of edge) plus the drivers, gate resistors, pull-downs and the reinforcement wire. One board.
+  The custom DRV uses keyed right-angle harness connectors instead: a screw terminal is 10–12 mm tall,
+  and connector height sets the stack's layer ceilings (M19).
 - **Boards A / B / C** are small; one board per block.
 - The **S3-DevKitC-1 is ~63 × 25.5 mm**. Its header rows are a whole multiple of 0.1", so it spans any
   0.1" grid; with plated through-holes every pin is reachable from the underside. ⬜ **M15** confirms the
@@ -1405,8 +1525,15 @@ conformal-coat anything above 12 V whatever board you buy.
 
 ### 9.7 3D-printed housing (later pass)
 
-⚠️ **Gated on §9.8:** if the custom PCB happens, the housing follows that board's outline, not the
-perfboard stack's. Material, ingress, inserts and thermal rules below apply either way.
+⚠️ **Gated on §9.8:** the housing follows the custom boards' outline (§9.2), not the perfboard
+stack's. Material, ingress, inserts and thermal rules below apply either way.
+
+- ⬜ **The custom stack's enclosure material — printed or metal — is decided after M18** (owner,
+  2026-09-18). The boards are drawn to suit either, and no thermal or height budget is final until it
+  is. Either way the brick's baseplate bolts to a metal thermal interface (§3.2.3), which is the
+  "bolt to metal" requirement below in its minimum form.
+- ⚠️ **A metal enclosure — or a metal cavity with the battery tray for a lid — kills a PCB antenna.**
+  BRAIN's footprint takes the external-antenna `-WROOM-1U` for that case (§9.8.1).
 
 - Internal envelope: follows the boards — plan for **4 positions, A, B, C and one D**. Allow **≥20 mm per
   layer** if stacking (DevKit plus headers ~13 mm).
@@ -1414,45 +1541,62 @@ perfboard stack's. Material, ingress, inserts and thermal rules below apply eith
   before populating.
 - ⚠️ **Brass heat-set inserts, not screws self-tapped into plastic** — printed bosses crack under
   vibration.
-- **Keep the DevKit's USB port reachable**, or the design commits to OTA-only reflashing.
+- **Keep the DevKit's USB port reachable**, or the design commits to OTA-only reflashing. On the
+  custom build BRAIN carries USB-C and an internal service header (EN, IO0, UART0, 3V3, GND) — recovery
+  access without dismantling the stack.
 - ⚠️ **Material: not PLA** (softens at ~50–60 °C). **PETG (~80 °C) minimum; ASA preferred** for UV
   stability. ABS only if never sun-exposed.
 - ⚠️ **Ingress:** printed walls **wick water along the layer lines** — a gasket channel and cable glands,
   or a sheltered mounting position.
 - **Board E goes in a METAL enclosure:** the module is a **conduction-cooled pinned brick** whose
   baseplate wants to bolt to metal, a metal box is the right EMC answer next to 3.3 V serial taps and
-  80 A of chopped phase current, and it is the only sane home for the 84 V node. Forced air is not
-  required (§3.2.3). The printed housing is for boards A–D.
+  80 A of chopped phase current, and it is the only sane home for the 84 V node. Whether it also needs
+  moving air waits on the §3.2.3 measurement. The printed housing is for boards A–D.
 - Strain relief at every wire entry (§9.6.2).
 
 ### 9.8 ⭐ Custom PCB — the likely final form (owner's intent, 2026-09-08)
 
 **Breadboard → generic perfboard prototype (§9.6) → custom PCB.** Build the prototype so it transfers,
-and don't constrain the custom board with DevKit artifacts.
+and don't constrain the custom boards with DevKit artifacts. The custom build is the four-board set of
+§9.2.
 
 #### 9.8.1 Most of the pin-map constraints are DevKit artifacts, not silicon
 
 | Constraint in §3.1.3 | On a custom PCB with a bare WROOM-1 |
 |---|---|
 | Only **36 of 45** GPIOs reach the headers | ✅ **Gone** — route all of them |
-| **GPIO33, 34** not broken out | ✅ **Recovered** |
+| **GPIO33, 34** not broken out | ⛔ **Unchanged — the module, not the DevKit.** The `ESP32-S3-WROOM-1` / `-1U` has no IO33 or IO34 pad; both exist only inside the module |
 | **GPIO38 / 48** and the onboard RGB LED (the v1.0-vs-v1.1 trap) | ✅ **Gone** — no LED, or fit one where you like |
-| **GPIO44** driven by the onboard CP2102N | ✅ **Recovered** with native USB (GPIO19/20) and no UART bridge |
+| **GPIO44** driven by the onboard CP2102N | ✅ **Recovered** with native USB (GPIO19/20) and no UART bridge — as an input (the IN-14 tap lands there). ⚠️ Its boot-time pull-up sits at a FET's threshold, so never a gate |
 | **GPIO35, 36, 37** and octal PSRAM | ✅ **Yours by purchase order** — specify the module variant (§9.8.3) |
 | ⛔ **Strapping GPIO0, 3, 45, 46** | ⚠️ **Unchanged — silicon.** No wire that leaves the box |
 | ⛔ **GPIO19, 20 = USB** | ⚠️ **Unchanged** if you keep native USB — which you should (the OTA fallback) |
 | ⛔ **GPIO43 emits the ROM boot log** | ⚠️ **Unchanged — silicon.** Never a load driver |
 | ⛔ **GPIO26–32 = in-package flash · GPIO22–25 do not exist** | ⚠️ **Unchanged** |
 
-**Net: a clean pool of ~32** (the DevKit prototype has 28).
+**Net: a clean pool of 30** (the DevKit prototype has 28) — the 45 GPIOs that exist, less the 7 flash
+pins (26–32), IO33/34 (no pads), the 2 USB pins and the 4 strapping pins. GPIO43 is inside the 30 but
+stays unused (ROM boot log).
+
+**One footprint, two modules.** The `ESP32-S3-WROOM-1` (PCB antenna, 18 × 25.5 mm) and the
+`ESP32-S3-WROOM-1U` (U.FL connector for an external antenna, 18 × 19.2 mm) share pads and pinout, and
+both come as `-N8` (85 °C) and `-H4` (105 °C), so D18 applies to either. BRAIN's footprint accepts
+both and keeps the PCB antenna's keep-out. **The `-1U` matters because a metal enclosure — or a metal
+cavity with the battery tray for a lid — kills a PCB antenna**, and Espressif asks for at least 15 mm
+of clearance around one in every direction. Which module is fitted follows the enclosure decision
+(§9.7).
 
 #### 9.8.2 What gets easier, and what may reverse
 
-- ✅ **Spare pins are comfortable** — even the prototype has 7 spare, so an SPI CAN controller (~4 pins)
-  fits if one is ever needed.
-- 💡 **D16 could go FULL NATIVE on the custom board — the target end state.** With ~32 pins the S3 can
-  drive all 8 `TPS4H160B` inputs directly, **removing the I2C bus from the lighting path entirely.** ⬜
-  **Revisit D16 at layout.** The expanders stay for the bar inputs, where a bus glitch is a missed press.
+- ✅ **D16 is FULL NATIVE on the custom board (owner, 2026-09-18).** The S3 drives the six used
+  `TPS4H160B` inputs and `DIAG_EN` / `SEL` / `SEH` directly, over the STACK connector (§9.2) — **the
+  I2C bus is out of the lighting path entirely.** Both `MCP23017`s are still fitted: #1 carries the bar
+  inputs, where a bus glitch is a missed press; #2 is sixteen spare bits (GPA7/GPB7 output-only,
+  §3.1.3).
+- ⚠️ **Spare pins are scarce.** Full native moves eight signals off expander #2 and onto the S3, into a
+  pool only two pins larger than the prototype's. The BRAIN pin assignment, and the count of what is
+  left, live in `tools/netlist.py` and are checked by `tools/rules.py` — this plan carries the rules,
+  not the numbers.
 - ⚠️ **What does not change: the functional rules.** Carry these over verbatim — analog only on ADC1
   (GPIO1–10), brake inputs native for < 10 ms, boost on a dedicated pin with a hard external pull-down
   and never on a bus, nothing that leaves the box on a strapping pin, TVS at every connector, every gate
@@ -1480,37 +1624,40 @@ series modules operate at –40 ~ 65 °C ambient temperature, and other module v
   phase current.
 - ✅ **Trace widths sized to real current** — the 20 AWG reinforcement disappears.
 - ✅ **Decoupling placed properly**, mounting holes, strain relief and conformal coat designed in.
-- ✅ **Board consolidation** — A/B/C/D on one board with the 84 V section fenced off. **Board E stays
-  separate, in its metal enclosure** (§9.7).
+- ✅ **Partition by voltage** — four stacked boards with 84 V at the floor and 3.3 V at the lid (§9.2),
+  in place of five perfboards and their interconnect.
 
-⚠️ **Do not skip the perfboard stage.** A first-spin PCB with untested firmware and untested driver
+⚠️ **Do not skip the prototype stage.** A first-spin PCB with untested firmware and untested driver
 circuits is how you buy three spins instead of one; the perfboard unit is what de-risks the layout.
+The custom set keeps the option open to the end: every inter-board interface is on 2.54 mm pitch, so
+a breadboard or perfboard section can stand in for any one board during bring-up (§9.2).
 
-## 10. BOM → `revv1-module-bom.md`
+## 10. BOM → `bom.md`
 
-📄 **The bill of materials lives in `revv1-module-bom.md`** — part numbers, quantities, prices, order
+📄 **The bill of materials lives in `bom.md`** — part numbers, quantities, prices, order
 history and status. **Change a part there first**, then the plan section that carries its reasoning:
 §3.2 power and D13 · §3.2.1 the TVS · §3.2.6 fuse and diode sizing · §4 interface classes and the
 wetting-current rule · §6 outputs and drivers · §9.5 converters and support parts · §9.6 construction ·
 §9.8 the custom PCB · §12 sourcing evidence. The brake circuit's parts are **group G**; their reasoning
-is `revv1-brake-circuit.md` §3.
+is `brake-circuit.md` §3.
 
 **Totals and order state live in the BOM, not here.** Its header carries the committed and estimated
 totals and the tariffs they exclude; its order history shows what has arrived and what is outstanding.
-No unverified part lines remain (the TVS array `PESD5V0S4UD` and the Y2
-cap `VY2472M49Y5US6` were verified from datasheets 2026-09-10). **The BOM header is authoritative.**
+Lines whose part or price is not yet verified are marked ⬜ or ◐ there. **The BOM header is
+authoritative.**
 
-- ⏸️ **Board F (display power switch) is not ordered** — it parks with D11 under D19.
-- **Prices:** every distributor storefront 403s from this machine and price snippet-mining is unreliable,
-  so prices come from the owner reading them in a browser.
+- ⏸️ **Block F (display power switch) is not ordered** — it parks with D11 under D19.
+- **Prices** are the ones the owner read from the distributor's own page — never a search snippet.
 - **Not in this BOM:** the bike's own parts, including the issue #10 Class T fuse and block — they are in
   the build sheet's order tracker.
 
 ## 11. Sources
 
 - Ride1Up "Revv 1 motor controller access" (the brake-lever wires run in the handlebar loom, §2.1) — https://support.ride1up.com/support/solutions/articles/65000189986-revv-1-motor-controller-access
-- FarDriver *APP parameter description* (2025) — §5.1.5 CAN instruction number, §12.3 CAN agreement data — `fardriver/reference/FarDriver-app-parameter-description-2025.pdf`
-- `revv1-fardriver-nd72450-pinout.md`, `revv1-display-chaojie-3in-pinout.md`, `revv1-brake-circuit.md`, `revv1-m16-can-bench-test.md`
+- FarDriver *APP parameter description* (2025) — §5.1.5 CAN instruction number, §12.3 CAN agreement data. FarDriver's copyright: cited here, not redistributed
+- `brake-circuit.md` — https://github.com/bnich/Revv1-FS-72v-Conversion/blob/main/docs/brake-circuit.md
+- `harness-pinout.md` and `tools/heb_decode.py` — repository `fardriver-nd72450-reference` (not yet published)
+- `pinout-3in-cj-v3-01.md` and `can18-investigation.md` — repository `chaojie-display-protocol` (not yet published)
 
 ---
 
@@ -1528,9 +1675,13 @@ never from a web-fetch summary (a summary has already mis-stated a part's pin pi
 | **`1N4007`** (Vishay `1N4007-E3/54`, onsemi `1N4007RLG`) | V<sub>RRM</sub> / V<sub>DC</sub> 1000 V · I<sub>F(AV)</sub> 1.0 A · **I<sub>FSM</sub> 30 A @ 8.3 ms half-sine, 45 A @ 1 ms square** · V<sub>F</sub> 1.1 V @ 1 A · I<sub>R</sub> 5.0 µA @ 25 °C · I²t 3.7 A²s · DO-41 · −50…+150 °C | Vishay / onsemi datasheets |
 | Littelfuse **`KLKD002`** | 2 A fast-acting · **600 VAC / 600 VDC** · 10.3 × 38.1 mm midget · 100 kA AC / **50 kA DC** interrupting — the DC figure is a measured PV-approval rating (UL 2579 / IEC 60269-6), not an extrapolated AC one | Littelfuse KLKD datasheet |
 | Schurter **`0001.2504`** (`SPT`) | 250 VAC / **300 VDC**, UL 1500 A breaking at 300 VDC — the DC rating comes **only from the UL/CSA listing** (the IEC/VDE line is AC-only); DC rating derates with current (§9.5.2) | Schurter SPT datasheet |
-| Schurter **`FAC 0031.3803`** | PCB THT, 600 VAC/VDC UL, 10 A VDE / 16 A UL, −40…+85 °C, IP40. Power acceptance 3.2 W at 23 °C, ~1.2 W by 60 °C — fine for a 1 A link, **could not carry a 10 A link at 60 °C** | Schurter FAC datasheet |
-| Würth **`7448022010`** (WE-CMBNC) | 10 mH · 2 A @ 70 °C · 85 mΩ · 300 V AC · 2100 V AC hipot · −55…+125 °C · AEC-Q200 Grade 1. An AC-only rating is the documentation convention for CM chokes (IEC 60938-2 is an AC standard) — a CM choke sees near-zero differential voltage. Only `WE-SL5` states a DC limit (80 V DC) and is out | Würth datasheets |
-| TDK **`HAQ-10T`** | 7.5 °C/W natural convection · 57.9 × 25.4 × 36.8 mm · for the CN-B110 series (fit ~85% confident, BOM E5) | TDK |
-| IXYS **`IXTP26P20P`** | The only D13 candidate publishing a **10 ms SOA line at both 25 °C and 70 °C**. `IRF9640PbF`: ~335 W on its 10 ms line at 84 V (~241 W derated for 60 °C) — marginal. `FQP12P20`: no SOA plot at all | IXYS / Infineon / onsemi datasheets |
+| Schurter **`FAC 0031.3803`** | PCB THT, **vertical, 47.5 mm tall**, 600 VAC/VDC UL, 10 A VDE / 16 A UL, −40…+85 °C, IP40. Power acceptance 3.2 W at 23 °C, ~1.2 W by 60 °C — fine for a 1 A link, **could not carry a 10 A link at 60 °C**. Too tall for the stacked build (§9.5.2) | Schurter FAC datasheet |
+| Würth **`7448022010`** (WE-CMBNC) | 10 mH · 2 A @ 70 °C · 85 mΩ · 300 V AC · 2100 V AC hipot · −55…+125 °C · AEC-Q200 Grade 1 · four terminals (windings 1–4 and 2–3) · 22.0 mm tall × 18.0 × 14.0 mm max. An AC-only rating is the documentation convention for CM chokes (IEC 60938-2 is an AC standard) — a CM choke sees near-zero differential voltage. Only `WE-SL5` states a DC limit (80 V DC) and is out | Würth datasheets |
+| TDK **`HAQ-10T`** | 7.5 °C/W natural convection, a free-air figure · 57.9 × 25.4 × 36.8 mm · for the CN-B110 series (fit ~85% confident, BOM E5). Not used in the stacked build (§3.2.3) | TDK |
+| IXYS **`IXTP26P20P`** | V<sub>DSS</sub> −200 V · V<sub>GSS</sub> ±20 V continuous, ±30 V transient · V<sub>GS(th)</sub> −2.0…−4.0 V · T<sub>JM</sub> 150 °C · guaranteed SOA 160 W at −200 V / 5 s / T<sub>C</sub> 70 °C · forward-bias SOA plots at T<sub>C</sub> 25 °C **and 70 °C**, each with 25 µs, 100 µs, 1 ms, **10 ms, 100 ms and DC** lines. Read at 84 V on the 70 °C plot (±10 %): ≈460 W (10 ms) · ≈254 W (100 ms) · ≈191 W (DC). Upright it stands 17.5–21.8 mm, so it lies flat. `IRF9640PbF`: ~335 W on its 10 ms line at 84 V (~241 W derated for 60 °C). `FQP12P20`: no SOA plot at all | IXYS / Littelfuse **DS99913D** (not the 2007 "Preliminary" sheet) · Infineon / onsemi datasheets |
+| Infineon **`BSS127`** | N-channel **enhancement mode**, logic level · V<sub>DS</sub> 600 V · V<sub>GS(th)</sub> 1.4 / 2.0 / 2.6 V · R<sub>DS(on)</sub> ≤ 600 Ω at 4.5 V · P<sub>tot</sub> 0.5 W · SOT-23. ⛔ The same-family `BSS126` is **depletion mode** (V<sub>GS(th)</sub> −2.7…−1.6 V, conducting at V<sub>GS</sub> = 0) | Infineon BSS127 / BSS126 datasheets, Rev 2.1 |
+| onsemi **`SMS15T1G`** | SC-74 quad array, pins 1/3/4/6 cathodes and 2/5 anodes — the `PESD5V0S4UD`'s pinout · V<sub>RWM</sub> 15 V · V<sub>BR</sub> 16.7–18.5 V · clamps 24.0 V at 5 A, 29.0 V at 12 A | onsemi SMS05T1/D, Rev 10 |
+| Microchip **`MCP23017`** | **GPA7 and GPB7 are output-only** · `RESET` and A0–A2 must be externally biased · 1.8–5.5 V · V<sub>IH</sub> 0.8 × V<sub>DD</sub> = 2.64 V at 3.3 V | Microchip DS20001952, rev D |
+| Espressif **`ESP32-S3-WROOM-1` / `-1U`** | 41 pads, **no IO33 or IO34** · `-1` 18 × 25.5 mm with PCB antenna, `-1U` 18 × 19.2 mm with U.FL, same pinout · `-N8` −40…+85 °C, `-H4` −40…+105 °C, `R8` / `R16V` −40…+65 °C · the ambient rating is the air immediately outside the module | ESP32-S3-WROOM-1 / -1U datasheet v1.8; Espressif hardware design guidelines (15 mm antenna clearance) |
 | Alpha & Omega **`AO3400A`** | Logic-level: **48 mΩ guaranteed max at V<sub>GS</sub> 2.5 V**; SOT-23, 30 V (caveats in the BOM) | AOS datasheet |
-| TI **`TPS4H160BQPWPRQ1`** | See §6.2.2a | TI datasheet |
+| TI **`TPS4H160BQPWPRQ1`** | See §6.2.2a. `CL` unused must be tied to ground, giving the internal 8–14 A limit; R<sub>CL</sub> = 0.8 V × 2500 / I; `CS` sources I<sub>OUT</sub> / 300 and drives 4.5–6.5 V in a fault | TI datasheet SLVSCV8 |

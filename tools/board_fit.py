@@ -1,0 +1,239 @@
+"""Area and height budget for the four-board stack, read off the netlist.
+
+Nothing about the design is typed here. Parts and connectors -- board, side,
+footprint, height, whether that height was ever confirmed -- come from
+`netlist.current()`; the cavity and the stack parameters come from
+`board_params`, which also DERIVES the stack height. This file only adds the
+area arithmetic and says PASS or FAIL.
+
+    python3 -m tools.board_fit          # exit 1 when a budget fails
+    python3 tools/board-fit.py          # the same
+
+Three budgets, three plain answers:
+
+  DENSITY   raw body area against the usable area of that side of the board.
+  PACK      a naive shelf-pack of the same bodies with a courtyard round each,
+            against the board's length. ⚠️ A heuristic in both directions: it
+            packs stupidly, and it knows nothing of mounting holes, standoff
+            columns or creepage slots. When it fits, that is weak evidence.
+            When it does NOT fit, this tool has not shown the board can be
+            built, and says so -- the number is not explained away. What
+            overrules it is a placed outline, not an argument.
+  HEIGHT    `board_params.stack_height`, gap by gap, against the height there.
+
+⚠️ Both are provisional until M18 is measured and the enclosure is chosen;
+the report says so on its first line for as long as that is true.
+"""
+import sys
+from dataclasses import dataclass
+
+from . import board_params as bp
+from .eprj3.pcb import M3_INSET_MM
+from .model import Design
+
+#: FAIL above this share of a side's usable area, bodies only. CONV's two
+#: converter modules put it at about 0.65-0.70, and placing that by hand leaves
+#: nothing over; routing, courtyards and creepage have to come out of what is
+#: left, so a side past 0.75 has no layout. A sparse logic board
+#: scores 0.2-0.4.
+DENSITY_LIMIT = 0.75
+#: Per side of every body in the pack: 1.0 mm body to body. IPC-7351's most
+#: generous courtyard excess, and clear of the 0.6 mm IPC-2221 spacing BD-4
+#: holds 84 V to.
+COURTYARD = 0.5
+#: Each M3 corner costs a square two insets on a side (pcb.py places the hole).
+MOUNT_AREA = 4 * (2 * M3_INSET_MM) ** 2
+#: A body this tall or taller with no footprint is a hole in the area budget,
+#: not a negligible passive. Connectors always have a body.
+NEGLIGIBLE_BELOW_MM = 2.0
+
+SIDES = ("top", "bottom")
+
+
+@dataclass(frozen=True)
+class Side:
+    board: str
+    side: str
+    count: int                 # bodies with a footprint
+    raw_mm2: float
+    pack_mm: float | None      # None: some body fits the board in no orientation
+    blocked_by: str = ""
+
+    @property
+    def density(self) -> float:
+        return self.raw_mm2 / (bp.BOARD_AREA - MOUNT_AREA)
+
+    @property
+    def density_ok(self) -> bool:
+        return self.density <= DENSITY_LIMIT
+
+    @property
+    def pack_ok(self) -> bool:
+        return self.pack_mm is not None and self.pack_mm <= bp.BOARD_L
+
+
+def bodies(d: Design, board: str, side: str):
+    """[(refdes, w, l)] of everything with a footprint on that side. Connectors
+    have no side of their own and are counted on top."""
+    out = [(p.refdes, *p.footprint_mm) for p in d.parts
+           if p.board == board and p.side == side]
+    if side == "top":
+        out += [(c.refdes, *c.footprint_mm) for c in d.connectors if c.board == board]
+    return [(r, w, l) for r, w, l in out if w > 0 and l > 0]
+
+
+def shelf_pack(rects, board_w: float = bp.BOARD_W):
+    """Greedy shelf pack, deepest shelf first. -> (length used, blocker refdes)."""
+    grown = sorted(((max(w, l) + 2 * COURTYARD, min(w, l) + 2 * COURTYARD, ref)
+                    for ref, w, l in rects), key=lambda r: -r[1])
+    x = y = shelf = 0.0
+    for across, along, ref in grown:
+        if across > board_w:
+            across, along = along, across
+        if across > board_w:
+            return None, ref
+        if x + across > board_w:
+            y, x, shelf = y + shelf, 0.0, 0.0
+        x += across
+        shelf = max(shelf, along)
+    return y + shelf, ""
+
+
+def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
+    rows = []
+    for board in order:
+        for side in SIDES:
+            rects = bodies(d, board, side)
+            if side == "bottom" and not rects:
+                continue
+            length, blocker = shelf_pack(rects)
+            rows.append(Side(board, side, len(rects),
+                             sum(w * l for _, w, l in rects), length, blocker))
+    return tuple(rows)
+
+
+def unseen(d: Design, order=bp.STACK_ORDER) -> list[str]:
+    """Bodies the area budget cannot see: no footprint, but not negligible."""
+    out = [f"{c.refdes} ({c.name}) on {c.board}" for c in d.connectors
+           if c.board in order and not (c.footprint_mm[0] > 0 and c.footprint_mm[1] > 0)]
+    out += [f"{p.refdes} ({p.mpn}, {p.height_mm} mm tall) on {p.board}" for p in d.parts
+            if p.board in order and not (p.footprint_mm[0] > 0 and p.footprint_mm[1] > 0)
+            and not p.height_mm < NEGLIGIBLE_BELOW_MM]
+    return out
+
+
+def problems(d: Design) -> list[str]:
+    """Every budget failure. Empty means all three close."""
+    errs = []
+    for s in area_budget(d):
+        where = f"{s.board} {s.side}"
+        if not s.density_ok:
+            errs.append(f"density: {where} is {s.density:.0%} bodies, limit "
+                        f"{DENSITY_LIMIT:.0%} -- no room left to lay it out")
+        if s.pack_mm is None:
+            errs.append(f"pack: {where}: {s.blocked_by} fits a {bp.BOARD_W:.0f} mm "
+                        f"board in neither orientation")
+        elif not s.pack_ok:
+            errs.append(f"pack: {where} DOES NOT FIT -- the naive pack needs "
+                        f"{s.pack_mm:.0f} mm of a {bp.BOARD_L:.0f} mm board, "
+                        f"{s.pack_mm - bp.BOARD_L:.0f} mm over. Not shown to be "
+                        f"buildable; only a placed outline can overrule this")
+    errs += [f"area: {what} has no footprint -- the area budget cannot see it"
+             for what in unseen(d)]
+    errs += bp.stack_height(d).problems
+    return errs
+
+
+def report(d: Design) -> str:
+    out = []
+    caveats = [] if bp.CAVITY_MEASURED else ["M18 NOT MEASURED: the cavity is an estimate"]
+    if not bp.ENCLOSURE_DECIDED:
+        caveats.append("enclosure not chosen: wall, floor and lid are allowances")
+    if caveats:
+        out.append("⚠️ PROVISIONAL -- " + "; ".join(caveats) + ".")
+    out.append(f"cavity {bp.CAVITY_L:.0f} x {bp.CAVITY_W:.0f} x {bp.CAVITY_H:.0f} mm   "
+               f"board {bp.BOARD_W:.0f} x {bp.BOARD_L:.0f} = {bp.BOARD_AREA:.0f} mm² "
+               f"({MOUNT_AREA:.0f} mm² of it under the four M3 corners)   "
+               f"height {bp.AVAIL_H:.1f} mm\n")
+
+    out.append(f"AREA   density = bodies / usable side, FAIL above {DENSITY_LIMIT:.0%}.   "
+               f"pack = naive shelf-pack, {COURTYARD} mm courtyard, FAIL when longer "
+               f"than the board.")
+    out.append(f"  {'board':6} {'side':6} {'bodies':>6} {'raw mm²':>8} {'density':>8}      "
+               f"{'pack':>7}  of {bp.BOARD_L:.0f} mm")
+    for s in area_budget(d):
+        dens = "ok" if s.density_ok else "⛔ FAIL"
+        if s.pack_mm is None:
+            pack = f"   ⛔ {s.blocked_by} fits in neither orientation"
+        else:
+            pack = f"{s.pack_mm:5.0f} mm  " + (
+                "fits" if s.pack_ok else
+                f"⛔ DOES NOT FIT ({s.pack_mm - bp.BOARD_L:.0f} mm over)")
+        out.append(f"  {s.board:6} {s.side:6} {s.count:6d} {s.raw_mm2:8.0f} "
+                   f"{s.density:7.0%} {dens:4} {pack}")
+    small = sum(1 for p in d.parts if p.footprint_mm[0] <= 0 or p.footprint_mm[1] <= 0)
+    if small:
+        out.append(f"  {small} part(s) carry no footprint and are not in the area figures.")
+
+    stack = bp.stack_height(d)
+    out.append(f"\nHEIGHT   derived: PCB {bp.PCB_T}, clearance {bp.CLEARANCE}, solder tails "
+               f"{bp.TAIL}, plate {bp.PLATE_T} above {bp.PLATE_ABOVE}")
+    z = 0.0
+    for g in stack.gaps:
+        why = [f"{g.top_ref} {g.top_mm:.1f} up" if g.top_mm else "",
+               f"{g.hang_ref} {g.hang_mm:.1f} down" if g.hang_mm else "",
+               f"plate {g.plate_mm:.1f}" if g.plate_mm else "",
+               *(f"{pr.refs} mates at {pr.mated_mm:.1f}"
+                 + ("" if pr.confirmed else " (unconfirmed)") for pr in g.pairs)]
+        out.append(f"  {z:6.1f}  gap {g.below:>5} -> {g.above:<5} {g.gap_mm:5.1f}   "
+                   + ", ".join(w for w in why if w))
+        z += g.gap_mm
+        if g.above in bp.STACK_ORDER:
+            z += bp.PCB_T
+    verdict = "under" if stack.margin_mm >= 0 else "⛔ OVER"
+    out.append(f"  {stack.total_mm:6.1f}  USED of {stack.avail_mm:.1f} mm -- "
+               f"{verdict} by {abs(stack.margin_mm):.1f} mm")
+    for n in stack.notes:
+        out.append(f"  ⚠️ {n}")
+
+    if stack.unconfirmed:
+        out.append(f"\nUNCONFIRMED HEIGHTS   {len(stack.unconfirmed)} not read off a "
+                   f"manufacturer's drawing -- every one is below.   "
+                   f"⭐ = a gap above rests on it")
+        groups: dict[tuple, list[str]] = {}
+        for ref, board, what, h in stack.unconfirmed:
+            key = (ref in stack.load_bearing, board, h, what[:48],
+                   ref if ref in stack.load_bearing else "")
+            groups.setdefault(key, []).append(ref)
+        for (starred, board, h, what, _), refs in sorted(
+                groups.items(), key=lambda kv: (not kv[0][0],
+                                                bp.STACK_ORDER.index(kv[0][1]),
+                                                -kv[0][2], kv[1][0])):
+            out.append(f"  {'⭐' if starred else '  '} {board:6} {h:5.1f} mm  "
+                       f"{what}: {' '.join(refs)}")
+
+    errs = problems(d)
+    out.append("")
+    for verdict in stack.envelope_verdicts:
+        out.append(f"⚠️  PROVISIONAL -- {verdict}")
+    if errs:
+        out.append(f"⛔ FAIL -- {len(errs)} problem(s)")
+        out += [f"  - {e}" for e in errs]
+    else:
+        out.append("✅ PASS" + (" -- PROVISIONAL: see the first line"
+                                + (f", and {len(stack.load_bearing)} unconfirmed "
+                                   f"height(s) set gaps" if stack.load_bearing else "")
+                                if stack.provisional else ""))
+    return "\n".join(out)
+
+
+def main(argv=None, d: Design | None = None) -> int:
+    if d is None:
+        from . import netlist
+        d = netlist.current()
+    print(report(d))
+    return 1 if problems(d) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,16 +1,29 @@
 """Physical envelope for the four-board stack -- THE single home for it.
 
-`board-fit.py` and the PCB outline emitter both import from here, so the
-geometry cannot drift between the budget that proves it fits and the outline
-that gets manufactured.
+Two kinds of thing live here and they are kept apart on purpose:
 
-⚠️ M18 IS NOT MEASURED.  The cavity below is the owner's estimate of
-2026-09-15, offered from a menu.  Width is the sensitive axis: roughly 25-30 mm
-of usable board length per 10 mm of width gained.  When M18 lands, edit the
-cavity block, flip CAVITY_MEASURED, and re-run tools/board-fit.py.
+  PARAMETERS  the cavity, the enclosure allowances, PCB thickness, clearances.
+              Typed here, once. The PCB outline emitter and `board_fit` both
+              import them, so the outline that is manufactured cannot drift
+              from the budget that says it fits.
 
-📄 docs/board-design-record.md sections 0 and 4.
+  GEOMETRY    how tall the stack is. ⛔ Never typed. `layer_gaps(design)` and
+              `stack_height(design)` DERIVE it from the netlist's own parts and
+              connectors, so a height changed in the netlist moves the stack
+              the same day, and a ceiling nobody re-derived cannot exist.
+
+⚠️ BOTH BUDGETS ARE PROVISIONAL, twice over:
+  * M18 is not measured. The cavity is the owner's estimate. Width is the
+    sensitive axis: roughly 25-30 mm of usable board length per 10 mm of width.
+  * The enclosure is not chosen (decided after M18). Nothing here assumes a
+    material; wall, floor and lid are ALLOWANCES that the decision replaces.
+When either lands: edit the block, flip the flag, run `python3 -m tools.board_fit`.
 """
+import math
+import re
+from dataclasses import dataclass
+
+from .model import Connector, Design, Part
 
 # --- M18: the cavity -------------------------------------------------------
 CAVITY_L = 200.0   # mm, along the bike
@@ -18,38 +31,381 @@ CAVITY_W = 50.0    # mm, across -- ⚠️ the sensitive axis
 CAVITY_H = 70.0    # mm, floor to the underside of the battery tray
 CAVITY_MEASURED = False   # ⛔ still an estimate; flip when M18 lands
 
-# --- enclosure -------------------------------------------------------------
-WALL = 3.0     # printed ASA; thinner wicks water along the layer lines
+# --- enclosure: PROVISIONAL allowances -------------------------------------
+# What the enclosure takes out of the cavity on each face, whatever it turns
+# out to be made of. Not a wall design. Every figure derived below inherits
+# them, which is why both budgets report themselves as provisional.
+ENCLOSURE_DECIDED = False
+WALL = 3.0
 FLOOR = 3.0
 LID = 3.0
 
 # --- derived board envelope ------------------------------------------------
-# 1 mm of clearance per side for the board itself, 4 mm per end for glands
-# and the connector shells that face the walls (BD-8).
-BOARD_W = CAVITY_W - 2 * WALL - 2.0     # 42.0 mm
-BOARD_L = CAVITY_L - 2 * WALL - 8.0     # 186.0 mm
+SIDE_CLEARANCE = 1.0   # per side: the board must drop in past the walls
+END_ALLOWANCE = 4.0    # per end: glands and the connector shells facing them
+BOARD_W = CAVITY_W - 2 * WALL - 2 * SIDE_CLEARANCE
+BOARD_L = CAVITY_L - 2 * WALL - 2 * END_ALLOWANCE
 BOARD_AREA = BOARD_W * BOARD_L
 
-AVAIL_H = CAVITY_H - FLOOR - LID        # 64.0 mm of internal stack
+AVAIL_H = CAVITY_H - FLOOR - LID        # internal height the stack may use
 
-# --- stack ------------------------------------------------------------------
-PCB_T = 1.6
-GAP = 1.0      # clearance from a layer's tallest part to the next board
-PLATE_T = 3.0  # BD-9: alloy heatspreader / EMC barrier between CONV and DRV
-
+# --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
 STACK_ORDER = ("HVIN", "CONV", "DRV", "BRAIN")
 
-#: What each layer's tallest part may be, above its own board.
-#: These are design RULES, not outcomes -- one tall substitution breaks the
-#: enclosure, so tools/rules.py asserts them.
-LAYER_CEILING_MM = {
-    "HVIN": 18.0,   # IXTP26P20P TO-220 upright floors this at 16.0
-    "CONV": 14.0,   # the Y2 discs, which must sit AT the converter terminals
-                    # (plan 9.5.2) and are 1.3 mm taller than the 12.7 mm
-                    # brick -- so BD-9's plate clears them and the brick takes
-                    # a 1.3 mm alloy spacer up to it. Electrolytics go
-                    # UNDERSIDE (BD-14) and do not count here.
-    "DRV": 6.0,     # right-angle low-profile connectors
-    "BRAIN": 6.0,   # right-angle low-profile connectors
-}
+PCB_T = 1.6
+#: Air between the tallest thing in a gap and whatever faces it, so that
+#: tolerance and vibration never make them touch. ⚠️ Mechanical only -- it is
+#: not a creepage or insulation figure.
+CLEARANCE = 1.0
+#: How far a trimmed through-hole lead stands out of the underside of its
+#: board (IPC-A-610 allows 1.5 mm). ⚠️ Untrimmed module pins are longer: trim
+#: them or raise this. Left out, tails touch the plate or the part below.
+TAIL = 1.5
+#: Least space under the bottom board. The derivation never goes below
+#: tails + clearance; this is the enclosure's boss height. PROVISIONAL.
+FLOOR_STANDOFF_MIN = 3.0
+#: BD-9: the alloy plate in the gap above `PLATE_ABOVE` -- heatsink for the
+#: brick it bolts down onto, and the barrier between the 84 V and logic halves.
+PLATE_ABOVE = "CONV"
+PLATE_T = 3.0
+PLATE_SEATS_ON = "U201"
+
+FLOOR_NAME, LID_NAME = "FLOOR", "LID"
+
+#: Packages whose leads pass through the board. A connector is always taken
+#: as through-hole: the conservative reading, and the usual one here.
+_THROUGH_HOLE = re.compile(
+    r"(?i)(\bTHT\b|\bTH\b|through|\bDIP\b|DIP-|TO-220|TO-247|TO-92|DO-41|DO-15|"
+    r"DO-201|radial|axial|\bdisc\b|brick)")
+
+
+def is_through_hole(package: str) -> bool:
+    return bool(_THROUGH_HOLE.search(package))
+
+
+@dataclass(frozen=True)
+class Pair:
+    """The two halves of one inter-board connector, across one gap."""
+    lower: str
+    upper: str
+    mated_mm: float            # body on body: the board spacing this pair gives
+    confirmed: bool            # BOTH heights read off a drawing: the part is chosen
+
+    @property
+    def refs(self) -> str:
+        return f"{self.lower}+{self.upper}"
+
+
+@dataclass(frozen=True)
+class Gap:
+    """The space between two decks of the stack, and why it is that big."""
+    below: str                 # a board, or FLOOR
+    above: str                 # a board, or LID
+    top_mm: float              # tallest thing standing on `below`
+    top_ref: str
+    hang_mm: float             # deepest thing under `above`: a part, or solder tails
+    hang_ref: str
+    plate_mm: float            # BD-9 plate in this gap, else 0
+    need_mm: float             # what the parts and the plate require
+    pairs: tuple[Pair, ...]    # inter-board connectors crossing this gap
+    gap_mm: float              # the spacing the stack is built with
+
+    @property
+    def chosen(self) -> tuple[Pair, ...]:
+        return tuple(p for p in self.pairs if p.confirmed)
+
+    @property
+    def mated_mm(self) -> float:
+        """Spacing the connectors give: the chosen pair's, else the tallest. 0 = none."""
+        return max((p.mated_mm for p in self.chosen or self.pairs), default=0.0)
+
+    @property
+    def mated_refs(self) -> tuple[str, ...]:
+        return tuple(r for p in self.chosen or self.pairs for r in (p.lower, p.upper))
+
+    @property
+    def mated_confirmed(self) -> bool:
+        return bool(self.chosen)
+
+    @property
+    def set_by(self) -> tuple[str, ...]:
+        """Refdes whose heights this gap's size actually rests on."""
+        pairs = self.chosen or tuple(
+            p for p in self.pairs if p.mated_mm >= self.gap_mm - 1e-9)
+        refs = [r for p in pairs for r in (p.lower, p.upper)]
+        if not self.chosen and self.need_mm >= self.gap_mm - 1e-9:
+            refs += [self.top_ref, self.hang_ref]
+        return tuple(refs)
+
+
+@dataclass(frozen=True)
+class Stack:
+    gaps: tuple[Gap, ...]
+    total_mm: float
+    avail_mm: float
+    #: Anything that makes the answer NO, or makes it impossible to give.
+    problems: tuple[str, ...]
+    #: Placement constraints and connector choices the numbers imply.
+    notes: tuple[str, ...]
+    #: (refdes, board, what, height) for every height nobody has read off a
+    #: drawing. `load_bearing` is the subset that sets a gap.
+    unconfirmed: tuple[tuple[str, str, str, float], ...]
+    load_bearing: tuple[str, ...]
+    #: The stack-versus-envelope verdict while the envelope itself is not a
+    #: fact (cavity unmeasured or enclosure undecided). Reported loudly, never
+    #: silently -- but it cannot FAIL a design against a number nobody has
+    #: measured. The moment both flags are true it lands in `problems` instead.
+    envelope_verdicts: tuple[str, ...] = ()
+
+    @property
+    def margin_mm(self) -> float:
+        return self.avail_mm - self.total_mm
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+    @property
+    def provisional(self) -> bool:
+        return bool(self.load_bearing) or not CAVITY_MEASURED or not ENCLOSURE_DECIDED
+
+
+def _bad_height(h) -> bool:
+    return h is None or isinstance(h, bool) or math.isnan(h) or h < 0.0
+
+
+def _tallest(items):
+    """(height, refdes) of the tallest of [(height, refdes)], or (0, '-')."""
+    return max(items, default=(0.0, "-"))
+
+
+def _halves(d: Design, board: str) -> dict:
+    found = {}
+    for c in d.connectors:
+        if c.interface and c.board == board:
+            found.setdefault(c.interface, c)
+    return found
+
+
+def _pairs(d: Design, below: str, above: str, order=STACK_ORDER):
+    """Inter-board connector pairs bridging two adjacent boards, one per interface.
+
+    A connector has one body. On the middle board of a three-board bus that
+    body stands on top and mates UPWARD; how the bus gets down to the board
+    beneath is a second part the design has to carry, so no pair is invented
+    for that crossing (`_through` reports it).
+    """
+    lower, upper = _halves(d, below), _halves(d, above)
+    return [(lower[i], upper[i]) for i in sorted(lower.keys() & upper.keys())
+            if upper[i].refdes not in {c.refdes for c in _through(d, order)}]
+
+
+def _through(d: Design, order=STACK_ORDER):
+    """Connectors that sit between two other halves of their own interface."""
+    out = []
+    for lo, mid, up in zip(order, order[1:], order[2:]):
+        a, b, c = _halves(d, lo), _halves(d, mid), _halves(d, up)
+        out += [b[i] for i in sorted(a.keys() & b.keys() & c.keys())]
+    return out
+
+
+def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
+    """Every gap of the stack, bottom to top: FLOOR->first board ... last board->LID.
+
+    For the gap between a lower deck and an upper one:
+
+      need  = the larger of
+                tallest top-side thing below + CLEARANCE + solder tails above
+                deepest bottom-side part above + CLEARANCE
+              with BD-9's plate, where there is one, stacked in between.
+
+      mated = the two halves of an inter-board connector, body on body
+              (`height_mm` of the lower half + `height_mm` of the upper). That
+              IS the board spacing once the connector is chosen.
+
+      gap   = mated, when both halves' heights are confirmed (the connector is
+              chosen and it sets the spacing -- `stack_height` fails the design
+              if the parts need more); otherwise the larger of need and the
+              tallest pair, because the boards cannot sit closer than the
+              tallest connector specified between them.
+
+    A bottom-side part and a tall part beneath it share a gap by standing
+    side by side (BD-14): one deliberate placement, and `stack_height` states
+    the keep-out it costs. Solder tails get no such credit -- they are
+    wherever a through-hole part is -- so they ADD to what stands below.
+
+    A DNP part counts: its footprint can be populated, so its part must fit.
+    """
+    decks = (FLOOR_NAME,) + tuple(order) + (LID_NAME,)
+    paired = {c.refdes for lo, up in zip(order, order[1:])
+              for pair in _pairs(d, lo, up, order) for c in pair}
+    gaps = []
+    for below, above in zip(decks, decks[1:]):
+        tops = [(p.height_mm, p.refdes) for p in d.parts
+                if p.board == below and p.side == "top" and not _bad_height(p.height_mm)]
+        tops += [(c.height_mm, c.refdes) for c in d.connectors
+                 if c.board == below and c.refdes not in paired
+                 and not _bad_height(c.height_mm)]
+        top_mm, top_ref = _tallest(tops)
+
+        hangs = [(p.height_mm, p.refdes) for p in d.parts
+                 if p.board == above and p.side == "bottom"
+                 and not _bad_height(p.height_mm)]
+        tails = TAIL if above in order and (
+            any(c.board == above for c in d.connectors)
+            or any(p.board == above and is_through_hole(p.package) for p in d.parts)
+        ) else 0.0
+        part_mm, part_ref = _tallest(hangs)
+        hang_mm, hang_ref = (part_mm, part_ref) if part_mm >= tails else (tails, "solder tails")
+        if hang_mm == 0.0:
+            hang_ref = "-"
+
+        plate_mm = PLATE_T if below == PLATE_ABOVE and above in order else 0.0
+        if below == FLOOR_NAME:
+            need = max(FLOOR_STANDOFF_MIN, hang_mm + CLEARANCE)
+        elif above == LID_NAME:
+            need = top_mm + CLEARANCE
+        elif plate_mm:
+            seat = [h for h, r in tops if r == PLATE_SEATS_ON]
+            others = [h + CLEARANCE for h, r in tops if r != PLATE_SEATS_ON]
+            under_plate = max(seat + others, default=0.0)
+            need = under_plate + plate_mm + CLEARANCE + hang_mm
+        else:
+            need = max(top_mm + CLEARANCE + tails, part_mm + CLEARANCE)
+
+        pairs = tuple(
+            Pair(lo.refdes, up.refdes, lo.height_mm + up.height_mm,
+                 lo.height_confirmed and up.height_confirmed)
+            for lo, up in (_pairs(d, below, above, order)
+                           if below in order and above in order else [])
+            if not _bad_height(lo.height_mm) and not _bad_height(up.height_mm))
+        chosen = [p.mated_mm for p in pairs if p.confirmed]
+        gap_mm = max(chosen) if chosen else max(
+            [need] + [p.mated_mm for p in pairs])
+        gaps.append(Gap(below, above, top_mm, top_ref, hang_mm, hang_ref,
+                        plate_mm, need, pairs, gap_mm))
+    return tuple(gaps)
+
+
+def unconfirmed_heights(d: Design, order=STACK_ORDER):
+    """(refdes, board, what, height) for every height not read off a drawing."""
+    rows = [(p.refdes, p.board, p.mpn, p.height_mm)
+            for p in d.parts if p.board in order and not p.height_confirmed]
+    rows += [(c.refdes, c.board, c.name, c.height_mm)
+             for c in d.connectors if c.board in order and not c.height_confirmed]
+    return tuple(sorted(rows, key=lambda r: (order.index(r[1]), r[0])))
+
+
+def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Stack:
+    """The derived stack against the height available. See `layer_gaps`."""
+    problems, notes = [], []
+    items: list[Part | Connector] = [*d.parts, *d.connectors]
+    for x in items:
+        if x.board in order and _bad_height(x.height_mm):
+            problems.append(
+                f"height: {x.refdes} on {x.board} has no usable height "
+                f"({x.height_mm!r}) -- the stack cannot be derived around a part "
+                f"of unknown size, so this is a failure, not a pass")
+
+    gaps = layer_gaps(d, order)
+    by_ref = {x.refdes: x for x in items}
+    for c in _through(d, order):
+        notes.append(
+            f"{c.refdes} ({c.interface}) is the middle of a three-board bus: its one "
+            f"body is counted standing on {c.board}, mating upward. What carries "
+            f"{c.interface} down to the board beneath {c.board} is not in the "
+            f"netlist, so that crossing has no mated height here")
+    for g in gaps:
+        where = f"{g.below}->{g.above}"
+        if g.chosen and g.need_mm > g.gap_mm + 1e-9:
+            culprit = (f"{g.hang_ref} hangs {g.hang_mm:.1f} mm under {g.above}"
+                       if g.hang_mm + CLEARANCE > g.gap_mm else
+                       f"{g.top_ref} stands {g.top_mm:.1f} mm on {g.below}")
+            problems.append(
+                f"gap {where}: the parts need {g.need_mm:.1f} mm but the chosen "
+                f"connector pair {g.chosen[0].refs} sets the boards "
+                f"{g.gap_mm:.1f} mm apart -- {culprit}")
+        for pair in g.pairs:
+            if abs(pair.mated_mm - g.gap_mm) <= 0.1:
+                continue
+            if pair.confirmed:
+                problems.append(
+                    f"gap {where}: the chosen pair {pair.refs} mates at "
+                    f"{pair.mated_mm:.1f} mm but the gap is {g.gap_mm:.1f} mm -- "
+                    f"one gap cannot be two heights")
+            else:
+                notes.append(
+                    f"gap {where}: {pair.refs} mates at {pair.mated_mm:.1f} mm "
+                    f"(unconfirmed) and the gap is {g.gap_mm:.1f} mm -- the pair has "
+                    f"to be a type that mates at the gap, and once it is chosen its "
+                    f"drawing sets the gap")
+        seat = by_ref.get(PLATE_SEATS_ON)
+        if g.plate_mm and seat is not None and not _bad_height(seat.height_mm):
+            # Inter-board connectors are exempt: they pass through a slot.
+            paired = {c.refdes for c in d.connectors if c.interface}
+            for x in items:
+                if (x.board == g.below and x.refdes not in paired
+                        and x.refdes != PLATE_SEATS_ON
+                        and getattr(x, "side", "top") == "top"
+                        and not _bad_height(x.height_mm)
+                        and x.height_mm + CLEARANCE > seat.height_mm + 1e-9):
+                    problems.append(
+                        f"gap {where}: the plate cannot seat on {PLATE_SEATS_ON} "
+                        f"({seat.height_mm:.1f} mm) -- {x.refdes} stands "
+                        f"{x.height_mm:.1f} mm and needs {CLEARANCE:.1f} mm under it")
+        # BD-14: what hangs from above and what stands below must not overlap
+        # in plan wherever together they are taller than the gap.
+        if g.below in order and g.above in order and not g.plate_mm:
+            for p in d.parts:
+                if p.board != g.above or p.side != "bottom" or _bad_height(p.height_mm):
+                    continue
+                room = g.gap_mm - p.height_mm - CLEARANCE
+                blockers = sorted(
+                    x.refdes for x in items
+                    if x.board == g.below and getattr(x, "side", "top") == "top"
+                    and not _bad_height(x.height_mm) and x.height_mm > room)
+                if blockers:
+                    notes.append(
+                        f"keep-out: {p.refdes} hangs {p.height_mm:.1f} mm under "
+                        f"{g.above}; nothing on {g.below} taller than {room:.1f} mm "
+                        f"may sit beneath it ({', '.join(blockers)})")
+
+    total = sum(g.gap_mm for g in gaps) + PCB_T * len(order)
+    envelope_verdicts: list[str] = []
+    if total > avail_mm + 1e-9:
+        verdict = (f"stack: {total:.1f} mm derived, {avail_mm:.1f} mm available -- "
+                   f"OVER by {total - avail_mm:.1f} mm")
+        if envelope_is_binding():
+            problems.append(verdict)
+        else:
+            envelope_verdicts.append(
+                verdict + " against the ESTIMATED envelope (M18 unmeasured and/or "
+                "enclosure undecided). Binding the moment both are settled")
+
+    unconfirmed = unconfirmed_heights(d, order)
+    setters = {r for g in gaps for r in g.set_by}
+    if any(g.plate_mm for g in gaps):
+        setters.add(PLATE_SEATS_ON)
+    load_bearing = tuple(r for r, *_ in unconfirmed if r in setters)
+    return Stack(gaps, total, avail_mm, tuple(problems), tuple(notes),
+                 unconfirmed, load_bearing, tuple(envelope_verdicts))
+
+
+def envelope_is_binding() -> bool:
+    """True once the envelope is a FACT: cavity measured AND enclosure chosen.
+
+    Read at call time, not import time, so flipping either flag takes effect
+    everywhere at once -- and so a test can prove the overrun becomes an error.
+    """
+    return bool(CAVITY_MEASURED and ENCLOSURE_DECIDED)
+
+
+def stack_provisional(d: Design) -> list[str]:
+    """The envelope verdict while the envelope is still an estimate."""
+    return list(stack_height(d).envelope_verdicts)
+
+
+def stack_problems(d: Design) -> list[str]:
+    """`stack_height(d).problems` in the shape a rule returns."""
+    return list(stack_height(d).problems)

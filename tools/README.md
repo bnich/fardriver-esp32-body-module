@@ -1,26 +1,122 @@
 # Design-time tooling
 
-Generates the EasyEDA Pro project for the four-board set from a checked-in
-netlist.  **Stdlib only** — no dependencies, no virtualenv needed.
+Checks the four-board set and generates its EasyEDA Pro project from a checked-in netlist.
+**Stdlib only** — no dependencies, no virtualenv. Run everything from the repo root.
 
-| | |
-|---|---|
-| `board-fit.py` | Area and height budget. Parametric on the cavity (M18) and part heights (M19) — edit the two PARAMETERS blocks and re-run |
-| `eprj3/` | The `.eprj3` emitter. `records.py` is the encoding boundary; `units.py` is mm ↔ 0.01 inch |
+📄 The design these tools describe: [`../docs/plan.md` §9.2](../docs/plan.md).
 
-## Running
+## The order to run things in
 
 ```bash
-python3 -m pytest tests/ -v     # the suite
-python3 tools/board-fit.py      # area + height budget
+python3 -m tools.integrity        # is the netlist a circuit at all?  must print "0 integrity problem(s)"
+python3 -m pytest                 # rules and unit tests
+python3 -m tools.board_fit        # area + height budget            exit 1 on FAIL
+python3 -m tools.gpio_budget      # pin budget                      exit 1 on FAIL
+python3 tools/soft_start.py       # D13 soft start                  exit 1 on FAIL
 ```
+
+Green rules on a netlist that fails integrity mean nothing: a TVS with one leg landed passes every rule.
+
+## What each file is
+
+| File | What it owns |
+|---|---|
+| `model.py` | The shape of a design: `Part`, `Net`, `Connector`, `Design` |
+| `netlist.py` | **The design** — every part, net and connector, per board. The one source every tool below reads |
+| `integrity.py` | Structural gate: every pin lands, every inter-board net has real contacts |
+| `rules.py` | Safety and pin rules, each named for the decision it protects |
+| `board_params.py` | The cavity, the enclosure allowances and the stack parameters — and the **derived** stack height |
+| `board_fit.py` | Area and height budget (`board-fit.py` is a two-line shim for it) |
+| `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
+| `soft_start.py` | The D13 main-switch gate network, simulated |
+| `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py` |
+
+### `board_params.py` — parameters typed, geometry derived
+
+Holds the M18 cavity (`CAVITY_MEASURED = False` until it is measured), the wall / floor / lid
+**allowances** (`ENCLOSURE_DECIDED = False` — no enclosure material is assumed), PCB thickness, the
+mechanical clearance, the solder-tail allowance and the BD-9 plate. `STACK_ORDER` is bottom to top.
+
+⛔ No layer ceiling is typed anywhere. `layer_gaps(design)` and `stack_height(design)` work the stack
+out from the netlist's own heights:
+
+- a gap is the larger of *tallest top-side body below + clearance + solder tails above* and
+  *deepest bottom-side part above + clearance*, with the plate stacked in where there is one;
+- an inter-board connector pair mates at the sum of its two halves' `height_mm`. While either
+  height is unconfirmed the pair can only widen the gap; once both are confirmed the pair **is**
+  the gap, and a part that needs more room fails the design;
+- a height that is `NaN`, negative or missing is a **failure**, never a short part;
+- every unconfirmed height is listed, and the ones that set a gap are named (`load_bearing`);
+- a bottom-side part and a tall part beneath it share a gap only by standing side by side, so each
+  one produces a **keep-out** note naming what may not sit under it.
+
+`stack_problems(design)` returns the failures in the shape a rule returns.
+
+### `board_fit.py`
+
+```bash
+python3 -m tools.board_fit
+```
+
+Prints, per board and side, the raw body area and density (**FAIL above 75 %** of the usable
+side) and a naive shelf-pack length against the board's length (**FAIL when it does not fit** —
+the tool then has not shown the board can be built; a placed outline overrules it, an argument
+does not). Then the derived stack, gap by gap, against the height available, every unconfirmed
+height, and one verdict. A body with no footprint that is a connector, or 2 mm tall or more, fails
+the run: the budget cannot see it. The first line says PROVISIONAL for as long as M18 is unmeasured
+or the enclosure unchosen.
+
+### `gpio_budget.py`
+
+```bash
+python3 -m tools.gpio_budget
+```
+
+Silicon and module facts live here and nowhere else: GPIO22–25 do not exist, 26–32 are the flash,
+⛔ **33/34 have no pad on the WROOM-1**, 19/20 are USB, 0/3/45/46 are strapping pins — a pool of
+**30** — GPIO43 prints the ROM boot log and is never a driver, and analog is ADC1 (GPIO1–10) only.
+
+Demand is **derived**: `demand(design)` reads every `Net.gpio` tag and follows the copper through
+series parts (stopping at supplies) to find what the net drives, whether it is analog, and where it
+leaves. `report(design)` fires on a GPIO outside the pool, a GPIO given to two nets, anything driven
+from GPIO43, an analog net off ADC1, and an ADC net that reaches no GPIO. USB pins may go to the USB
+connector only; a strapping pin may carry its bias parts and the internal service header only.
+
+### `soft_start.py`
+
+```bash
+python3 tools/soft_start.py
+```
+
+A fixed-step simulation of Q101's gate network (R110, R101A+B, C105, C107, D102) charging 440 µF
+with the converters' load, at 84 V and 60 V across the FET's threshold spread. The network is
+**read off the netlist** by following the copper round Q101 (`circuit_from(design)`), so a changed
+resistor is the one simulated and a pull-down path that reaches no ground is reported as a switch
+that never turns on; the run prints where the netlist differs from the specified values. Reports turn-on
+delay, ramp, peak FET power and energy, and compares the peak — as an equal-energy pulse — with the
+`IXTP26P20P` SOA (DS99913D Fig. 14, T_C 70 °C) × 0.72. Also: the V_GS excursion when the pack is
+plugged in with the key off (must stay under the 2.0 V minimum threshold), the key-off hold time,
+and `solve_r_pd(target_ramp_s)` for choosing the pull-down. Prints PASS or FAIL.
+
+### `eprj3/records.py` — the record grammar
+
+```
+file   := record ( "|" LF record )*        no trailing separator, no trailing newline
+record := header_json "||" payload_json    payload may be empty
+```
+
+`serialize_record(header, payload)` returns one record with no separator; `join_records(records)`
+is the only place the separator exists. The editor drops a record it cannot parse **without an
+error**, so a header with no `type`, a `||` inside a header, and NaN/Infinity are all refused here.
 
 ## Rules
 
-- ⛔ **Never hand-edit a generated project.** It is a build artefact. Change the
-  netlist and regenerate, or the next build silently reverts your edit.
-- ⛔ **Never store native units outside `units.py`.** Geometry is millimetres
-  everywhere; conversion happens once, at emit.
+- ⛔ **Never hand-edit a generated project.** It is a build artefact. Change the netlist and
+  regenerate, or the next build silently reverts your edit.
+- ⛔ **Never store native units outside `eprj3/units.py`.** Geometry is millimetres everywhere;
+  conversion happens once, at emit.
+- ⛔ **Never type a fact about the design into a tool.** Parts, heights, footprints and GPIOs are
+  read from `netlist.py`; a second copy drifts.
+- **A height is confirmed only if it was read off the manufacturer's drawing** — and `source` says
+  which. Everything else is reported as unconfirmed, every run.
 - **Every constant states what it protects**, so it cannot be silently re-broken.
-
-📄 The design this builds: [`../docs/board-design-record.md`](../docs/board-design-record.md)

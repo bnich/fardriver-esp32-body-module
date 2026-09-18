@@ -119,8 +119,8 @@ nothing on this bike, because its non-stock wiring breaks assumptions that hold 
 
 ### ✔ A2 — the new bar-mount switch sets (D20)
 
-**LEFT POD: DONE 2026-09-11 — identified, harnessed and tested working.** The right pod is still in
-transit; its procedure is below.
+**LEFT POD: DONE 2026-09-11 — identified, harnessed and tested working.** **RIGHT POD: measured
+2026-09-12** — its map is below.
 
 #### Left pod — the map as built
 
@@ -229,8 +229,8 @@ shared ground. Nothing inside needed cutting (unlike the left pod).
 | `blue` | **ground** — common for all three controls | module GND |
 | `black` | slider — **running light**: closed in positions 2 **and** 3 | IN-08a |
 | `yellow` | slider — **headlight**: closed in position 3 only | IN-08b |
-| `red` | **run/off toggle** | `revv1-brake-circuit.md` §2.1 — R4 pull-up + Q2 gate; sensed on IN-11 |
-| `green` | **start button** (momentary) | the start latch, plan §3.2.5a (D24); sensed on a spare input |
+| `red` | **run/off toggle** | `brake-circuit.md` §2.1 — R4 pull-up + Q2 gate; sensed on IN-11 |
+| `green` | **start button** (momentary) | a spare sensed input on expander #1. The key switch alone starts the controller (plan D24), so this button drives nothing |
 
 ⭐ **The slider is the `OFF / A / A+B` pattern** — position 1 nothing, position 2 `black`, position 3
 `black` **and** `yellow`. ✅ Confirmed on the rewired harness (owner, 2026-09-12): *"with the switch on

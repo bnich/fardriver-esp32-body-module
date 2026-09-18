@@ -1,158 +1,1070 @@
-"""Every rule gets a PASS case and a FAIL case.
+"""Every rule: quiet on a real circuit, and FIRING on each defect that once
+walked past it.
 
-An assertion that never fires is not a test -- so each rule below is proven
-against geometry/wiring that deliberately violates it.
+The fixture is a small but real four-board circuit -- a soft-started 84 V
+P-FET with its level shifter, a converter behind a common-mode choke, a
+low-side horn, the hardware brake lamp, a high-side driver with current sense,
+a pod input, USB, an expander and the service header. Every part declares its
+real pins, so the fixture passes tools/integrity.py as well as tools/rules.py.
+A rule that is only ever shown a toy cannot be trusted on the real netlist.
+
+The failing cases are the 2026-09-18 audit's evasion table (audit F), one test
+per evasion, plus the historical defects by name. Each asserts on the RULE ID,
+never on prose.
 """
+import re
+from collections import defaultdict
+from dataclasses import replace
+
 import pytest
-from tools import rules
-from tools.model import Part, Net, Connector, ConnPin, Design
 
-# --- a minimal design that satisfies every rule ----------------------------
-GOOD = Design(
-    parts=(
-        Part("U1", "ESP32-S3-WROOM-1-N8", "MOD", "BRAIN", 3.1),
-        Part("Q1", "AO3400A", "SOT-23", "DRV", 1.2, vds_max=30),
-        Part("R1", "10k", "0805", "DRV", 1.0, value="10k"),          # gate bias
-        Part("D1", "PESD5V0S4UD", "SOT-457", "BRAIN", 1.1),          # TVS
-        Part("Q3", "IXTP26P20P", "TO-220AB", "HVIN", 16.0, vds_max=200),
-        Part("C1", "EKXJ221ELL221MM25S", "RAD", "CONV", 18.0, side="bottom"),
-        Part("U9", "CN150B110-12/CO", "BRICK", "CONV", 12.7),
-    ),
-    nets=(
-        Net("HORN_GATE", (("U1", "8"), ("Q1", "1"), ("R1", "1")),
-            domain="SIGNAL", gpio="GPIO8"),
-        Net("IN-12", (("U1", "1"), ("Q3", "2")), domain="SIGNAL",
-            gpio="GPIO1", interface="PWR-UP"),
-        Net("HORN_OUT", (("Q1", "2"), ("D1", "1")), domain="12V",
-            leaves_box=True),
-        Net("VBAT84", (("Q3", "1"), ("U9", "1")), domain="84V"),
-    ),
-    connectors=(
-        Connector("J_HVLINK", "HVIN", "HV-LINK",
-                  (ConnPin(1, "VBAT84"),), leaves_box=False,
-                  pitch_mm=5.08, interface="HV-LINK"),
-        Connector("J_HORN", "DRV", "Horn", (ConnPin(1, "HORN_OUT", "blue"),)),
-    ),
-)
+from tools import board_params as bp
+from tools import integrity, rules
+from tools.model import ConnPin, Connector, Design, Net, Part
+
+IO_PINS = tuple(f"IO{n}" for n in sorted(rules.MODULE_GPIOS))
+MCP_PORT = tuple(f"GP{b}{i}" for b in "AB" for i in range(8))
+TPS_PINS = ("VS", "GND", "IN1", "IN2", "IN3", "IN4", "OUT1", "OUT2", "OUT3",
+            "OUT4", "CS", "CL", "DIAG_EN", "SEL", "SEH", "FAULT", "THER")
 
 
-def test_the_good_design_passes_everything():
+# ── fixture construction ─────────────────────────────────────────────────────
+def _r(ref, board, value):
+    return Part(ref, f"R-{value}", "0805", board, "R", ("1", "2"), 0.6,
+                value=value, source="fixture")
+
+
+def _c(ref, board, value, volts, **kw):
+    return Part(ref, f"C-{value}", "0805", board, "C", ("1", "2"), 0.9,
+                v_max=volts, value=value, source="fixture", **kw)
+
+
+def _d(ref, board, mpn, kind, volts, **kw):
+    return Part(ref, mpn, "SMD", board, kind, ("A", "K"), 1.1, v_max=volts,
+                source="fixture", **kw)
+
+
+def _fet(ref, board, mpn, kind, volts, height=1.2):
+    return Part(ref, mpn, "SOT-23", board, kind, ("G", "S", "D"), height,
+                v_max=volts, source="fixture")
+
+
+def _array(ref, board, mpn, volts):
+    """SC-74 quad array: 1/3/4/6 are the cathodes, 2/5 the common anode."""
+    return Part(ref, mpn, "SC-74", board, "TVS",
+                ("1", "2", "3", "4", "5", "6"), 1.1, v_max=volts, source="fixture")
+
+
+def _ic(ref, mpn, package, board, kind, all_pins, unused, height, **kw):
+    """A multi-pin part, declared honestly: every pin the package has is
+    either landed (`pins`) or accounted for (`nc`) -- never simply left out."""
+    return Part(ref, mpn, package, board, kind,
+                tuple(p for p in all_pins if p not in unused), height,
+                nc=tuple(p for p in all_pins if p in unused), source="fixture", **kw)
+
+
+def _conn(ref, board, name, nets, **kw):
+    kw.setdefault("height_mm", 3.0)
+    return Connector(ref, board, name,
+                     tuple(ConnPin(str(i + 1), n) for i, n in enumerate(nets)),
+                     source="fixture", **kw)
+
+
+DOMAINS = {
+    "GND": "GND", "BASEPLATE": "GND",
+    "HV_BPLUS": "84V", "HV_SW": "84V", "KSW": "84V", "D13_GATE": "84V",
+    "D13_PD": "84V", "HV_C1_P": "84V", "HV_C1_N": "84V",
+    "D13_EN": "12V", "V12": "12V", "HORN_OUT": "12V", "LEVER_L": "12V",
+    "Q1_GATE": "12V", "STOP_OUT": "12V", "HL_LOW": "12V", "DISP_LINE": "12V",
+    "V3P3": "3V3", "KEY_SENSE": "3V3", "HORN_CMD": "3V3",
+    "IN05_BRAKE_L": "3V3", "EN": "3V3", "SW_WIRE": "3V3", "SW_IN": "3V3",
+    "POD2_WIRE": "3V3", "POD2_IN": "3V3", "USB_DM": "3V3", "USB_DP": "3V3",
+    "CS1": "3V3",
+    # TI SLVSCV8E: the CS pin sits at 4.5-6.5 V in any fault, which is why it
+    # meets the ADC pin only through R323
+    "U301_CS": "5V",
+    # no rated part and no stated level: honestly SIGNAL. A FET's GATE net
+    # needs no declared voltage -- its rating is across drain and source.
+    "HORN_GATE": "SIGNAL",
+    "BOOT": "SIGNAL", "U0TXD": "SIGNAL", "U0RXD": "SIGNAL", "SDA": "SIGNAL",
+    "SCL": "SIGNAL", "MCP_RESET": "SIGNAL", "LGT_LOW": "SIGNAL",
+    "U301_IN1": "SIGNAL", "U301_CL": "SIGNAL",
+}
+INTERFACES = {
+    "GND": "HV-LINK", "HV_C1_P": "HV-LINK", "HV_C1_N": "HV-LINK",
+    "KEY_SENSE": "HV-LINK", "V12": "PWR-UP", "V3P3": "STACK",
+    "HORN_CMD": "STACK", "IN05_BRAKE_L": "STACK", "CS1": "STACK",
+    "LGT_LOW": "STACK",
+}
+GPIOS = {
+    "BOOT": 0, "KEY_SENSE": 1, "CS1": 4, "IN05_BRAKE_L": 7, "SDA": 8, "SCL": 9,
+    "SW_IN": 15, "USB_DM": 19, "USB_DP": 20, "LGT_LOW": 38, "HORN_CMD": 42,
+    "U0TXD": 43, "U0RXD": 44,
+}
+
+
+def _good() -> Design:
+    hv_link = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE")
+    stack = ("HORN_CMD", "GND", "IN05_BRAKE_L", "GND", "V3P3", "GND", "CS1",
+             "GND", "LGT_LOW")
+    connectors = (
+        # HVIN
+        _conn("J101", "HVIN", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
+        _conn("J102", "HVIN", "Key tap", ("KSW", "GND"), pitch_mm=5.08),
+        _conn("J104", "HVIN", "HV-LINK", hv_link, leaves_box=False,
+              pitch_mm=5.08, interface="HV-LINK"),
+        # CONV
+        _conn("J201", "CONV", "HV-LINK", hv_link, leaves_box=False,
+              pitch_mm=5.08, interface="HV-LINK"),
+        _conn("J202", "CONV", "PWR-UP", ("V12", "GND", "KEY_SENSE"),
+              leaves_box=False, interface="PWR-UP"),
+        # DRV
+        _conn("J307", "DRV", "PWR-UP", ("V12", "GND"), leaves_box=False,
+              interface="PWR-UP"),
+        _conn("J308", "DRV", "STACK", stack, leaves_box=False, interface="STACK"),
+        _conn("J301", "DRV", "Headlight", ("HL_LOW", "GND")),
+        _conn("J302", "DRV", "Stop lamp", ("STOP_OUT", "GND")),
+        _conn("J303", "DRV", "Horn", ("V12", "HORN_OUT")),
+        _conn("J306", "DRV", "Brake lever", ("LEVER_L", "GND")),
+        _conn("J305", "DRV", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True),
+        # BRAIN
+        _conn("J406", "BRAIN", "STACK", stack, leaves_box=False, interface="STACK"),
+        _conn("J407", "BRAIN", "PWR-UP", ("V12", "GND", "KEY_SENSE"),
+              leaves_box=False, interface="PWR-UP"),
+        _conn("J401", "BRAIN", "USB-C", ("USB_DM", "USB_DP", "GND")),
+        _conn("J402", "BRAIN", "Left pod", ("SW_WIRE", "POD2_WIRE", "GND")),
+        _conn("J408", "BRAIN", "Service header",
+              ("EN", "BOOT", "U0TXD", "U0RXD", "V3P3", "GND"), leaves_box=False),
+    )
+
+    used_io = {f"IO{g}" for g in GPIOS.values()}
+    parts = (
+        # ── HVIN: entry, clamps, the D13 switch and its level shifter ──
+        _d("D101", "HVIN", "SMCJ90A", "TVS", 90.0),
+        _d("D104", "HVIN", "SMCJ90A", "TVS", 90.0),
+        _fet("Q101", "HVIN", "IXTP26P20P", "PFET", 200.0, height=4.7),
+        _r("R110", "HVIN", "100k"),
+        _d("D102", "HVIN", "BZT52C15", "ZENER", 15.0),
+        _c("C105", "HVIN", "68n", 250.0),
+        _c("C107", "HVIN", "4.7u", 25.0),
+        _r("R101", "HVIN", "560k"),
+        _fet("Q105", "HVIN", "BSS127", "NFET", 600.0),
+        _r("R112", "HVIN", "1M"),
+        _r("R113", "HVIN", "100k"),
+        _d("D106", "HVIN", "BZT52C10", "ZENER", 10.0),
+        _c("C108", "HVIN", "100n", 50.0),
+        _r("R107", "HVIN", "330k"),
+        _r("R109", "HVIN", "10k"),
+        _c("C109", "HVIN", "100n", 50.0),
+        Part("L101", "CM-CHOKE", "THT", "HVIN", "CMCHOKE", ("1", "2", "3", "4"),
+             5.0, source="fixture"),
+        # ── CONV ──
+        _ic("U201", "CN150B110-12/CO", "BRICK", "CONV", "CONVERTER",
+            ("-Vin", "CNT", "+Vin", "-V", "-S", "TRM", "+S", "+V", "BASEPLATE"),
+            {"TRM"}, 5.0),
+        _c("C201", "CONV", "220u", 160.0, side="bottom"),
+        _c("C203", "CONV", "4.7n Y2", 1000.0),
+        _r("R211", "CONV", "0R"),
+        _c("C207", "CONV", "680u", 25.0),
+        _c("C208", "CONV", "2.2u", 25.0),
+        # ── DRV ──
+        _fet("Q301", "DRV", "AO3400A", "NFET", 30.0),
+        _r("R307", "DRV", "10k"),
+        _r("R310", "DRV", "100R"),
+        _d("D315", "DRV", "SMBJ15A", "TVS", 15.0),
+        _array("D310", "DRV", "SMS15T1G", 15.0),
+        _d("D303", "DRV", "1N4148", "D", 100.0),
+        _d("D305", "DRV", "1N4148", "D", 100.0),
+        _r("R313", "DRV", "10k"),
+        _fet("Q304", "DRV", "AO3407A", "PFET", 30.0),
+        _r("R317", "DRV", "10k"),
+        _d("D406", "DRV", "SMBJ15A", "TVS", 15.0, dnp=True),
+        _ic("U301", "TPS4H160BQPWPRQ1", "HTSSOP-28", "DRV", "IC", TPS_PINS,
+            {"IN2", "IN3", "IN4", "OUT2", "OUT3", "OUT4", "FAULT", "THER"}, 1.2,
+            v_max=40.0),
+        _r("R330", "DRV", "4.7k"),
+        _r("R319", "DRV", "1.00k"),
+        _r("R321", "DRV", "1.00k"),
+        _r("R323", "DRV", "10k"),
+        _c("C303", "DRV", "100n", 25.0),
+        _c("C304", "DRV", "10u", 25.0),
+        # ── BRAIN ──
+        _ic("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "BRAIN", "MODULE",
+            ("3V3", "GND", "EN") + IO_PINS, set(IO_PINS) - used_io, 3.1),
+        Part("U405", "TLV76733DGNR", "HVSSOP-8", "BRAIN", "IC",
+             ("IN", "OUT", "GND", "EN"), 1.1, v_max=16.0, source="fixture"),
+        _c("C404", "BRAIN", "10u", 25.0),
+        _c("C402", "BRAIN", "10u", 10.0),
+        _c("C403", "BRAIN", "100n", 16.0),
+        _c("C405", "BRAIN", "100n", 16.0),
+        _r("R401", "BRAIN", "10k"),
+        _c("C401", "BRAIN", "1u", 10.0),
+        _array("D401", "BRAIN", "PESD5V0S4UD", 5.0),
+        _r("R410", "BRAIN", "1k"),
+        _r("R411", "BRAIN", "4.7k"),
+        _c("C410", "BRAIN", "100n", 16.0),
+        _r("R412", "BRAIN", "1k"),
+        _r("R413", "BRAIN", "4.7k"),
+        _r("R414", "BRAIN", "10k"),
+        _r("R415", "BRAIN", "4.7k"),
+        _r("R416", "BRAIN", "4.7k"),
+        _c("C301", "BRAIN", "100n", 16.0),
+        _ic("U402", "MCP23017-E/SO", "SOIC-28", "BRAIN", "IC",
+            ("VDD", "VSS", "SCL", "SDA", "RESET", "A0", "A1", "A2", "INTA",
+             "INTB") + MCP_PORT, {"INTA", "INTB"} | set(MCP_PORT) - {"GPB3"}, 2.65),
+    )
+
+    land = defaultdict(list)
+    for c in connectors:
+        for cp in c.pins:
+            land[cp.net].append((c.refdes, cp.pin))
+
+    def wire(net, *pins):
+        land[net].extend(pins)
+
+    wire("HV_BPLUS", ("D101", "K"), ("Q101", "S"), ("R110", "1"), ("D102", "K"), ("C107", "1"))
+    wire("KSW", ("D104", "K"), ("R112", "1"), ("R107", "1"))
+    wire("D13_GATE", ("Q101", "G"), ("R110", "2"), ("D102", "A"), ("C105", "1"),
+         ("C107", "2"), ("R101", "1"))
+    wire("HV_SW", ("Q101", "D"), ("C105", "2"), ("L101", "1"))
+    wire("D13_PD", ("R101", "2"), ("Q105", "D"))
+    wire("D13_EN", ("R112", "2"), ("Q105", "G"), ("R113", "1"), ("D106", "K"), ("C108", "1"))
+    wire("KEY_SENSE", ("R107", "2"), ("R109", "1"), ("C109", "1"), ("U401", "IO1"))
+    wire("HV_C1_P", ("L101", "4"), ("U201", "+Vin"), ("C201", "1"), ("C203", "1"))
+    wire("HV_C1_N", ("L101", "3"), ("U201", "-Vin"), ("U201", "CNT"), ("C201", "2"))
+    wire("BASEPLATE", ("U201", "BASEPLATE"), ("C203", "2"), ("R211", "1"))
+    wire("V12", ("U201", "+V"), ("U201", "+S"), ("C207", "1"), ("C208", "1"),
+         ("D315", "K"), ("R313", "2"), ("Q304", "S"), ("U301", "VS"),
+         ("C303", "1"), ("C304", "1"), ("U405", "IN"), ("U405", "EN"), ("C404", "1"))
+    wire("HORN_CMD", ("U401", "IO42"), ("R310", "1"))
+    wire("HORN_GATE", ("R310", "2"), ("Q301", "G"), ("R307", "1"))
+    wire("HORN_OUT", ("Q301", "D"), ("D310", "1"))
+    wire("LEVER_L", ("D303", "K"), ("D305", "K"), ("D310", "3"))
+    wire("Q1_GATE", ("D303", "A"), ("R313", "1"), ("Q304", "G"))
+    wire("STOP_OUT", ("Q304", "D"), ("D310", "4"))
+    wire("HL_LOW", ("U301", "OUT1"), ("D310", "6"))
+    wire("IN05_BRAKE_L", ("D305", "A"), ("R317", "1"), ("U401", "IO7"))
+    wire("DISP_LINE", ("D406", "K"))
+    wire("LGT_LOW", ("U401", "IO38"), ("R330", "1"))
+    wire("U301_IN1", ("R330", "2"), ("U301", "IN1"))
+    wire("U301_CL", ("U301", "CL"), ("R319", "1"))
+    wire("U301_CS", ("U301", "CS"), ("R321", "1"), ("R323", "1"))
+    wire("CS1", ("R323", "2"), ("C301", "1"), ("U401", "IO4"))
+    wire("V3P3", ("U405", "OUT"), ("C402", "1"), ("C403", "1"), ("C405", "1"),
+         ("U401", "3V3"), ("R401", "1"), ("R317", "2"), ("R411", "1"),
+         ("R413", "1"), ("R414", "1"), ("R415", "1"), ("R416", "1"), ("U402", "VDD"))
+    wire("EN", ("U401", "EN"), ("R401", "2"), ("C401", "1"))
+    wire("BOOT", ("U401", "IO0"))
+    wire("U0TXD", ("U401", "IO43"))
+    wire("U0RXD", ("U401", "IO44"))
+    wire("USB_DM", ("U401", "IO19"), ("D401", "1"))
+    wire("USB_DP", ("U401", "IO20"), ("D401", "3"))
+    wire("SW_WIRE", ("R410", "1"), ("D401", "4"))
+    wire("SW_IN", ("R410", "2"), ("R411", "2"), ("C410", "1"), ("U401", "IO15"))
+    wire("POD2_WIRE", ("R412", "1"), ("D401", "6"))
+    wire("POD2_IN", ("R412", "2"), ("R413", "2"), ("U402", "GPB3"))
+    wire("MCP_RESET", ("U402", "RESET"), ("R414", "2"))
+    wire("SDA", ("U401", "IO8"), ("U402", "SDA"), ("R415", "2"))
+    wire("SCL", ("U401", "IO9"), ("U402", "SCL"), ("R416", "2"))
+    wire("GND",
+         ("D101", "A"), ("D104", "A"), ("Q105", "S"), ("R113", "2"), ("D106", "A"),
+         ("C108", "2"), ("R109", "2"), ("C109", "2"), ("L101", "2"),
+         ("U201", "-V"), ("U201", "-S"), ("R211", "2"), ("C207", "2"), ("C208", "2"),
+         ("Q301", "S"), ("R307", "2"), ("D315", "A"), ("D310", "2"), ("D310", "5"),
+         ("D406", "A"), ("U301", "GND"), ("U301", "DIAG_EN"), ("U301", "SEL"),
+         ("U301", "SEH"), ("R319", "2"), ("R321", "2"), ("C303", "2"), ("C304", "2"),
+         ("U401", "GND"), ("U405", "GND"), ("C404", "2"), ("C402", "2"),
+         ("C403", "2"), ("C405", "2"), ("C401", "2"), ("D401", "2"), ("D401", "5"),
+         ("C410", "2"), ("C301", "2"), ("U402", "VSS"), ("U402", "A0"),
+         ("U402", "A1"), ("U402", "A2"))
+
+    nets = tuple(
+        Net(name, tuple(pins), domain=DOMAINS[name],
+            interface=INTERFACES.get(name),
+            gpio=f"GPIO{GPIOS[name]}" if name in GPIOS else None,
+            source="fixture")
+        for name, pins in land.items())
+    return Design(parts=parts, nets=nets, connectors=connectors)
+
+
+GOOD = _good()
+
+
+# ── fixture surgery ──────────────────────────────────────────────────────────
+def move_pin(d: Design, ref: str, pin: str, to_net: str) -> Design:
+    """Re-land one leg of a part on a different net."""
+    d = d.without_pin(ref, pin)
+    return d.replace_net(to_net, pins=d.net(to_net).pins + ((ref, pin),))
+
+
+def add_pin(d: Design, net: str, ref: str, pin: str) -> Design:
+    return d.replace_net(net, pins=d.net(net).pins + ((ref, pin),))
+
+
+def rename_net(d: Design, old: str, new: str) -> Design:
+    d = replace(d, nets=tuple(replace(n, name=new) if n.name == old else n
+                              for n in d.nets))
+    return replace(d, connectors=tuple(
+        replace(c, pins=tuple(replace(cp, net=new) if cp.net == old else cp
+                              for cp in c.pins)) for c in d.connectors))
+
+
+def on_gpio(d: Design, net: str, n: int) -> Design:
+    """Move a net's MCU pin (and its tag) to GPIOn, honestly: the pin moves,
+    the tag follows, and the module's `nc` list is kept true."""
+    old = [p for r, p in d.net(net).pins if r == "U401" and p.startswith("IO")]
+    for p in old:
+        d = d.without_pin("U401", p)
+    d = add_pin(d, net, "U401", f"IO{n}")
+    d = d.replace_net(net, gpio=f"GPIO{n}")
+    u = d.part("U401")
+    pins = tuple(p for p in u.pins if p not in old) + (f"IO{n}",)
+    nc = tuple(sorted((set(u.nc) | set(old)) - {f"IO{n}"}))
+    return d.replace_part("U401", pins=pins, nc=nc)
+
+
+def fired(d: Design, rule_id: str) -> list[str]:
+    return [e for e in rules.check_all(d) if e.startswith(rule_id + ":")]
+
+
+RULE_IDS = {
+    "BD-2", "BD-4", "GPIO-TAG", "GPIO-DUP", "GPIO-PAD", "GPIO-USB", "GPIO-43",
+    "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
+    "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
+    "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
+}
+
+
+# ── the fixture itself ───────────────────────────────────────────────────────
+def test_the_fixture_is_a_circuit():
+    """Every leg of every fixture part goes somewhere, by the structural
+    gate's own count -- so a rule that passes it is not passing a sketch."""
+    assert integrity.check(GOOD) == []
+
+
+def test_the_good_design_passes_every_rule():
     assert rules.check_all(GOOD) == []
 
 
-# --- BD-2: voltage domain containment --------------------------------------
-def test_bd2_fires_when_84v_reaches_brain():
-    bad = GOOD.with_net(Net("STRAY84", (("U1", "9"), ("Q3", "3")), domain="84V"))
-    assert any("BD-2" in e for e in rules.check_all(bad))
-
-def test_bd2_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "BD-2" in e] == []
-
-
-# --- BD-4: HV-LINK creepage -------------------------------------------------
-def test_bd4_fires_on_254_pitch_hv_link():
-    from dataclasses import replace
-    bad = replace(GOOD, connectors=tuple(
-        replace(c, pitch_mm=2.54) if c.interface == "HV-LINK" else c
-        for c in GOOD.connectors))
-    assert any("BD-4" in e for e in rules.check_all(bad))
-
-def test_bd4_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "BD-4" in e] == []
+def test_every_error_starts_with_a_stable_rule_id():
+    wreck = GOOD.without_part("R307").without_part("D310").without_part("Q105")
+    wreck = wreck.replace_part("U405", height_mm=float("nan"))
+    wreck = on_gpio(wreck, "SW_IN", 33)
+    errs = rules.check_all(wreck)
+    assert len(errs) >= 5
+    for e in errs:
+        m = re.match(r"([A-Z0-9-]+): \S", e)
+        assert m and m.group(1) in RULE_IDS, e
 
 
-# --- ADC1 -------------------------------------------------------------------
-def test_adc1_fires_when_analog_lands_on_gpio11():
-    bad = GOOD.with_gpio("IN-12", "GPIO11")
-    assert any("ADC1" in e for e in rules.check_all(bad))
-
-def test_adc1_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "ADC1" in e] == []
-
-
-# --- strapping pins ---------------------------------------------------------
-def test_strapping_fires_when_a_box_leaving_net_uses_gpio0():
-    bad = GOOD.with_gpio("HORN_OUT", "GPIO0")
-    assert any("strapping" in e.lower() for e in rules.check_all(bad))
-
-def test_strapping_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "strapping" in e.lower()] == []
+def test_rules_never_raise_on_a_structurally_broken_design():
+    """integrity.py owns these defects; rules.py must still return a list."""
+    broken = GOOD.with_net(Net("GHOST", (("X999", "1"), ("J999", "2")), domain="84V"))
+    broken = broken.with_net(GOOD.net("V12"))                 # duplicate net
+    broken = broken.with_part(GOOD.part("R307"))              # duplicate refdes
+    assert isinstance(rules.check_all(broken), list)
+    assert isinstance(rules.warnings(broken), list)
 
 
-# --- GPIO43 -----------------------------------------------------------------
-def test_gpio43_fires_when_used_as_a_driver():
-    bad = GOOD.with_gpio("HORN_GATE", "GPIO43")
-    assert any("GPIO43" in e for e in rules.check_all(bad))
-
-def test_gpio43_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "GPIO43" in e] == []
+def test_leaves_box_cannot_be_typed_on_a_net():
+    """The old evasion -- flip Net.leaves_box and the TVS and strapping rules
+    go blind -- is closed in the model: the field does not exist."""
+    with pytest.raises(TypeError):
+        Net("X", (), domain="12V", leaves_box=False)
 
 
-# --- gate bias --------------------------------------------------------------
-def test_gate_bias_fires_when_the_pulldown_is_deleted():
-    bad = GOOD.without_part("R1")
-    assert any("gate bias" in e.lower() for e in rules.check_all(bad))
-
-def test_gate_bias_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "gate bias" in e.lower()] == []
+# ── BD-2: 84 V containment ───────────────────────────────────────────────────
+def test_bd2_fires_when_an_84v_net_lands_on_a_brain_part():
+    bad = add_pin(GOOD, "HV_SW", "U401", "IO10")
+    assert fired(bad, "BD-2")
 
 
-# --- TVS on box-leaving nets ------------------------------------------------
-def test_tvs_fires_when_removed_from_a_box_leaving_net():
-    bad = GOOD.without_part("D1")
-    assert any("TVS" in e for e in rules.check_all(bad))
-
-def test_tvs_quiet_on_good():
-    assert [e for e in rules.check_all(GOOD) if "TVS" in e] == []
+def test_bd2_fires_on_drv_too_not_only_brain():
+    bad = add_pin(GOOD, "HV_SW", "R307", "9")
+    assert any("DRV" in e for e in fired(bad, "BD-2"))
 
 
-# --- height ceilings --------------------------------------------------------
-def test_height_fires_on_a_tall_topside_part_on_conv():
-    from dataclasses import replace
-    bad = replace(GOOD, parts=tuple(
-        replace(p, height_mm=25.0, side="top") if p.refdes == "C1" else p
-        for p in GOOD.parts))
-    assert any("height" in e.lower() for e in rules.check_all(bad))
-
-def test_height_ignores_bottom_side_parts():
-    # BD-14: the electrolytics hang into the layer below, so they do not
-    # count against CONV's 12.7 mm top-side ceiling
-    assert [e for e in rules.check_all(GOOD) if "height" in e.lower()] == []
+def test_bd2_fires_on_a_connector_pin():
+    """The old rule swallowed the KeyError for a connector refdes."""
+    bad = add_pin(GOOD, "HV_BPLUS", "J408", "7")
+    assert any("J408" in e for e in fired(bad, "BD-2"))
 
 
-# --- TVS standoff vs the net it protects ------------------------------------
-def test_tvs_standoff_fires_on_a_5v_array_across_a_12v_feed():
-    """PESD5V0S4UD is V_RWM 5 V. On a 12 V lamp feed it conducts
-    continuously -- a short across the channel it was meant to protect, and
-    nothing about the schematic looks different."""
-    from dataclasses import replace
-    bad = replace(GOOD, parts=tuple(
-        replace(p, vds_max=5.0) if p.refdes == "D1" else p for p in GOOD.parts))
-    errs = rules.check_all(bad)
-    assert any("TVS standoff" in e for e in errs), errs
+def test_bd2_fires_when_only_the_connector_table_carries_the_net():
+    j = GOOD.connector("J408")
+    bad = GOOD.replace_connector("J408", pins=j.pins + (ConnPin("7", "HV_BPLUS"),))
+    assert any("J408" in e for e in fired(bad, "BD-2"))
 
 
-def test_tvs_standoff_quiet_when_the_part_stands_off_the_rail():
-    from dataclasses import replace
-    ok = replace(GOOD, parts=tuple(
-        replace(p, vds_max=24.0) if p.refdes == "D1" else p for p in GOOD.parts))
-    assert [e for e in rules.check_all(ok) if "TVS standoff" in e] == []
+def test_bd2_is_not_fooled_by_relabelling_the_net():
+    """HV_SW typed SIGNAL is still the drain of the 84 V switch."""
+    bad = add_pin(GOOD.replace_net("HV_SW", domain="SIGNAL"), "HV_SW", "U401", "IO10")
+    errs = fired(bad, "BD-2")
+    assert any("typed SIGNAL" in e for e in errs)
+    assert any("U401" in e for e in errs)
 
 
-def test_analog_rule_covers_the_netlists_own_names_not_just_the_plans():
-    # The rule carried only IN-12/IN-15/IN-16, which appear nowhere in
-    # netlist.py -- so it silently covered nothing.
-    for name in ("KEY_SENSE", "V12_SENSE", "AMBIENT"):
-        assert name in rules.ANALOG_NETS, f"{name} not policed by the ADC1 rule"
+def test_bd2_fires_when_an_84v_part_pin_is_tied_onto_a_logic_net():
+    """Audit 3a: the switch's drain tied onto a net that lands on BRAIN."""
+    bad = add_pin(GOOD, "SW_IN", "Q101", "D")
+    errs = fired(bad, "BD-2")
+    assert any("'SW_IN'" in e and "typed 3V3" in e for e in errs)
+    assert any("BRAIN" in e for e in errs)
 
 
-def test_usb_nets_are_entitled_to_gpio19_20():
-    from tools.model import Net
-    d = GOOD.with_net(Net("USB_DP", (("U1", "20"), ("D1", "2")), gpio="GPIO20"))
-    assert [e for e in rules.check_all(d) if "reserved for native USB" in e] == []
+def test_bd2_lets_a_divided_sense_net_cross_to_brain():
+    """KEY_SENSE reaches KSW only through 330 k: not an 84 V net."""
+    assert not [e for e in rules.check_all(GOOD) if "KEY_SENSE" in e]
 
 
-def test_a_non_usb_net_on_gpio20_still_fires():
-    from tools.model import Net
-    d = GOOD.with_net(Net("HORN2", (("U1", "20"), ("Q1", "3")), gpio="GPIO20"))
-    assert any("reserved for native USB" in e for e in rules.check_all(d))
+def test_bd2_reports_an_84v_net_on_a_refdes_that_does_not_exist():
+    bad = add_pin(GOOD, "HV_SW", "U999", "1")
+    assert any("U999" in e for e in fired(bad, "BD-2"))
+
+
+# ── BD-4: creepage on every connector that carries pack voltage ──────────────
+def test_bd4_fires_on_a_254_hv_link():
+    assert fired(GOOD.replace_connector("J104", pitch_mm=2.54), "BD-4")
+
+
+def test_bd4_boundary_is_508_not_anything_above_254():
+    assert fired(GOOD.replace_connector("J104", pitch_mm=5.0), "BD-4")
+    assert not fired(GOOD.replace_connector("J104", pitch_mm=5.08), "BD-4")
+
+
+def test_bd4_fires_with_the_interface_label_dropped():
+    """Audit 9a: what makes it an HV connector is the 84 V net on it."""
+    bad = GOOD.replace_connector("J201", pitch_mm=1.27, interface=None)
+    assert any("J201" in e for e in fired(bad, "BD-4"))
+
+
+def test_bd4_fires_on_a_harness_connector_carrying_84v():
+    """Audit 9b: the key tap leaves the box at pack voltage."""
+    bad = GOOD.replace_connector("J102", pitch_mm=1.0)
+    assert any("J102" in e for e in fired(bad, "BD-4"))
+
+
+def test_bd4_fires_on_an_hv_link_label_even_with_no_net():
+    bad = replace(GOOD, connectors=GOOD.connectors + (
+        _conn("J199", "HVIN", "HV-LINK spare", (), leaves_box=False,
+              interface="HV-LINK", pitch_mm=2.54),))
+    assert any("J199" in e for e in fired(bad, "BD-4"))
+
+
+def test_bd4_nan_pitch_is_not_a_pass():
+    assert fired(GOOD.replace_connector("J104", pitch_mm=float("nan")), "BD-4")
+
+
+# ── GPIO ─────────────────────────────────────────────────────────────────────
+def test_silicon_facts_are_pinned():
+    assert rules.GPIO_STRAPPING == {0, 3, 45, 46}
+    assert rules.GPIO_ADC1 == set(range(1, 11))
+    assert rules.GPIO_USB == {19, 20}
+    assert rules.GPIO_BOOT_LOG == 43
+    assert rules.GPIO_FLASH == set(range(26, 33))
+    assert not rules.MODULE_GPIOS & {22, 23, 24, 25, 33, 34}
+    assert len(rules.MODULE_GPIOS) == 36          # the WROOM-1's GPIO pads
+    assert rules.ANALOG_NETS == {"CS1", "CS2", "KEY_SENSE", "V12_SENSE", "AMBIENT"}
+
+
+def test_gpio_dup_fires_on_two_nets_sharing_a_gpio():
+    bad = on_gpio(GOOD, "SW_IN", 42)                       # HORN_CMD's pin
+    assert any("GPIO42" in e for e in fired(bad, "GPIO-DUP"))
+
+
+def test_gpio_dup_sees_a_duplicate_made_only_of_tags():
+    bad = GOOD.replace_net("SW_IN", gpio="GPIO42")
+    assert fired(bad, "GPIO-DUP")
+
+
+@pytest.mark.parametrize("n, why", [
+    (33, "no pad on the WROOM-1"), (34, "no pad on the WROOM-1"),
+    (24, "does not exist"), (27, "in-package flash"), (99, "does not exist"),
+])
+def test_gpio_pad_fires_on_a_gpio_the_module_does_not_have(n, why):
+    errs = fired(on_gpio(GOOD, "SW_IN", n), "GPIO-PAD")
+    assert errs and why in errs[0]
+
+
+def test_gpio_tag_fires_when_label_and_pin_disagree():
+    """Audit 5g: tagged GPIO48, landed on IO21."""
+    bad = on_gpio(GOOD, "SW_IN", 21).replace_net("SW_IN", gpio="GPIO48")
+    assert fired(bad, "GPIO-TAG")
+
+
+def test_gpio_tag_fires_on_an_mcu_pin_with_no_tag():
+    assert fired(GOOD.replace_net("SW_IN", gpio=None), "GPIO-TAG")
+
+
+def test_gpio_tag_fires_on_a_tag_with_no_mcu_pin():
+    assert fired(GOOD.replace_net("SW_WIRE", gpio="GPIO16"), "GPIO-TAG")
+
+
+def test_gpio_tag_fires_on_a_malformed_tag():
+    assert fired(GOOD.replace_net("SW_IN", gpio="IO15"), "GPIO-TAG")
+
+
+def test_gpio_usb_fires_on_a_non_usb_net_and_not_on_usb():
+    assert not fired(GOOD, "GPIO-USB")
+    bad = rename_net(GOOD, "USB_DP", "AUX_OUT")
+    assert any("GPIO20" in e for e in fired(bad, "GPIO-USB"))
+
+
+def test_gpio43_is_allowed_on_the_service_header():
+    assert not fired(GOOD, "GPIO-43")
+
+
+def _free_gpio43(d: Design) -> Design:
+    """Take U0TXD off the module so another net can have the pin."""
+    return d.without_pin("U401", "IO43").replace_net("U0TXD", gpio=None)
+
+
+def test_gpio43_fires_when_it_reaches_a_fet_gate():
+    bad = on_gpio(_free_gpio43(GOOD), "HORN_CMD", 43)
+    assert any("Q301.G" in e and "R310" in e for e in fired(bad, "GPIO-43"))
+    assert not fired(bad, "GPIO-DUP")
+
+
+def test_gpio43_fires_on_the_pin_even_with_the_tag_omitted():
+    """Audit 7a: physically on IO43, gpio= left off."""
+    bad = on_gpio(_free_gpio43(GOOD), "HORN_CMD", 43).replace_net("HORN_CMD", gpio=None)
+    assert fired(bad, "GPIO-43")
+
+
+def test_gpio43_fires_when_it_reaches_a_driver_ic_input():
+    bad = on_gpio(_free_gpio43(GOOD), "LGT_LOW", 43)
+    assert any("U301.IN1" in e for e in fired(bad, "GPIO-43"))
+
+
+def test_gpio43_sees_the_wroom_pad_name_too():
+    """The module's own pad name for GPIO43 is TXD0; a net landed on it under
+    that name is still on the boot-log pin."""
+    bad = GOOD.replace_part("U401", pins=GOOD.part("U401").pins + ("TXD0",))
+    bad = add_pin(bad.without_pin("U401", "IO42"), "HORN_CMD", "U401", "TXD0")
+    assert fired(bad, "GPIO-43")
+
+
+def test_adc1_fires_when_a_named_analog_net_is_on_adc2():
+    assert any("GPIO11" in e for e in fired(on_gpio(GOOD, "KEY_SENSE", 11), "GPIO-ADC1"))
+
+
+def test_adc1_fires_when_an_analog_net_is_on_no_mcu_pin():
+    """Audit 6b."""
+    bad = GOOD.without_pin("U401", "IO1").replace_net("KEY_SENSE", gpio=None)
+    assert any("KEY_SENSE" in e for e in fired(bad, "GPIO-ADC1"))
+
+
+def test_adc1_is_not_fooled_by_renaming_the_current_sense_net():
+    """Audit 6a: CS1 -> ISENSE1 on ADC2. It still reads U301.CS."""
+    bad = on_gpio(rename_net(GOOD, "CS1", "ISENSE1"), "ISENSE1", 11)
+    assert any("U301.CS" in e for e in fired(bad, "GPIO-ADC1"))
+
+
+def test_adc1_is_quiet_when_analog_is_on_gpio1_to_10():
+    for n in (2, 3 + 2, 10):
+        assert not fired(on_gpio(GOOD, "KEY_SENSE", n), "GPIO-ADC1")
+
+
+def test_strapping_pin_may_serve_the_internal_service_header():
+    assert not fired(GOOD, "GPIO-STRAP")                  # BOOT = GPIO0 -> J408
+
+
+def test_strap_fires_on_a_net_that_lands_on_a_harness_connector():
+    bad = on_gpio(GOOD, "SW_WIRE", 3)
+    assert any("J402" in e and "leaves the box" in e for e in fired(bad, "GPIO-STRAP"))
+
+
+def test_strap_fires_through_a_series_resistor():
+    """Audit 5b: the MCU-side segment of a conditioned input."""
+    errs = fired(on_gpio(GOOD, "SW_IN", 46), "GPIO-STRAP")
+    assert any("J402" in e and "R410" in e for e in errs)
+
+
+def test_strap_fires_on_the_brake_lever_through_its_steering_diode():
+    """Audit 5c -- the rule's own headline: a rider holding a lever at key-on.
+    IN05_BRAKE_L is one diode away from J306."""
+    errs = fired(on_gpio(GOOD, "IN05_BRAKE_L", 3), "GPIO-STRAP")
+    assert any("J306" in e and "D305" in e for e in errs)
+
+
+@pytest.mark.parametrize("n", sorted(rules.GPIO_STRAPPING - {0}))
+def test_strap_covers_every_strapping_pin(n):
+    assert fired(on_gpio(GOOD, "SW_IN", n), "GPIO-STRAP")
+
+
+def test_strap_fires_on_gpio0_as_well():
+    bad = on_gpio(GOOD.without_pin("U401", "IO0").replace_net("BOOT", gpio=None),
+                  "SW_IN", 0)
+    assert fired(bad, "GPIO-STRAP")
+
+
+def test_strap_fires_when_a_strapping_pin_drives_a_gate():
+    """Audit 5d: a gate's pull-down on a strapping pin sets the boot strap."""
+    errs = fired(on_gpio(GOOD, "HORN_CMD", 45), "GPIO-STRAP")
+    assert any("Q301.G" in e for e in errs)
+
+
+def test_strap_fires_when_a_strapping_pin_crosses_to_another_board():
+    """A strapping pin may serve its bias parts and the internal service
+    header. Across STACK it meets another board's contacts at key-on."""
+    ext = lambda c: c.pins + (ConnPin("10", "SPARE_X"),)
+    bad = GOOD.replace_connector("J406", pins=ext(GOOD.connector("J406")))
+    bad = bad.replace_connector("J308", pins=ext(GOOD.connector("J308")))
+    bad = bad.with_net(Net("SPARE_X", (("J406", "10"), ("J308", "10")),
+                           domain="SIGNAL", interface="STACK"))
+    errs = fired(on_gpio(bad, "SPARE_X", 46), "GPIO-STRAP")
+    assert any("crosses STACK" in e for e in errs)
+
+
+def test_strap_does_not_walk_through_the_3v3_rail():
+    """Every pull-up meets at V3P3. A walk that crossed a supply would
+    connect every input to every connector."""
+    d = on_gpio(GOOD, "MCP_RESET", 46)    # its only series part is its pull-up
+    assert not [e for e in fired(d, "GPIO-STRAP") if "J4" in e or "J3" in e]
+
+
+# ── D14: gate bias, by polarity ──────────────────────────────────────────────
+def test_d14_fires_when_the_pulldown_is_deleted():
+    assert any("Q301" in e for e in fired(GOOD.without_part("R307"), "D14"))
+
+
+def test_d14_fires_when_the_bias_resistor_goes_to_the_wrong_rail():
+    """Audit 2a: the horn's 10 k rewired gate -> V12. N-FET biased ON."""
+    assert any("Q301" in e for e in fired(move_pin(GOOD, "R307", "2", "V12"), "D14"))
+
+
+def test_d14_fires_on_a_pulldown_to_ground_on_a_high_side_pfet():
+    """Audit 2b: gate -> GND on the 84 V P-FET is V_GS = -84 V. ON, not OFF."""
+    assert any("Q101" in e for e in fired(move_pin(GOOD, "R110", "1", "GND"), "D14"))
+
+
+def test_d14_fires_when_the_bias_resistors_far_end_floats():
+    """Audit 2c."""
+    assert any("Q301" in e for e in fired(GOOD.without_pin("R307", "2"), "D14"))
+
+
+def test_d14_fires_when_the_bias_resistor_is_dnp():
+    """Audit 2h."""
+    assert any("Q301" in e for e in fired(GOOD.replace_part("R307", dnp=True), "D14"))
+
+
+def test_d14_is_not_satisfied_by_a_series_resistor_with_a_bias_value():
+    """Audit 2e: pull-down gone, the 100 R series part retyped '10k'."""
+    bad = GOOD.without_part("R307").replace_part("R310", value="10k")
+    assert any("Q301" in e for e in fired(bad, "D14"))
+
+
+def test_d14_does_not_care_what_the_gate_net_is_called():
+    """Audit 2d: renamed away from *_GATE, pull-down deleted."""
+    assert not fired(rename_net(GOOD, "HORN_GATE", "HORN_G"), "D14")
+    bad = rename_net(GOOD.without_part("R307"), "HORN_GATE", "HORN_G")
+    assert any("Q301" in e for e in fired(bad, "D14"))
+
+
+def test_d14_fires_when_the_fet_has_no_source_connection():
+    """Audit F-2: the run/off kill FET with S on no net."""
+    assert any("Q301" in e and "source" in e
+               for e in fired(GOOD.without_pin("Q301", "S"), "D14"))
+
+
+def test_d14_fires_when_fet_pins_are_not_named_g_s_d():
+    bad = GOOD.replace_part("Q301", pins=("1", "2", "3"))
+    assert any("Q301" in e for e in fired(bad, "D14"))
+
+
+def test_d14_accepts_the_pfet_whose_pullup_is_its_bias():
+    """Q304: R313 gate -> V12 IS gate -> source."""
+    assert not [e for e in fired(GOOD, "D14") if "Q304" in e]
+
+
+# ── TURN-ON: can the switch be commanded on at all? ──────────────────────────
+def test_turn_on_fires_on_a_pfet_with_no_path_to_ground():
+    """Audit F-4: gate tied to the source through R110, nothing to ground."""
+    assert any("Q101" in e for e in fired(GOOD.without_part("Q105"), "TURN-ON"))
+
+
+def test_turn_on_fires_on_the_historical_topology():
+    """As netlisted on 2026-09-18: the pull-down resistor went to the key
+    switch's output, which sits at the SOURCE's own potential with the key on.
+    A contact that leaves the box is not a ground."""
+    bad = move_pin(GOOD, "R101", "2", "KSW")
+    assert any("Q101" in e for e in fired(bad, "TURN-ON"))
+
+
+def test_turn_on_fires_when_the_pulldown_is_dnp():
+    assert any("Q101" in e for e in fired(GOOD.replace_part("R101", dnp=True), "TURN-ON"))
+
+
+def test_turn_on_allows_one_nfet_in_the_path_not_two():
+    """Two stacked N-FETs need two commands to be true at once; nothing here
+    checks the second. One level shifter is the topology that was verified."""
+    bad = GOOD.with_part(_fet("Q199", "HVIN", "BSS127", "NFET", 600.0))
+    bad = bad.with_part(_r("R198", "HVIN", "100k"))
+    bad = bad.with_net(Net("D13_PD2", (("Q105", "S"), ("Q199", "D")), domain="84V"))
+    bad = replace(bad, nets=tuple(
+        replace(n, pins=tuple(p for p in n.pins if p != ("Q105", "S")))
+        if n.name == "GND" else n for n in bad.nets))
+    for ref, pin, net in (("Q199", "S", "GND"), ("Q199", "G", "D13_EN"),
+                          ("R198", "1", "D13_EN"), ("R198", "2", "GND")):
+        bad = add_pin(bad, net, ref, pin)
+    assert any("Q101" in e for e in fired(bad, "TURN-ON"))
+
+
+def test_sensed_node_typed_at_its_fault_ceiling_does_not_condemn_the_adc_pin():
+    """U301_CS is typed 5V for what the CS pin does in a fault. It is loaded by
+    its sense resistor, so its label rates parts; it does not hold CS1 at 5 V."""
+    assert GOOD.net("U301_CS").domain == "5V"
+    assert not [e for e in rules.check_all(GOOD) if "CS1" in e]
+
+
+def test_turn_on_does_not_count_a_path_through_the_source():
+    """gate -> R110 -> source -> anything -> ground turns nothing on."""
+    bad = GOOD.without_part("Q105").with_part(_r("R199", "HVIN", "1M"))
+    bad = add_pin(add_pin(bad, "HV_BPLUS", "R199", "1"), "GND", "R199", "2")
+    assert any("Q101" in e for e in fired(bad, "TURN-ON"))
+
+
+def test_turn_on_accepts_a_steering_diode_to_a_contact_that_sinks():
+    """Q304's gate is pulled low by the brake lever, outside the box, through
+    D303 -- a diode that can only ever pull the gate DOWN."""
+    assert not [e for e in fired(GOOD, "TURN-ON") if "Q304" in e]
+
+
+def test_turn_on_fires_when_that_steering_diode_is_reversed():
+    bad = move_pin(move_pin(GOOD, "D303", "A", "LEVER_L"), "D303", "K", "Q1_GATE")
+    assert any("Q304" in e for e in fired(bad, "TURN-ON"))
+
+
+def test_turn_on_fires_on_an_nfet_gate_commanded_by_nothing():
+    bad = GOOD.without_pin("R310", "1")
+    assert any("Q301" in e for e in fired(bad, "TURN-ON"))
+
+
+def test_turn_on_accepts_a_gate_commanded_only_from_a_harness_contact():
+    """Q105 is driven by the key switch, which is outside the box. With the
+    KEY_SENSE divider gone, J102 is the only thing its gate reaches."""
+    assert not fired(GOOD.without_part("R107"), "TURN-ON")
+
+
+def test_turn_on_fires_when_the_level_shifter_has_no_drive():
+    """The P-FET's path exists, but the N-FET in it can never turn on."""
+    assert any("Q105" in e for e in fired(GOOD.without_part("R112"), "TURN-ON"))
+
+
+# ── VR: the voltage line on every part ───────────────────────────────────────
+def test_vr_standoff_fires_on_a_5v_tvs_on_the_11v4_lever_node():
+    """Audit F-1 / C-H2: PESD5V0S4UD breaks down at 6.4 V; the lever node
+    idles at 11.4 V; the stop lamp is lit for ever."""
+    bad = GOOD.replace_part("D310", mpn="PESD5V0S4UD", v_max=5.0)
+    assert any("D310" in e and "LEVER_L" in e for e in fired(bad, "VR-STANDOFF"))
+
+
+def test_vr_domain_fires_when_the_lever_node_is_left_signal():
+    """The defect was invisible because the net's domain defaulted to SIGNAL
+    and the rule skipped it. No silent skip."""
+    bad = GOOD.replace_net("LEVER_L", domain="SIGNAL")
+    assert any("D310" in e and "LEVER_L" in e for e in fired(bad, "VR-DOMAIN"))
+
+
+def test_vr_standoff_is_not_fooled_by_typing_the_lever_node_3v3():
+    """DERIVED: R313 and D303 hold it at V12 with no path to ground."""
+    bad = GOOD.replace_part("D310", mpn="PESD5V0S4UD", v_max=5.0)
+    bad = bad.replace_net("LEVER_L", domain="3V3").replace_net("Q1_GATE", domain="3V3")
+    errs = fired(bad, "VR-STANDOFF")
+    assert any("LEVER_L" in e and "typed 3V3" in e and "12 V" in e for e in errs)
+
+
+def test_vr_standoff_covers_the_84v_bus():
+    bad = GOOD.replace_part("D101", mpn="SMCJ58A", v_max=58.0)
+    assert any("D101" in e for e in fired(bad, "VR-STANDOFF"))
+
+
+def test_vr_rated_fires_on_a_tvs_with_no_rating():
+    """Audit 8a."""
+    assert any("D310" in e for e in fired(GOOD.replace_part("D310", v_max=None), "VR-RATED"))
+
+
+@pytest.mark.parametrize("ref", ["C105", "D303", "D102", "D101", "Q301", "Q101"])
+def test_vr_rated_fires_for_every_kind_that_must_carry_a_rating(ref):
+    assert any(ref in e for e in fired(GOOD.replace_part(ref, v_max=None), "VR-RATED"))
+
+
+def test_vr_rated_rejects_a_rating_that_is_not_a_number():
+    assert fired(GOOD.replace_part("C105", v_max=float("nan")), "VR-RATED")
+    assert fired(GOOD.replace_part("C105", v_max=0.0), "VR-RATED")
+
+
+def test_vr_datasheet_fires_on_a_rating_typed_above_the_datasheet():
+    """Audit 8c: v_max=999 typed onto the array."""
+    assert any("D310" in e for e in fired(GOOD.replace_part("D310", v_max=999.0), "VR-DATASHEET"))
+    bad = GOOD.replace_part("D401", v_max=50.0)               # mutation N8
+    assert any("D401" in e for e in fired(bad, "VR-DATASHEET"))
+
+
+def test_vr_under_fires_on_a_30v_fet_on_an_84v_node():
+    """Audit N14."""
+    bad = GOOD.replace_part("Q105", mpn="AO3400A", v_max=30.0)
+    assert any("Q105" in e for e in fired(bad, "VR-UNDER"))
+
+
+def test_vr_under_fires_on_an_under_rated_capacitor():
+    assert any("C105" in e for e in fired(GOOD.replace_part("C105", v_max=50.0), "VR-UNDER"))
+
+
+def test_vr_under_fires_on_a_rated_ic():
+    assert any("U405" in e for e in fired(GOOD.replace_part("U405", v_max=5.5), "VR-UNDER"))
+
+
+def test_vr_lets_a_25v_cap_sit_across_a_zener_clamped_gate():
+    """C107 is between two 84 V nets and sees 15 V, because D102 is across it."""
+    assert not [e for e in rules.check_all(GOOD) if "C107" in e]
+    assert any("C107" in e for e in fired(GOOD.without_part("D102"), "VR-UNDER"))
+    assert any("C107" in e for e in fired(GOOD.replace_part("D102", dnp=True), "VR-UNDER"))
+
+
+def test_vr_treats_a_zener_as_a_clamp_only_across_a_gate():
+    assert not [e for e in rules.check_all(GOOD) if "D102" in e or "D106" in e]
+    bad = GOOD.with_part(_d("D199", "DRV", "BZT52C5V1", "ZENER", 5.1))
+    bad = add_pin(add_pin(bad, "LEVER_L", "D199", "K"), "GND", "D199", "A")
+    assert any("D199" in e for e in fired(bad, "VR-UNDER"))
+
+
+def test_vr_checks_dnp_parts_too():
+    """A wrong part that is not fitted today is wrong the day it is."""
+    bad = GOOD.replace_part("D406", mpn="PESD5V0S4UD", v_max=5.0)
+    assert any("D406" in e for e in fired(bad, "VR-STANDOFF"))
+
+
+# ── LV-LOGIC: nothing above 3.3 V on a 3.3 V pin ─────────────────────────────
+def test_lv_logic_fires_on_12v_wired_to_an_mcu_pin():
+    assert any("U401.IO10" in e for e in fired(add_pin(GOOD, "V12", "U401", "IO10"), "LV-LOGIC"))
+
+
+def test_lv_logic_fires_on_a_lamp_feed_wired_to_the_expander():
+    assert any("U402.GPB5" in e for e in fired(add_pin(GOOD, "HL_LOW", "U402", "GPB5"), "LV-LOGIC"))
+
+
+def test_lv_logic_fires_on_a_pullup_to_12v_with_no_divider():
+    bad = move_pin(GOOD, "R411", "1", "V12")
+    assert any("SW_IN" in e and "R411" in e for e in fired(bad, "LV-LOGIC"))
+
+
+def test_lv_logic_accepts_a_divider():
+    assert not [e for e in fired(GOOD, "LV-LOGIC")]
+    # KEY_SENSE hangs off 84 V through R107 -- and R109 holds it down
+    assert fired(GOOD.without_part("R109"), "LV-LOGIC")
+
+
+# ── PROT: fitted, at the connector, and returned to ground ───────────────────
+def test_prot_fires_when_the_tvs_is_removed_from_the_net():
+    assert any("HL_LOW" in e for e in fired(GOOD.without_pin("D310", "6"), "PROT"))
+
+
+def test_prot_fires_on_a_tvs_with_one_leg_floating():
+    """Audit F-6: D104 / D105 had one terminal landed and counted as cover."""
+    assert any("KSW" in e and "D104" in e for e in fired(GOOD.without_pin("D104", "A"), "PROT"))
+
+
+def test_prot_fires_when_every_array_anode_is_lifted():
+    """Audit 1b."""
+    bad = GOOD.without_pin("D310", "2").without_pin("D310", "5")
+    assert {"HL_LOW", "HORN_OUT", "LEVER_L", "STOP_OUT"} <= {
+        m.group(1) for e in fired(bad, "PROT") if (m := re.search(r"net '(\w+)'", e))}
+
+
+def test_prot_fires_on_a_dnp_tvs():
+    """Audit 1c."""
+    assert any("LEVER_L" in e and "DNP" in e
+               for e in fired(GOOD.replace_part("D310", dnp=True), "PROT"))
+
+
+def test_prot_fires_on_a_tvs_on_another_board():
+    """Audit F-6: D405 sat on BRAIN while its connector moved to DRV."""
+    assert any("is on BRAIN, not DRV" in e
+               for e in fired(GOOD.replace_part("D310", board="BRAIN"), "PROT"))
+
+
+def test_prot_fires_when_the_return_is_an_island_called_ground():
+    """Audit F-3: LAMP_COMMON satisfied the old rule with the TVS anodes."""
+    bad = GOOD.with_net(Net("LAMP_COMMON", (), domain="GND"))
+    bad = move_pin(move_pin(bad, "D310", "2", "LAMP_COMMON"), "D310", "5", "LAMP_COMMON")
+    assert fired(bad, "PROT")
+    assert any("LAMP_COMMON" in e for e in fired(bad, "GND-ISLAND"))
+
+
+def test_prot_is_not_satisfied_by_a_part_that_is_not_a_tvs():
+    bad = GOOD.replace_part("D104", kind="D")
+    assert any("KSW" in e for e in fired(bad, "PROT"))
+
+
+def test_prot_needs_a_rail_clamp_where_the_rail_leaves_the_box():
+    assert any("'V12'" in e and "J303" in e for e in fired(GOOD.without_part("D315"), "PROT"))
+
+
+def test_prot_lets_a_parked_connector_keep_its_tvs_dnp_but_not_unwired():
+    assert not [e for e in fired(GOOD, "PROT") if "J305" in e]
+    assert any("J305" in e for e in fired(GOOD.without_pin("D406", "A"), "PROT"))
+    assert any("J305" in e for e in fired(GOOD.replace_connector("J305", parked=False), "PROT"))
+
+
+def test_prot_reads_the_connector_table_as_well_as_the_net():
+    j = GOOD.connector("J302")
+    bad = GOOD.replace_connector("J302", pins=j.pins + (ConnPin("3", "HORN_GATE"),))
+    assert any("HORN_GATE" in e and "J302" in e for e in fired(bad, "PROT"))
+
+
+def test_prot_ignores_internal_connectors_and_ground_pins():
+    assert not [e for e in fired(GOOD, "PROT")]
+
+
+# ── GND-ISLAND ───────────────────────────────────────────────────────────────
+def test_ground_island_accepts_a_plate_tied_by_a_fitted_link():
+    assert not fired(GOOD, "GND-ISLAND")
+
+
+def test_ground_island_fires_when_the_tie_is_dnp_or_missing():
+    assert any("BASEPLATE" in e for e in fired(GOOD.replace_part("R211", dnp=True), "GND-ISLAND"))
+    assert any("BASEPLATE" in e for e in fired(GOOD.without_part("R211"), "GND-ISLAND"))
+
+
+def test_ground_island_accepts_a_return_behind_a_choke_winding():
+    assert not fired(GOOD.replace_net("HV_C1_N", domain="GND"), "GND-ISLAND")
+
+
+# ── MCP-OUT7 ─────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("pin", ["GPA7", "GPB7"])
+def test_mcp_bit7_is_never_netted(pin):
+    assert not fired(GOOD, "MCP-OUT7")
+    bad = add_pin(GOOD.without_pin("U402", "GPB3"), "POD2_IN", "U402", pin)
+    assert any(pin in e for e in fired(bad, "MCP-OUT7"))
+
+
+# ── POL ──────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("ref", ["D104", "D303", "D102"])
+def test_pol_fires_on_a_diode_with_numbered_pins(ref):
+    """Audit C-H6: D104 was netted as pin `1`; polarity undefined."""
+    assert any(ref in e for e in fired(GOOD.replace_part(ref, pins=("1", "2")), "POL"))
+
+
+def test_pol_allows_a_bidirectional_tvs():
+    ok = GOOD.replace_part("D315", mpn="SMBJ15CA", pins=("1", "2"))
+    assert not fired(ok, "POL")
+
+
+# ── HT: heights, for every body in the stack ─────────────────────────────────
+# The stack is DERIVED by board_params.stack_height() from the design's own
+# heights, so these tests state outcomes ("this does not fit") and take every
+# number from that module -- never a typed ceiling.
+def _tallest_on_top_of(d, board):
+    """Tallest top-side body on a board, inter-board connectors aside."""
+    return max([p.height_mm for p in d.parts if p.board == board and p.side == "top"]
+               + [c.height_mm for c in d.connectors
+                  if c.board == board and c.interface is None])
+
+
+def test_ht_good_design_fits():
+    assert not fired(GOOD, "HT-NUM") and not fired(GOOD, "HT-STACK")
+
+
+def test_ht_fires_on_a_connector_too_tall_for_the_stack(binding_envelope):
+    """Audit F-12 / D-4: the stack's margin lived in connector heights that
+    no rule could see."""
+    for ref in ("J306", "J401", "J101"):
+        bad = GOOD.replace_connector(ref, height_mm=bp.AVAIL_H)
+        assert fired(bad, "HT-STACK"), ref
+
+
+def test_ht_polices_every_board_not_just_one(binding_envelope):
+    for ref in ("Q101", "U201", "U301", "U405"):
+        bad = GOOD.replace_part(ref, height_mm=bp.AVAIL_H)
+        assert fired(bad, "HT-STACK"), GOOD.part(ref).board
+
+
+def test_ht_fires_on_a_nan_height():
+    """nan > 6.0 is False: an unknown height was an unchecked height."""
+    assert any("U405" in e for e in fired(GOOD.replace_part("U405", height_mm=float("nan")), "HT-NUM"))
+    assert any("J306" in e for e in fired(GOOD.replace_connector("J306", height_mm=float("nan")), "HT-NUM"))
+    assert fired(GOOD.replace_part("U405", height_mm=float("inf")), "HT-NUM")
+    assert fired(GOOD.replace_part("U405", height_mm=-1.0), "HT-NUM")
+    assert fired(GOOD.replace_part("U405", height_mm=None), "HT-NUM")
+
+
+def test_ht_does_not_exempt_a_bottom_side_part(binding_envelope):
+    """Audit 4b: a 40 mm part marked side='bottom' passed."""
+    bad = GOOD.replace_part("U402", side="bottom", height_mm=bp.AVAIL_H)
+    assert fired(bad, "HT-STACK")
+
+
+def test_ht_checks_a_bottom_side_part_against_the_gap_below_it():
+    """With the HV-LINK pair chosen (both heights confirmed) the HVIN->CONV
+    spacing is fixed; a can hanging deeper under CONV than that does not fit."""
+    chosen = GOOD.replace_connector("J104", height_confirmed=True, height_mm=10.0)
+    chosen = chosen.replace_connector("J201", height_confirmed=True, height_mm=2.0)
+    assert not fired(chosen.replace_part("C201", height_mm=5.0), "HT-STACK")
+    errs = fired(chosen.replace_part("C201", height_mm=13.0), "HT-STACK")
+    assert any("C201" in e for e in errs)
+
+
+def test_ht_relays_every_stack_problem(monkeypatch):
+    monkeypatch.setattr(rules, "_stack_problems", lambda d: ["first", "second"])
+    assert fired(GOOD, "HT-STACK") == ["HT-STACK: first", "HT-STACK: second"]
+
+
+def test_ht_says_so_when_there_is_no_geometry_to_check_against(monkeypatch):
+    monkeypatch.setattr(rules, "_stack_problems", None)
+    monkeypatch.setattr(rules, "_stack_height", None)
+    assert fired(GOOD, "HT-GEOM")
+    assert isinstance(rules.warnings(GOOD), list)
+
+
+# ── warnings: reported, never trusted, never a gate failure ──────────────────
+def _warned(d, wid, ref=None):
+    return [w for w in rules.warnings(d)
+            if w.startswith(wid + ":") and (ref is None or f" {ref} " in f" {w}")]
+
+
+def test_unconfirmed_height_near_what_sets_its_gap_is_a_warning_not_an_error():
+    top = _tallest_on_top_of(GOOD, "BRAIN")
+    near = GOOD.replace_part("U405", height_mm=top - 1.5)
+    assert rules.check_all(near) == []
+    assert _warned(near, "HT-W1", "U405")
+    assert not _warned(near.replace_part("U405", height_confirmed=True), "HT-W1", "U405")
+    far = GOOD.replace_part("U405", height_mm=top - 2.5)
+    assert not _warned(far, "HT-W1", "U405")
+
+
+def test_unconfirmed_connector_height_is_warned_about_too():
+    assert _warned(GOOD, "HT-W1", "J306")                     # a harness connector
+    assert not _warned(GOOD.replace_connector("J306", height_confirmed=True),
+                       "HT-W1", "J306")
+
+
+def test_unconfirmed_underside_part_is_warned_about():
+    deep = GOOD.replace_part("C201", height_mm=9.0)
+    assert _warned(deep, "HT-W1", "C201")
+    assert not _warned(deep.replace_part("C201", height_confirmed=True), "HT-W1", "C201")
+
+
+def test_an_unconfirmed_inter_board_connector_is_warned_about():
+    assert _warned(GOOD, "HT-W1", "J308")
+    chosen = GOOD.replace_connector("J308", height_confirmed=True)
+    assert not _warned(chosen, "HT-W1", "J308")
+
+
+def test_stack_notes_and_load_bearing_heights_are_relayed(monkeypatch):
+    class Stack:
+        notes = ("keep-out: X under Y",)
+        load_bearing = ("R307",)                 # far from tallest on DRV
+    assert not _warned(GOOD, "HT-W1", "R307")
+    monkeypatch.setattr(rules, "_stack_height", lambda d: Stack())
+    assert _warned(GOOD, "HT-W2") == ["HT-W2: keep-out: X under Y"]
+    assert _warned(GOOD, "HT-W1", "R307")
+
+
+def test_a_connector_declared_internal_with_no_interface_is_warned():
+    """Connector.leaves_box is the one hand-typed flag left. It cannot be
+    derived, so it is surfaced: flip a harness connector to 'internal' and it
+    shows up here by name."""
+    assert _warned(GOOD, "BOX-W1") == _warned(GOOD, "BOX-W1", "J408") != []
+    flipped = GOOD.replace_connector("J306", leaves_box=False)
+    assert _warned(flipped, "BOX-W1", "J306")

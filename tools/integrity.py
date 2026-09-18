@@ -1,0 +1,155 @@
+"""Structural integrity of the netlist -- is it a CIRCUIT at all?
+
+rules.py asks whether the design obeys its safety and pin rules. This module
+asks the question underneath that one, which the 2026-09-18 audit showed nobody
+was asking: does every leg of every part actually go somewhere?
+
+At the time, all of these were true and every rule was green:
+  * two TVS diodes "protecting" 84 V wires had one terminal each
+  * the run/off kill FET had no source
+  * a zener that clamps a +/-20 V gate had no cathode
+  * the 3.3 V rail and the CAN pair "crossed" a connector with no contact
+  * nothing joined the lamp returns to ground
+
+None of these needs electrical judgement to find. They need counting.
+
+Deliberately dumb, deliberately independent of rules.py: nothing here trusts a
+label. Run it first; a design that fails here is not worth rule-checking.
+"""
+import math
+from collections import Counter, defaultdict
+
+from .model import Design
+
+#: The boards each inter-board interface physically joins.
+INTERFACE_BOARDS = {
+    "HV-LINK": {"HVIN", "CONV"},
+    "PWR-UP": {"CONV", "DRV", "BRAIN"},
+    "STACK": {"DRV", "BRAIN"},
+}
+
+
+def check(d: Design) -> list[str]:
+    errs: list[str] = []
+    part_refs = [p.refdes for p in d.parts]
+    conn_refs = [c.refdes for c in d.connectors]
+
+    # -- identity -------------------------------------------------------------
+    for ref, n in Counter(part_refs + conn_refs).items():
+        if n > 1:
+            errs.append(f"identity: refdes {ref} is defined {n} times")
+    for name, n in Counter(x.name for x in d.nets).items():
+        if n > 1:
+            errs.append(f"identity: net {name!r} is defined {n} times")
+
+    # -- every (refdes, pin) lands at most once, on a thing that exists --------
+    landed: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for net in d.nets:
+        for ref, pin in net.pins:
+            landed[(ref, pin)].append(net.name)
+            if ref not in part_refs and ref not in conn_refs:
+                errs.append(f"dangling: net {net.name!r} references {ref}, "
+                            f"which is neither a part nor a connector")
+    for (ref, pin), nets in landed.items():
+        if len(nets) > 1:
+            errs.append(f"shorted: {ref}.{pin} is on {len(nets)} nets {nets}")
+
+    # -- every declared pin of every part lands; nothing undeclared lands ------
+    for p in d.parts:
+        if not p.pins:
+            errs.append(f"pins: {p.refdes} ({p.mpn}) declares no pins")
+        declared, nc = set(p.pins), set(p.nc)
+        if declared & nc:
+            errs.append(f"pins: {p.refdes} lists {sorted(declared & nc)} as both "
+                        f"a pin and a no-connect")
+        on = {pin for (ref, pin) in landed if ref == p.refdes}
+        for pin in sorted(declared - on):
+            errs.append(f"floating: {p.refdes}.{pin} ({p.mpn}) is on no net"
+                        + ("  [part is DNP -- its footprint still needs both "
+                           "ends]" if p.dnp else ""))
+        for pin in sorted(on - declared):
+            errs.append(f"undeclared: {p.refdes}.{pin} is netted but "
+                        f"{p.refdes} does not declare that pin")
+        for pin in sorted(on & nc):
+            errs.append(f"pins: {p.refdes}.{pin} is declared no-connect but "
+                        f"is on a net")
+
+    # -- connector tables and nets must tell the same story --------------------
+    net_names = {n.name for n in d.nets}
+    for c in d.connectors:
+        table = {cp.pin: cp.net for cp in c.pins}
+        if len(table) != len(c.pins):
+            errs.append(f"connector: {c.refdes} lists a pin twice")
+        for pin, net_name in table.items():
+            if not net_name:
+                if (c.refdes, pin) in landed:
+                    errs.append(f"connector: {c.refdes}.{pin} is tabled unused "
+                                f"but is on net {landed[(c.refdes, pin)]}")
+                continue
+            if net_name not in net_names:
+                errs.append(f"connector: {c.refdes}.{pin} names net "
+                            f"{net_name!r}, which does not exist")
+            elif (c.refdes, pin) not in d.net(net_name).pins:
+                errs.append(f"connector: {c.refdes}.{pin} is tabled as "
+                            f"{net_name!r} but that net has no such pin -- "
+                            f"the signal does not actually reach the connector")
+        for (ref, pin), nets in landed.items():
+            if ref == c.refdes and pin not in table:
+                errs.append(f"connector: {nets[0]!r} lands on {c.refdes}.{pin}, "
+                            f"a contact the connector does not have")
+
+    # -- a net that spans boards must have copper across the gap ---------------
+    for net in d.nets:
+        boards = {d.board_of(r) for r, _ in net.pins if d.has(r)}
+        if len(boards) < 2:
+            if net.interface:
+                errs.append(f"interface: {net.name!r} claims {net.interface} "
+                            f"but sits on one board {sorted(boards)}")
+            continue
+        refs = {r for r, _ in net.pins}
+        bridged: set[str] = set()
+        for c in d.connectors:
+            if c.interface and c.refdes in refs:
+                bridged |= INTERFACE_BOARDS[c.interface] & {c.board}
+        for b in sorted(boards - bridged):
+            errs.append(f"interface: {net.name!r} has pins on {b} but no "
+                        f"inter-board contact on {b} carries it -- the net "
+                        f"spans {sorted(boards)} with a gap in the copper")
+        if not net.interface:
+            errs.append(f"interface: {net.name!r} spans {sorted(boards)} and "
+                        f"names no interface")
+
+    # -- MCU pin label and gpio tag must agree; no GPIO used twice --------------
+    gpios = Counter()
+    for net in d.nets:
+        mcu_pins = [pin for ref, pin in net.pins
+                    if ref == "U401" and pin.startswith("IO")]
+        if net.gpio:
+            gpios[net.gpio] += 1
+            want = "IO" + net.gpio.removeprefix("GPIO")
+            if want not in mcu_pins:
+                errs.append(f"gpio: {net.name!r} is tagged {net.gpio} but lands "
+                            f"on U401 pins {mcu_pins or 'NONE'}")
+        elif mcu_pins:
+            errs.append(f"gpio: {net.name!r} lands on U401.{mcu_pins[0]} with "
+                        f"no gpio tag, so no pin rule can see it")
+    for g, n in gpios.items():
+        if n > 1:
+            errs.append(f"gpio: {g} is assigned to {n} nets")
+
+    # -- heights must be numbers ------------------------------------------------
+    for p in d.parts:
+        if math.isnan(p.height_mm):
+            errs.append(f"height: {p.refdes} ({p.mpn}) has no height -- an "
+                        f"unknown height is an UNCHECKED height")
+    return errs
+
+
+if __name__ == "__main__":
+    import sys
+    from . import netlist
+    problems = check(netlist.current())
+    for e in problems:
+        print(e)
+    print(f"\n{len(problems)} integrity problem(s)")
+    sys.exit(1 if problems else 0)
