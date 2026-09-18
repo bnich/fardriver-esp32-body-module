@@ -332,6 +332,7 @@ RULE_IDS = {
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
+    "D10", "SUPPLY",
 }
 
 
@@ -1115,3 +1116,30 @@ def test_d10_allows_the_resistive_taps_and_the_tvs():
     ksw = {r for r, _ in _real_design().net("KSW").pins}
     kinds = {_real_design().part(r).kind for r in ksw if not r.startswith("J")}
     assert kinds <= {"R", "TVS"}, kinds
+
+
+# --- SUPPLY: an IC on a rail it cannot take -----------------------------------
+def test_supply_is_quiet_on_the_real_design():
+    assert [e for e in rules.check_all(_real_design()) if e.startswith("SUPPLY")] == []
+
+
+@pytest.mark.parametrize("refdes,pin,wrong_rail", [
+    ("U404", "VCC", "V5"),       # a 3.3 V transceiver on 5 V: abs max 4 V
+    ("U402", "VDD", "V5"),       # the expander would drive 5 V into ESP32 pins
+    ("U301", "VS", "HV_BPLUS"),  # a 40 V switch on the 84 V pack
+])
+def test_supply_fires_on_an_ic_moved_to_the_wrong_rail(refdes, pin, wrong_rail):
+    d = _real_design()
+    old = d.net_of(refdes, pin).name
+    d = d.without_pin(refdes, pin)
+    d = d.replace_net(wrong_rail, pins=d.net(wrong_rail).pins + ((refdes, pin),))
+    errs = [e for e in rules.check_all(d) if e.startswith("SUPPLY")]
+    assert any(f"{refdes}.{pin}" in e for e in errs), (old, errs)
+
+
+def test_supply_reports_an_ic_it_knows_nothing_about():
+    d = _real_design().with_part(Part(
+        "U999", "LM358", "SOIC-8", "BRAIN", "IC", ("V+", "V-"), 1.75, source="fixture"))
+    d = d.replace_net("V3P3", pins=d.net("V3P3").pins + (("U999", "V+"),))
+    d = d.replace_net("GND", pins=d.net("GND").pins + (("U999", "V-"),))
+    assert any("SUPPLY: U999" in e and "no entry" in e for e in rules.check_all(d))

@@ -167,10 +167,13 @@ _HVIN_PARTS = (
                 "the full pack with the switch off and 146 V at D101's clamp, "
                 "hence ≥250 V; C0G or film because X7R loses half its value at "
                 "that bias, exactly where SOA stress peaks. ⬜ part unchosen"),
-    _c("C107", "HVIN", "4.7uF", 25.0,
+    _c("C107", "HVIN", "4.7uF 50V X7R", 50.0,
        "Q101 gate to SOURCE. Divides the dV/dt that C105 couples into the gate "
        "when the XT90-S is plugged in with the key OFF: 84 V × 68n/(68n+4.7µ) "
-       "≈ 1.2 V, under V_GS(th). Sees ≤15 V (D102)", pkg="1206"),
+       "≈ 1.2 V nominal, under V_GS(th) min 2.0 V. ⚠️ The margin is thin at the "
+       "corners (−1.64 … −1.98 V across tolerance, temperature and OVP), and a "
+       "Y5V/25 V part loses most of its capacitance under bias and cold -- so "
+       "X7R, 50 V: it sees ≤15 V (D102) and keeps its value", pkg="1206"),
     _r("R101A", "HVIN", "270k",
        "Upper half of the 540 kΩ gate pull-down string (Q101 gate → Q105). "
        "A series pair for voltage rating: ~35 V each running, 73 V each at "

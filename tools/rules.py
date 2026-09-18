@@ -28,7 +28,7 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10
+  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
 must look at but a gate must not fail on (HT-W*, BOX-W*).
@@ -468,6 +468,47 @@ def d10_key_wire_is_only_listened_to(d: Design) -> list[str]:
                     f"{_via(path)} -- a low-impedance path. The module may only "
                     f"LISTEN to KEY (resistors, its TVS, its connector); this "
                     f"lets it back-feed the FarDriver KEY.")
+    return errs
+
+
+#: MPN prefix -> {supply pin: domains it may sit on}. Each entry is the part's
+#: own supply range intersected with what its I/O must talk to. A part missing
+#: from this table is REPORTED, never assumed fine -- this rule exists because
+#: `U404.VCC` on the 5 V rail passed every other check.
+SUPPLY_PINS = {
+    "ESP32-S3-WROOM-1": {"3V3": {"3V3"}},              # 3.0-3.6 V
+    "SN65HVD230": {"VCC": {"3V3"}},                     # 3.0-3.6 V, abs max 4 V
+    "MCP23017": {"VDD": {"3V3"}},                       # 1.8-5.5 V, but its I/O meets 3.3 V pins
+    "TPS4H160": {"VS": {"12V"}},                        # 4-40 V: the 12 V rail ONLY, never 84 V
+    "TLV767": {"IN": {"5V", "12V"}},                    # 2.5-16 V in (12 V is legal; its heat is board_fit's problem)
+    "CN150B110": {"+Vin": {"84V"}},
+    "EC7BW": {"+Vin": {"84V"}},
+}
+_SUPPLY_KINDS = ("IC", "MODULE", "CONVERTER")
+
+
+def supply_pins(d: Design) -> list[str]:
+    """Every IC's supply pin sits on a rail that part tolerates."""
+    ix = _index(d)
+    errs = []
+    for p in d.parts:
+        if p.kind not in _SUPPLY_KINDS:
+            continue
+        table = next((v for k, v in SUPPLY_PINS.items() if p.mpn.startswith(k)), None)
+        if table is None:
+            errs.append(f"SUPPLY: {p.refdes} ({p.mpn}) has no entry in "
+                        f"rules.SUPPLY_PINS, so nothing checks what rail feeds it")
+            continue
+        for pin, allowed in table.items():
+            if pin not in p.pins:
+                errs.append(f"SUPPLY: {p.refdes} ({p.mpn}) declares no {pin!r} pin")
+                continue
+            nets = ix.pin_nets.get((p.refdes, pin), ())
+            for name in nets:
+                dom = ix.nets[name].domain if name in ix.nets else "?"
+                if dom not in allowed:
+                    errs.append(f"SUPPLY: {p.refdes}.{pin} ({p.mpn}) is on {name!r} "
+                                f"({dom}); it may only sit on {sorted(allowed)}")
     return errs
 
 
@@ -929,6 +970,7 @@ def heights(d: Design) -> list[str]:
 ALL_RULES = (
     bd2_voltage_domain_containment,
     d10_key_wire_is_only_listened_to,
+    supply_pins,
     bd4_hv_creepage,
     gpio_rules,
     d14_gate_bias,
