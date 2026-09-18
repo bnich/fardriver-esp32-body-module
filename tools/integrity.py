@@ -21,6 +21,30 @@ from collections import Counter, defaultdict
 
 from .model import Design
 
+#: Pins a part may legitimately leave unconnected, by MPN prefix, each because
+#: its DATASHEET says so. A must-tie pin dropped into `nc` makes the "every
+#: declared pin lands" check vacuous -- a converter's output return, an enable,
+#: a thermal pad -- so `nc` is policed against this list, not trusted.
+#: "IO*"/"GP*" are prefixes: any unused GPIO of that part may be left open.
+NC_ALLOWED = {
+    "CN150B110": {"TRM"},            # TDK: trim open = nominal output
+    "EC7BW": {"Trim", "Remote"},     # Cincon: remote is positive logic, open = ON
+    "TPS4H160": {"NC"},              # package no-connect pads
+    "TLV767": {"NC"},
+    "SN65HVD230": {"Vref"},          # V_CC/2 reference output, unused
+    "ESP32-S3-WROOM-1": {"IO*"},     # unused GPIO pads -- never EN, 3V3, GND, EPAD
+    "MCP23017": {"GP*", "INTA", "INTB", "NC11", "NC14"},
+}
+
+
+def _nc_ok(mpn: str, pin: str) -> bool:
+    for prefix, allowed in NC_ALLOWED.items():
+        if mpn.startswith(prefix):
+            return pin in allowed or any(
+                a.endswith("*") and pin.startswith(a[:-1]) for a in allowed)
+    return False
+
+
 #: The boards each inter-board interface physically joins.
 INTERFACE_BOARDS = {
     "HV-LINK": {"HVIN", "CONV"},
@@ -73,6 +97,18 @@ def check(d: Design) -> list[str]:
         for pin in sorted(on & nc):
             errs.append(f"pins: {p.refdes}.{pin} is declared no-connect but "
                         f"is on a net")
+        for pin in sorted(nc):
+            if not _nc_ok(p.mpn, pin):
+                errs.append(f"nc: {p.refdes}.{pin} ({p.mpn}) is left unconnected, "
+                            f"and no datasheet entry in NC_ALLOWED says that pin "
+                            f"may be. A must-tie pin hidden in `nc` floats silently")
+
+    # -- a net is a CONNECTION: one pin alone connects to nothing ---------------
+    for net in d.nets:
+        if len(net.pins) == 1:
+            ref, pin = net.pins[0]
+            errs.append(f"floating: net {net.name!r} has one pin ({ref}.{pin}) "
+                        f"-- that leg is 'on a net' and still goes nowhere")
 
     # -- connector tables and nets must tell the same story --------------------
     net_names = {n.name for n in d.nets}

@@ -243,3 +243,37 @@ def test_nan_height():
 def test_one_break_gives_one_category(category, broken):
     found = {e.split(":", 1)[0] for e in integrity.check(broken())}
     assert found == {category}
+
+
+# --- a net is a connection; a no-connect needs a datasheet's permission --------
+def _real():
+    from tools import netlist
+    return netlist.current()
+
+
+def test_a_net_with_one_pin_is_floating():
+    d = _real()
+    victim = next(n for n in d.nets if len(n.pins) == 2)
+    broken = d.replace_net(victim.name, pins=victim.pins[:1])
+    errs = integrity.check(broken)
+    assert any(e.startswith("floating: net") and victim.name in e for e in errs), errs
+
+
+@pytest.mark.parametrize("refdes,pin", [
+    ("U202", "-Vout"),    # the 5 V rail would have no return
+    ("U401", "EN"),       # the module would never leave reset
+    ("U201", "CNT"),      # TDK: open = OFF, the 12 V rail never starts
+    ("U404", "GND"),
+])
+def test_a_must_tie_pin_cannot_hide_in_nc(refdes, pin):
+    d = _real()
+    part = d.part(refdes)
+    assert pin in part.pins, f"fixture assumes {refdes}.{pin} is a declared pin"
+    hidden = d.without_pin(refdes, pin).replace_part(
+        refdes, pins=tuple(q for q in part.pins if q != pin), nc=part.nc + (pin,))
+    errs = integrity.check(hidden)
+    assert any(e.startswith("nc:") and f"{refdes}.{pin}" in e for e in errs), errs
+
+
+def test_the_datasheet_sanctioned_no_connects_pass():
+    assert [e for e in integrity.check(_real()) if e.startswith("nc:")] == []

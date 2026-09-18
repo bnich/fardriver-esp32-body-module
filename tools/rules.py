@@ -28,7 +28,7 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM
+  HT-NUM  HT-STACK  HT-GEOM  D10
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
 must look at but a gate must not fail on (HT-W*, BOX-W*).
@@ -436,6 +436,38 @@ def bd2_voltage_domain_containment(d: Design) -> list[str]:
             if board in LOW_VOLTAGE_BOARDS:
                 errs.append(f"BD-2: 84 V net {name!r} reaches {ref} on {board}. "
                             f"Pack voltage stays on HVIN/CONV.")
+    return errs
+
+
+#: The key-switch output as it enters the box. D10: the module only ever
+#: LISTENS to this wire -- it never sources it and never switches it.
+KEY_NETS = ("KSW",)
+
+
+def d10_key_wire_is_only_listened_to(d: Design) -> list[str]:
+    """D10: nothing in the module can source, hold up or switch the KEY wire.
+
+    The key switch feeds the FarDriver KEY directly; the module takes a tap.
+    The only parts that belong on that tap are its connector, its TVS to
+    ground, and high-value resistors (the enable divider, the sense divider).
+    Any LOW-IMPEDANCE joint -- a diode, a FET channel, an inductor, a fuse --
+    is a path by which the module could back-feed KEY and hold the controller
+    on with the key out. A diode from the module's own switched rail onto this
+    net latches the module AND the controller, and every other rule is blind
+    to it. DNP parts count: a hazard does not need to be fitted to be drawn.
+    """
+    ix = _index(d)
+    errs = []
+    for name in KEY_NETS:
+        if name not in ix.nets:
+            continue
+        for other, path in ix.walk(name, _HV_JOIN, fitted_only=False).items():
+            if other != name:
+                errs.append(
+                    f"D10: the key wire {name!r} is joined to {other!r} through "
+                    f"{_via(path)} -- a low-impedance path. The module may only "
+                    f"LISTEN to KEY (resistors, its TVS, its connector); this "
+                    f"lets it back-feed the FarDriver KEY.")
     return errs
 
 
@@ -896,6 +928,7 @@ def heights(d: Design) -> list[str]:
 
 ALL_RULES = (
     bd2_voltage_domain_containment,
+    d10_key_wire_is_only_listened_to,
     bd4_hv_creepage,
     gpio_rules,
     d14_gate_bias,

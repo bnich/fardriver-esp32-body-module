@@ -338,8 +338,13 @@ RULE_IDS = {
 # ── the fixture itself ───────────────────────────────────────────────────────
 def test_the_fixture_is_a_circuit():
     """Every leg of every fixture part goes somewhere, by the structural
-    gate's own count -- so a rule that passes it is not passing a sketch."""
-    assert integrity.check(GOOD) == []
+    gate's own count -- so a rule that passes it is not passing a sketch.
+
+    One category is set aside: GOOD is a REDUCED circuit that uses one channel
+    of a quad switch and parks the rest in `nc`, which a real board may not do.
+    The real design gets no such allowance -- tests/test_design_clean.py holds
+    it to the whole gate, no-connect policing included."""
+    assert [e for e in integrity.check(GOOD) if not e.startswith("nc:")] == []
 
 
 def test_the_good_design_passes_every_rule():
@@ -1068,3 +1073,45 @@ def test_a_connector_declared_internal_with_no_interface_is_warned():
     assert _warned(GOOD, "BOX-W1") == _warned(GOOD, "BOX-W1", "J408") != []
     flipped = GOOD.replace_connector("J306", leaves_box=False)
     assert _warned(flipped, "BOX-W1", "J306")
+
+
+# --- D10: the module only listens to the key wire ----------------------------
+def _real_design():
+    from tools import netlist
+    return netlist.current()
+
+
+def _with_extra_pins(d, net_name, pins):
+    return d.replace_net(net_name, pins=d.net(net_name).pins + tuple(pins))
+
+
+def test_d10_is_quiet_on_the_real_design():
+    assert [e for e in rules.check_all(_real_design()) if e.startswith("D10")] == []
+
+
+def test_d10_fires_on_a_diode_from_the_switched_rail_onto_the_key_wire():
+    """The self-latch: HV_SW -> diode -> KSW holds the module AND the
+    FarDriver KEY on with the key out. It passed every gate before D10 had a
+    rule of its own."""
+    d = _real_design().with_part(Part(
+        "D999", "1N4007", "DO-41", "HVIN", "D", ("A", "K"), 3.0, v_max=1000.0,
+        source="fixture"))
+    d = _with_extra_pins(d, "HV_SW", [("D999", "A")])
+    d = _with_extra_pins(d, "KSW", [("D999", "K")])
+    assert any(e.startswith("D10") for e in rules.check_all(d))
+
+
+def test_d10_fires_on_a_fet_channel_onto_the_key_wire_even_if_dnp():
+    d = _real_design().with_part(Part(
+        "Q999", "IXTP26P20P", "TO-220", "HVIN", "PFET", ("G", "D", "S"), 5.0,
+        v_max=200.0, dnp=True, source="fixture"))
+    d = _with_extra_pins(d, "HV_BPLUS", [("Q999", "S")])
+    d = _with_extra_pins(d, "KSW", [("Q999", "D")])
+    d = _with_extra_pins(d, "D13_GATE", [("Q999", "G")])
+    assert any(e.startswith("D10") for e in rules.check_all(d))
+
+
+def test_d10_allows_the_resistive_taps_and_the_tvs():
+    ksw = {r for r, _ in _real_design().net("KSW").pins}
+    kinds = {_real_design().part(r).kind for r in ksw if not r.startswith("J")}
+    assert kinds <= {"R", "TVS"}, kinds
