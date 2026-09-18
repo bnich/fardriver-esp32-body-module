@@ -920,3 +920,69 @@ def test_each_requirement_fires_on_the_defect_it_exists_for(
               {"d": broken, "w": Walker(broken), **extra}.items() if k in wanted}
     with pytest.raises(AssertionError):
         requirement(**kwargs)
+
+
+# ─── polarity and winding sense: a reversed part passes every structural gate ──
+
+@pytest.mark.parametrize("ref,plus,minus", [
+    ("C201", "HV_C1_P", "HV_C1_N"),      # TDK's bulk cap, across ITS input
+    ("C202", "HV_C2_HOLD", "HV_C2_N"),   # hold-up, BEHIND the diode and fuse
+    ("C207", "V12", "GND"),              # the TDK's required output capacitor
+])
+def test_every_polarised_capacitor_has_its_plus_on_the_higher_node(d, ref, plus, minus):
+    assert d.net_of(ref, "+").name == plus, f"{ref} is reversed or on the wrong node"
+    assert d.net_of(ref, "-").name == minus
+
+
+@pytest.mark.parametrize("ref,anode,cathode,why", [
+    ("D201", "HV_C2_P", "HV_C2_HOLD_IN", "hold-up diode conducts TOWARD converter 2"),
+    ("D102", "D13_GATE", "HV_BPLUS", "gate zener: cathode on the SOURCE of a P-FET"),
+    ("D106", "GND", "D13_EN", "level-shifter gate clamp: cathode on the gate"),
+    ("D307", "FAN_RTN", "V12", "flyback: cathode on the rail, across the load"),
+    ("D314", "BUZZ_RTN", "V12", "flyback: cathode on the rail, across the load"),
+])
+def test_every_diode_points_the_way_its_job_needs(d, ref, anode, cathode, why):
+    assert d.net_of(ref, "A").name == anode, f"{ref}: {why}"
+    assert d.net_of(ref, "K").name == cathode, f"{ref}: {why}"
+
+
+@pytest.mark.parametrize("ref,conv", [("L101", "HV_C1"), ("L102", "HV_C2")])
+def test_each_choke_carries_supply_and_return_through_opposite_windings(d, ref, conv):
+    """Würth 7448022010: windings are 1-4 and 2-3. Supply in on 1, out on 4;
+    return in on 3, out on 2. Cross pins 2 and 3 and the two fluxes ADD instead
+    of cancelling: the core saturates on the DC and the choke filters nothing."""
+    assert d.net_of(ref, "1").name == "HV_SW"
+    assert d.net_of(ref, "4").name == f"{conv}_P"
+    assert d.net_of(ref, "3").name == f"{conv}_N"
+    assert d.net_of(ref, "2").name == "GND"
+
+
+# ─── values whose wrong number passes every gate and breaks the job ────────────
+
+@pytest.mark.parametrize("ref,value,why", [
+    ("R319", "1k00 1%", "TPS4H160B #1 current limit ≈2 A; 0 Ω falls back to 8-14 A"),
+    ("R320", "2k0 1%", "TPS4H160B #2 current limit ≈1 A"),
+    ("R321", "1k00 1%", "CS sense resistor: I_OUT/300 × 1 k = 3.33 V/A at the pin"),
+    ("R322", "1k00 1%", "CS sense resistor, package #2"),
+    ("R110", "100k", "Q101 gate-source: with 540 k below it, V_GS = −13.1 V at 84 V"),
+    ("R101A", "270k", "half of the 540 k pull-down that sets the ~51 ms ramp"),
+    ("R101B", "270k", "half of the 540 k pull-down"),
+    ("R113", "100k", "level-shifter divider bottom: 3.9 V at 43 V vs V_th ≤ 2.6 V"),
+    ("R314", "10k", "'R4', the kill's pull-up from ACC+"),
+    ("R316", "100k", "'R6', Q2 gate to ground"),
+    ("R317", "10k", "'R3L': 10 k keeps the low level ~0.55 V through a 1N4148"),
+    ("R425", "10k", "boost: the HARD external pull-down (D14)"),
+])
+def test_a_value_the_circuit_depends_on(d, ref, value, why):
+    assert d.part(ref).value == value, f"{ref} should be {value}: {why}"
+
+
+def test_the_fuse_is_the_one_amp_time_lag_part(d):
+    assert d.part("F201").value.startswith("1A T-lag"), \
+        "Cincon specifies a 1 A time-delay input fuse; a 10 A link protects nothing"
+
+
+def test_the_output_capacitor_is_the_size_tdk_requires(d):
+    assert d.part("C207").value.startswith("680uF"), "TDK: 680 µF at the output"
+    assert d.part("R211").mpn == "NET-TIE", \
+        "the baseplate tie is copper -- a chip jumper can open before the fuse does"
