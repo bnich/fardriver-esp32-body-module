@@ -115,17 +115,37 @@ used (6 arrays, 14 spare) on the logic lines where 5 V standoff is correct.
 
 ---
 
-## 5. ⬜ Values the documents leave undefined
-
-None of these block layout; all block a *correct* schematic. I can compute the first three.
+## 5. ◐ Values the documents left undefined — **mostly computed now**
 
 | | What | State |
 |---|---|---|
-| 5.1 | **D13 ramp RC** — target ~50 ms (plan §3.2.5's own recommendation, still unactioned) | computable |
-| 5.2 | **Gate zeners** on Q101 and Q104 | computable |
-| 5.3 | **`FAULT` and I²C pull-ups** — "strong pull-ups", value never stated | computable |
-| 5.4 | **Fan flyback diode** — BOM D3 notes it is needed, no part given | ⬜ needs a part |
-| 5.5 | **Latch passives R103–R106** topology — BOM H3 lists values, no circuit | ⬜ needs the bench |
+| 5.1 | **D13 ramp** — plan §3.2.5 recommended ~50 ms and nothing had actioned it | ✅ **`C105` = 68 nF gate-to-DRAIN**, giving 50 ms. See below |
+| 5.2 | **Gate zeners** on Q101/Q104 | ✅ **15 V**, clamping V<sub>GS</sub> inside the part's ±20 V |
+| 5.3 | **`FAULT` pull-ups** | ✅ **10 kΩ** — 0.33 mA sink, τ ≈ 0.2 µs against ~20 pF |
+| 5.3 | **I²C pull-ups** | ✅ **2.2 kΩ** — the spec window at 3.3 V/400 kHz is 967 Ω…3.5 kΩ; D16 asks for *strong*, so the low end |
+| 5.4 | **IN-12 divider series pair** | ✅ **2 × 165 kΩ** (E96, exact 2.471 V). 2 × 160 kΩ lands at 2.545 V |
+| 5.5 | ⬜ **Fan flyback diode `D307`** | **Gated on the fan (BOM D6, not chosen)** — see below |
+| 5.6 | ⬜ **Latch passives R103–R106** topology | Needs the bench; BOM H3 gives values, no circuit |
+
+⭐ **The D13 ramp is worth knowing about.** Slowing it 10 ms → 50 ms cuts peak SOA demand from
+**363 W to 114 W** — 3.2× — for one capacitor and an imperceptible key-on delay. It matters most in
+the Spirito (thermal-instability) corner, where the limit is local current density, so less current at
+high V<sub>DS</sub> is strictly better. 📄 [`../tools/soft_start.py`](../tools/soft_start.py)
+reproduces plan §3.2.5's own table exactly, then derives the network.
+
+⚠️ **The cap goes gate-to-DRAIN, not gate-to-source.** Gate-to-source sets how fast V<sub>GS</sub>
+moves; only the Miller cap sets how fast the **output** moves, and the output slew is what the SOA
+figure depends on.
+
+⛔ **Still open and genuinely yours:** clear `IXTP26P20P` against its SOA curve at **114 W / 25 ms**,
+derated ×0.72 for 60 °C → **159 W at 25 °C**. The published line is 10 ms; a 25 ms pulse needs its own
+line, and a shorter curve **cannot be scaled** — the Spirito inflexion moves to lower V<sub>DS</sub> as
+the pulse lengthens. That is a datasheet plot read by eye.
+
+**On the fan flyback:** a `1N4007` from E10 stock serves a plain DC fan. A PWM fan at LEDC rates wants
+a fast or Schottky part — 1N4007 recovery (~2 µs) is 5 % of a 40 µs period. ⚠️ BOM G1's "silicon, not
+Schottky" warning does **not** apply here: that is about reverse leakage reaching a **3.3 V input**,
+and this diode sits across a 12 V load.
 
 ---
 

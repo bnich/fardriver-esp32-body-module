@@ -150,8 +150,13 @@ def test_every_entry_cites_a_source(d):
 def test_placeholders_are_visible_not_invented(d):
     """⬜ values are TBD or NaN -- never a plausible-looking number."""
     tbd_values = sorted(p.refdes for p in d.parts if p.value == "TBD")
-    assert tbd_values == ["C105", "D102", "D307", "R101", "R107", "R108",
-                          "R432", "R433", "R434", "R435"], tbd_values
+    # C105, D102, R101 left the list on 2026-09-18: tools/soft_start.py
+    # computes the D13 ramp, so they carry real values now.
+    # R432-R435 left the list on 2026-09-18, derived from the TPS4H160B's
+    # open-drain FAULT spec and the I2C-bus spec at 3.3 V / 400 kHz.
+    # Only D307 remains, and it is gated on the fan choice (BOM D6), not on
+    # a calculation anyone can do.
+    assert tbd_values == ["D307"], tbd_values
     unknown_height = sorted(p.refdes for p in d.parts if math.isnan(p.height_mm))
     # ⛔ NaN can never trip rules.layer_height_ceilings: an unknown height is an
     # UNCHECKED height. Keep the list short and keep it honest.

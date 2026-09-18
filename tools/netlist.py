@@ -153,15 +153,20 @@ _HVIN_PARTS = (
     Part("Q101", "IXTP26P20P", "TO-220AB", "HVIN", H_TO220, vds_max=200.0,
          source=f"{_INV} §1.1 BOM E13, doc name 'D13' switch. PLAN §3.2.5, "
                 f"selected on SOA (363 W @ 5 ms). ⭐ ramp is to be ~50 ms, not 10 ms"),
-    Part("D102", "TBD-ZENER", "TBD", "HVIN", H_TBD, value="TBD",
+    Part("D102", "TBD-ZENER-15V", "TBD", "HVIN", H_TBD, value="15V",
          source=f"{_INV} §1.1 BOM E13 '+ zener' — gate zener for Q101. "
                 f"⬜ Q11: value and package unspecified"),
-    _r("R101", "HVIN", "TBD",
+    _r("R101", "HVIN", "100k",
        f"{_INV} §1.1 BOM E13/H3 — D13 ramp RC with C105. ⬜ Q11: value "
        f"unspecified; ramp target ~50 ms, 'still unactioned' in both documents",
        package="TBD"),
-    _c("C105", "HVIN", "TBD",
-       f"{_INV} §1.1 BOM H3 — D13 ramp RC with R101. ⬜ Q11 value unspecified",
+    _c("C105", "HVIN", "68n",
+       f"{_INV} §1.1 BOM H3 — D13's soft-start cap. ⭐ COMPUTED 2026-09-18 by "
+       f"tools/soft_start.py: gate-to-DRAIN (Miller), 59.5 nF calculated → 68 nF "
+       f"standard, giving the ~50 ms ramp PLAN §3.2.5 recommends and nothing had "
+       f"actioned. 114 W peak instead of 363 W, a 3.2× cut in SOA demand. "
+       f"⚠️ Gate-to-DRAIN, not gate-to-source: it is the OUTPUT slew the SOA "
+       f"figure depends on, and only the Miller cap sets that deterministically",
        package="TBD"),
     Part("U101", "74HC14", "DIP-14", "HVIN", H_DIP,
          source=f"{_INV} §1.1 BOM H1, BDR §3 L1. Runs off the 5 V logic rail "
@@ -191,13 +196,13 @@ _HVIN_PARTS = (
     _r("R104", "HVIN", "100k", f"{_INV} §1.1 BOM H3 latch passive. ⬜ topology not stated"),
     _r("R105", "HVIN", "10k", f"{_INV} §1.1 BOM H3 latch passive. ⬜ topology not stated"),
     _r("R106", "HVIN", "10k", f"{_INV} §1.1 BOM H3 latch passive. ⬜ topology not stated"),
-    _r("R107", "HVIN", "TBD",
-       f"{_INV} §1.1 BOM E14 — IN-12 divider TOP, 330 kΩ realised as a ¼ W "
+    _r("R107", "HVIN", "165k",
+       "IN-12 divider top, upper half. ⭐ COMPUTED 2026-09-18: 330k total / 10k gives 84 V -> 2.471 V, matching PLAN 3.1.3. Split as 2 x 165k (E96, exact) rather than 2 x 160k (E24, which lands at 2.545 V). PLAN 4 class B requires a SERIES PAIR for voltage rating: each drops 40.8 V and dissipates 10 mW, comfortably inside a 1/4 W part rated 200-250 V"
        f"SERIES PAIR for voltage rating (PLAN §4 class B), so 2 parts not 1. "
        f"⬜ the split is not stated; only the pair's 330 kΩ total is",
        package="TBD (¼ W)"),
-    _r("R108", "HVIN", "TBD",
-       f"{_INV} §1.1 BOM E14 — second half of the 330 kΩ series pair. ⬜ split not stated",
+    _r("R108", "HVIN", "165k",
+       "IN-12 divider top, lower half — the series partner to R107",
        package="TBD (¼ W)"),
     _r("R109", "HVIN", "10k",
        f"{_INV} §1.1 BOM E14 — IN-12 divider BOTTOM. 84 V → 2.47 V (PLAN §3.1.3)"),
@@ -284,7 +289,7 @@ _DRV_PARTS = (
     _r("R311", "DRV", "100R", f"{_INV} §1.3 BOM D9 — fan gate series"),
     _r("R312", "DRV", "100R", f"{_INV} §1.3 BOM D9 — buzzer gate series"),
     Part("D307", "TBD-FLYBACK", "TBD", "DRV", H_TBD, value="TBD",
-         source=f"{_INV} §1.3 BOM D3 note 'fan channel needs a flyback diode'. "
+         source="BOM D3 note: the fan channel needs a flyback diode. ⬜ GATED ON THE FAN (BOM D6, not chosen). A 1N4007 from E10 stock serves a plain DC fan; a PWM fan switched at LEDC rates wants a fast or Schottky part, because 1N4007 recovery (~2 us) is 5%% of a 40 us period. ⚠️ The Schottky leakage objection in BOM G1 does NOT apply here — that is about reverse leakage reaching a 3.3 V INPUT, and this diode sits across a 12 V load"
                 f"⬜ Q28: no part number. ⛔ the horn needs none — electronic, M7"),
     *[Part(f"D30{n}", "1N4148", "SOD-123 (assumed, Q29)", "DRV", H_SOD123,
            vds_max=100.0,
@@ -438,13 +443,13 @@ _BRAIN_PARTS = (
     _r("R431", "BRAIN", "15k",
        f"{_INV} §1.4 BRK §2.1 — IN-11 divider BOTTOM. ⛔ Q13: NO 15 kΩ LINE EXISTS "
        f"IN THE BOM (G3 has 10 kΩ ×4 only)"),
-    _r("R432", "BRAIN", "TBD",
-       f"{_INV} §1.4 PLAN §6.2.2a — FAULT1 pull-up to 3V3 ('STx/FAULT are "
+    _r("R432", "BRAIN", "10k",
+       "FAULT1 pull-up to 3V3. ⭐ COMPUTED 2026-09-18: STx/FAULT are open-drain (PLAN §6.2.2a). 10 k sinks 0.33 mA — trivial for the part — and with ~20 pF of input gives τ ≈ 0.2 µs, ample for a flag firmware polls rather than a timing-critical line"
        f"open-drain and need their own 3.3 V pullups'). ⬜ value unstated"),
-    _r("R433", "BRAIN", "TBD", f"{_INV} §1.4 PLAN §6.2.2a — FAULT2 pull-up. ⬜ value unstated"),
-    _r("R434", "BRAIN", "TBD",
-       f"{_INV} §1.4 D16 mitigation list: 'strong pull-ups' on I²C SDA. ⬜ value unstated"),
-    _r("R435", "BRAIN", "TBD", f"{_INV} §1.4 D16 — I²C SCL pull-up. ⬜ value unstated"),
+    _r("R433", "BRAIN", "10k", f"{_INV} §1.4 PLAN §6.2.2a — FAULT2 pull-up. ⬜ value unstated"),
+    _r("R434", "BRAIN", "2k2",
+       "I²C SDA pull-up. ⭐ COMPUTED 2026-09-18 from the I²C-bus spec at 3.3 V / 400 kHz: Rp_min = (3.3−0.4)/3 mA = 967 Ω; Rp_max = tr/(0.8473·Cb) = 3.5 kΩ at 100 pF. ⚠️ D16 asks for STRONG pull-ups because this bus sits beside 80 A of chopped phase current, so take the LOW end of the window, not the middle"),
+    _r("R435", "BRAIN", "2k2", f"{_INV} §1.4 D16 — I²C SCL pull-up. ⬜ value unstated"),
     _r("R436", "BRAIN", "1k",
        f"{_INV} §2.6 UART1_TX 'class E: 1 k series, pin tri-stated whenever not "
        f"sending'. ⚠️ §1.4's parts table assigns NO REFDES for this resistor; §0 "
@@ -567,7 +572,7 @@ _S = f"{_INV} §2"
 # ~237 ms to ~20 ms.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_84V = (
-    Net("HV_BPLUS", (("R110", "2"), ("J101", "1"), ("D101", "K"), ("Q101", "S"), ("J102", "1")),
+    Net("HV_BPLUS", (("D102", "K"), ("R110", "2"), ("J101", "1"), ("D101", "K"), ("Q101", "S"), ("J102", "1")),
         domain="84V", leaves_box=True,
         source=f"{_S}.1 — fused UPSTREAM IN THE HARNESS (KLKD002 in a FEB-11-11), "
                f"never on the board (BDR §6)"),
@@ -575,7 +580,7 @@ _NETS_84V = (
         domain="84V", leaves_box=True,
         source=f"{_S}.1 — back from the mechanical key switch, which carries "
                f"~0.25 mA of gate drive only (PLAN §3.2.5)"),
-    Net("HV_SW", (("Q101", "D"), ("L101", "1"), ("L102", "1")),
+    Net("HV_SW", (("C105", "2"), ("Q101", "D"), ("L101", "1"), ("L102", "1")),
         domain="84V", source=f"{_S}.1 — D13's output, ahead of both chokes"),
     Net("D13_GATE", (("R110", "1"), ("Q101", "G"), ("R101", "2"), ("C105", "1"), ("D102", "A")),
         domain="84V",
