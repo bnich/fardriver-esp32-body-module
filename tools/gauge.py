@@ -35,7 +35,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.build_project import DEFAULT_OUT, write  # noqa: E402
-from tools.eprj3 import placement, schematic  # noqa: E402
+from tools.eprj3 import footprints, placement, schematic  # noqa: E402
 from tools.eprj3 import symbols as sym  # noqa: E402
 from tools.eprj3.project import Project  # noqa: E402
 from tools.model import Part  # noqa: E402
@@ -119,6 +119,11 @@ def build(epoch_ms=None):
                               role=(exp.left, "2"), naming=exp.mechanism)
             schematic.connect(page, b, outward_b, exp.net,
                               role=(exp.right, "1"), naming=exp.mechanism)
+    # EasyEDA Pro will not export a netlist with any footprint missing, and the
+    # netlist is how the gauge is read.  A generic 0805 outline: layout never
+    # uses the gauge.
+    page.bind_footprint(sym.for_part(resistor(EXPERIMENTS[0].left)),
+                        "R0805_GAUGE", footprints.two_pad(1.9, 1.0, 1.3))
     sheet.library_records = page.library_records()
     sheet.page_records = page.page_records(first_ticket=2)
     return project, page
@@ -145,10 +150,10 @@ experiment 1 fails, the fault is not in the naming. Stop and report.
 
 ## Steps
 
-1. Open the project folder `{PROJECT_NAME}/` (its index is
-   `{PROJECT_NAME}.eprj3`). If EasyEDA Pro will not open a folder, import
-   `{PROJECT_NAME}.zip` instead. Write down which one worked, and copy any
-   error or warning text exactly.
+1. EasyEDA Pro 3.2.149 opens neither the folder nor the zip: it opens `.eprj2`.
+   Wrap `{PROJECT_NAME}/` as `{PROJECT_NAME}.eprj2`, open that file by its
+   path (a file dropped into the projects folder is not listed until it has
+   been opened), and copy any error or warning text exactly.
 2. Open sheet `P1`. You should see four rows, each with two resistors:
    - row 1 has a wire between its resistors;
    - rows 2 to 4 have only short stubs, with a label or flag at the end of each.
@@ -161,7 +166,7 @@ experiment 1 fails, the fault is not in the naming. Stop and report.
 
 ## Report
 
-- how the project was opened (folder or zip), and any error text;
+- whether the project opened, and any error text;
 - four yes/no answers, one per experiment, with any unexpected net name.
 
 ## What the answers mean

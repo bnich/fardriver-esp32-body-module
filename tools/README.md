@@ -29,9 +29,9 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `board_fit.py` | Area and height budget (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `soft_start.py` | The D13 main-switch gate network, simulated |
-| `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `placement.py` (sheet layout), `schematic.py` (sheets and nets) |
+| `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `pcb.py`, `project.py`, `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `placement.py` (sheet layout), `schematic.py` (sheets and nets) |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
-| `gauge.py` | Generates the one-sheet gauge project that tests how EasyEDA Pro names nets. Open it first |
+| `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
 
@@ -114,7 +114,7 @@ error**, so a header with no `type`, a `||` inside a header, and NaN/Infinity ar
 ## Generating the EasyEDA Pro project
 
 ```bash
-python3 tools/gauge.py             # gauge-revv1/ + .zip + GAUGE-INSTRUCTIONS.md   OPEN THIS FIRST
+python3 tools/gauge.py             # gauge-revv1/ + .zip + GAUGE-INSTRUCTIONS.md   the naming test (passed)
 python3 tools/build_project.py     # revv1-module/ + revv1-module.zip              exit 1 if any gate fails
 ```
 
@@ -153,20 +153,25 @@ confirm the handedness of 90/270, and those two rotations do not depend on it.
 A net name that EasyEDA Pro would reject is **refused, never rewritten**. Allowed characters are
 uppercase letters, digits and `_ - + ~ . / #`.
 
-### Verified, and not verified
+### Verified
 
 The tests re-derive every board's nets from the emitted bytes. They follow wire endpoints, then
 flag names, then wire names, and compare the result pin by pin with `netlist.current()`. They do
 this in all three `NAMING` modes. The same reader reproduces the official example's nets.
 
-What is **not** verified is that EasyEDA Pro joins two pins by name when they share no wire. No
-example file shows a flag or a wire name doing that; the spec infers it from the application's code.
-The gauge tests that directly. It has four pairs of resistors, each joined a different way.
-`GAUGE-INSTRUCTIONS.md` says what to check and which `NAMING` each result calls for.
+EasyEDA Pro itself joins the nets. The gauge was opened in EasyEDA Pro 3.2.149 and its exported
+netlist put each of the four pairs on one net under its own name: drawn wire, wire name alone, net
+flag alone, and flag with wire name, which is what the build emits. `NAMING = "both"` stays.
+
+⚠️ **EasyEDA Pro 3.2.149 does not open `.eprj3`.** It opens its own `.eprj2`, an SQLite file whose
+design is one snapshot made of the same records, so the folder has to be wrapped as `.eprj2` before
+it opens.
 
 ### What the owner does in EasyEDA Pro
 
-- **Footprints are not bound.** Link each part to its LCSC device in EasyEDA Pro.
+- **Footprints are not bound.** Until every part has one, the editor refuses to export a netlist
+  (its DRC calls a missing footprint fatal). A device links to a footprint by uuid;
+  `Page.bind_footprint` does that, and the gauge uses it with a generic 0805.
 - Each symbol pin's `Pin Number` is the netlist's own pin id (`1`, `K`, `VS`, `+Vin`), not a pad
   number. Pad numbers are in each part's `source`.
 - There is no sheet frame. Its title-block records are not specified, so none is generated. All

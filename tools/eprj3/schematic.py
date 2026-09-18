@@ -34,19 +34,19 @@ mechanism alone:
       `Global Net Name` (§8.4b, exemplified by the example's VCC and GND);
     * the ordinary component's ATTR set (§7.2).
 
-  INFERRED -- the owner's gauge project (`tools/gauge.py`) exists to test these:
-    * ⚠️ that a flag names a net when it touches only a STUB.  The example's
-      flags sit on wires that also run to parts; nothing shows a flag joining
-      two otherwise unconnected wires by name.  The application code says a
-      flag renames the wire it touches and that `Global Net Name` is the net
-      identity, which implies it -- but no byte demonstrates it;
-    * ⚠️ that a non-empty `NET` value names a net.  Every `NET` in the example
-      is "" (§8.4a).  The V2 encoder's `Name -> NET` mapping implies it;
-    * ⚠️ that two separate wire groups with the same name are one net;
+  VERIFIED in EasyEDA Pro 3.2.149 by the gauge (`tools/gauge.py`, 2026-09-18):
+  its exported netlist joined each pair on one net under its own name --
+    * a flag names a net when it touches only a STUB;
+    * a non-empty `NET` value names a net;
+    * two separate wire groups with the same name are one net;
+    * and flag + `NET` together, which is what every pin here gets.
+
+  STILL INFERRED:
     * that extra component ATTRs (`Manufacturer Part`, `Value`,
-      `Description`, `DNP`) are harmless; that a locally authored symbol takes
-      `source: ""`; that a symbol-level ATTR's `parentId` is "" (§5.8 says so;
-      the example's flag symbols use the PART id instead);
+      `Description`, `DNP`) are harmless -- the gauge's `Value` reached the
+      netlist, which is evidence, not proof; that a locally authored symbol
+      takes `source: ""`; that a symbol-level ATTR's `parentId` is "" (§5.8 says
+      so; the example's flag symbols use the PART id instead);
     * that no sheet frame is needed.  None is emitted: the frame symbol's
       title-block records are not specified.  Content sits in the sheet-body
       quadrant (x > 0, y < 0) regardless.
@@ -183,6 +183,7 @@ class Page:
         self.epoch_ms = epoch_ms
         self.edit_version = edit_version
         self._library = {}      # symbol key -> (symbol, symbol uuid, device uuid)
+        self._footprints = {}   # symbol key -> (footprint uuid, FOOTPRINT records)
         self._records = []      # (type, id, payload)
         self._ids = set()
         self._z = 0
@@ -292,17 +293,42 @@ class Page:
         return placed
 
     # -- output ----------------------------------------------------------
+    def bind_footprint(self, symbol, title, pads):
+        """Give `symbol`'s device a FOOTPRINT document built from `pads`.
+
+        Every pad number must be one of the symbol's pin numbers and every pin
+        must have a pad, or the netlist would map a pin to nothing."""
+        from . import footprints
+        pins = {p.number for p in symbol.pins}
+        nums = {p.num for p in pads}
+        if pins != nums:
+            raise ValueError(f"{symbol.title}: pads {sorted(nums)} do not match "
+                             f"pins {sorted(pins)}")
+        uuid = _uid("footprint", self.sheet_uuid, _json(list(symbol.key)))
+        self._footprints[symbol.key] = (uuid, footprints.footprint_records(
+            uuid, title, pads, client=self.client, epoch_ms=self.epoch_ms,
+            edit_version=self.edit_version))
+
     def library_records(self):
+        """FOOTPRINT, SYMBOL, then DEVICE documents: the order the editor
+        writes a project's library in."""
+        unused = set(self._footprints) - set(self._library)
+        if unused:
+            raise ValueError(f"footprints bound to symbols never placed: {sorted(unused)}")
         out = []
+        for _, records in self._footprints.values():
+            out += records
         for symbol, sym_uuid, dev_uuid in self._library.values():
             out += sym.symbol_records(symbol, sym_uuid, client=self.client,
                                       epoch_ms=self.epoch_ms,
                                       edit_version=self.edit_version)
-        for symbol, sym_uuid, dev_uuid in self._library.values():
+        for key, (symbol, sym_uuid, dev_uuid) in self._library.items():
+            fp = self._footprints.get(key)
             out += sym.device_records(symbol, dev_uuid, sym_uuid,
                                       client=self.client,
                                       epoch_ms=self.epoch_ms,
-                                      edit_version=self.edit_version)
+                                      edit_version=self.edit_version,
+                                      footprint_uuid=fp[0] if fp else "")
         return out
 
     def page_records(self, first_ticket=2):
@@ -438,7 +464,8 @@ def _part_attrs(item, x, y, unique_id, *, part=None, connector=None):
     cx = x + (bx1 + bx2) // 2
     attrs = [
         ("Unique ID", unique_id, None, None, None),
-        ("Footprint", None, None, None, None),
+        # No `Footprint` ATTR: the component inherits its device's footprint.
+        # An editor-saved sheet carries one only as a per-part override.
         ("Name", item.name, (cx, y + by2 + 5, "CENTER_TOP"), None, True),
         ("Designator", item.designator, (cx, y + by1 - 5, "CENTER_BOTTOM"),
          None, True),

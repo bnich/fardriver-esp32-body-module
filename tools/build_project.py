@@ -62,9 +62,9 @@ DEFAULT_OUT = "build-eprj3"
 
 #: The line every summary ends with.  Stated plainly, every run.
 ACCEPTANCE_WARNING = (
-    "The format is verified; EasyEDA Pro's acceptance is NOT. Open the gauge "
-    "project first (python3 tools/gauge.py) and follow GAUGE-INSTRUCTIONS.md "
-    "before trusting this build's nets.")
+    "Nets: EasyEDA Pro 3.2.149 joins them as generated (the gauge, 2026-09-18). "
+    "It does not open .eprj3: open the project as .eprj2. No part has a "
+    "footprint, so the editor refuses a netlist export until they are bound.")
 
 
 def gate(design):

@@ -534,12 +534,16 @@ def symbol_records(symbol, uuid, *, client, epoch_ms,
 
 
 def device_records(symbol, uuid, symbol_uuid, *, client, epoch_ms,
-                   edit_version=EDIT_VERSION):
+                   edit_version=EDIT_VERSION, footprint_uuid=""):
     """The `DEVICE` document: DOCHEAD + META, nothing else (§6).
 
-    `Footprint` is empty: no footprint is bound here.  A net flag's device
-    carries `Global Net Name`, which is what makes it a net flag (§8.4b).
+    `Footprint` is the uuid of a FOOTPRINT document in the project, or empty
+    when none is bound (EasyEDA Pro then refuses to export a netlist).  A net
+    flag's device carries `Global Net Name`, which is what makes it a net flag
+    (§8.4b), and never a footprint.
     """
+    if footprint_uuid and symbol.global_net_name is not None:
+        raise ValueError(f"{symbol.title}: a net flag has no footprint")
     symbol_name = _json({"name": symbol.title, "uuid": symbol_uuid,
                          "source": ""})
     if symbol.global_net_name is not None:
@@ -547,7 +551,7 @@ def device_records(symbol, uuid, symbol_uuid, *, client, epoch_ms,
                       "Name": symbol.global_net_name, "Description": "",
                       "Symbol": symbol_uuid, "SymbolName": symbol_name}
     else:
-        attributes = {"Symbol": symbol_uuid, "Footprint": "",
+        attributes = {"Symbol": symbol_uuid, "Footprint": footprint_uuid,
                       "Designator": symbol.designator, "Name": symbol.title,
                       "Value": "", "Description": "", "Add into BOM": "yes",
                       "Convert to PCB": "yes", "SymbolName": symbol_name}

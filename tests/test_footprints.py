@@ -1,0 +1,133 @@
+"""Footprint documents, and a device's link to one.
+
+EasyEDA Pro refuses a netlist export while any placed part has no footprint:
+its schematic DRC calls that fatal.  A device names its footprint by the uuid of
+a FOOTPRINT document, so what matters is that the link resolves, that every pin
+has a pad, and that a part does not override the link with an empty value.
+"""
+import json
+
+import pytest
+
+from tools import gauge
+from tools.eprj3 import footprints, schematic
+from tools.eprj3 import symbols as sym
+from tools.eprj3.units import pcb_to_mm
+from tools.model import Part
+
+
+def records(lines):
+    """[(header, payload)] from serialised records."""
+    out = []
+    for line in lines:
+        head, _, payload = line.partition("||")
+        out.append((json.loads(head), json.loads(payload) if payload else None))
+    return out
+
+
+def documents(text):
+    """{docType: [[(header, payload)...], ...]} from a joined document."""
+    docs = {}
+    cur = None
+    for head, payload in records(text.split("|\n")):
+        if head["type"] == "DOCHEAD":
+            cur = [(head, payload)]
+            docs.setdefault(payload["docType"], []).append(cur)
+        else:
+            cur.append((head, payload))
+    return docs
+
+
+def resistor(ref="R1"):
+    return Part(ref, "R-10k", "0805", "GAUGE", "R", ("1", "2"), 0.6, value="10k")
+
+
+def page():
+    return schematic.Page("5c4e0000000005c1", client="0123456789abcdef",
+                          epoch_ms=1788000000000)
+
+
+# --- the footprint document ----------------------------------------------------
+def test_two_pad_is_centred_and_pitched():
+    a, b = footprints.two_pad(1.9, 1.0, 1.3)
+    assert (a.num, b.num) == ("1", "2")
+    assert (a.x_mm, b.x_mm) == (-0.95, 0.95)
+    assert a.y_mm == b.y_mm == 0
+
+
+def test_footprint_document_shape_and_units():
+    recs = records(footprints.footprint_records(
+        "fp01", "R0805_T", footprints.two_pad(1.9, 1.0, 1.3),
+        client="0123456789abcdef", epoch_ms=1))
+    head = recs[0]
+    assert head[0] == {"type": "DOCHEAD"} and head[1]["docType"] == "FOOTPRINT"
+    assert head[1]["uuid"] == "fp01"
+    pads = [p for h, p in recs if h["type"] == "PAD"]
+    assert [p["num"] for p in pads] == ["1", "2"]
+    # Stored in PCB units (mil); the land pattern must survive the conversion.
+    assert pcb_to_mm(pads[1]["centerX"]) == pytest.approx(0.95, abs=1e-4)
+    assert pcb_to_mm(pads[0]["defaultPad"]["height"]) == pytest.approx(1.3, abs=1e-4)
+    assert all(p["hole"] is None and p["layerId"] == footprints.TOP_LAYER for p in pads)
+    tickets = [h["ticket"] for h, _ in recs[1:]]
+    assert tickets == list(range(1, len(tickets) + 1))
+
+
+def test_repeated_pad_numbers_are_refused():
+    pads = (footprints.Pad("1", 0, 0, 1, 1), footprints.Pad("1", 2, 0, 1, 1))
+    with pytest.raises(ValueError, match="repeat"):
+        footprints.footprint_records("fp", "BAD", pads, client="c", epoch_ms=1)
+
+
+# --- binding a footprint to a placed symbol ----------------------------------------
+def test_pads_must_match_the_symbols_pins():
+    p = page()
+    symbol = sym.for_part(resistor())
+    with pytest.raises(ValueError, match="do not match"):
+        p.bind_footprint(symbol, "ONE_PAD", (footprints.Pad("1", 0, 0, 1, 1),))
+
+
+def test_a_footprint_for_a_symbol_never_placed_is_refused():
+    p = page()
+    p.bind_footprint(sym.for_part(resistor()), "R0805_T", footprints.two_pad(1.9, 1.0, 1.3))
+    with pytest.raises(ValueError, match="never placed"):
+        p.library_records()
+
+
+def test_a_net_flag_never_takes_a_footprint():
+    flag = sym.net_flag("GAUGE_FLAG")
+    with pytest.raises(ValueError, match="net flag"):
+        sym.device_records(flag, "dev", "sym", client="c", epoch_ms=1,
+                           footprint_uuid="fp")
+
+
+# --- the gauge: the one project that binds footprints today ------------------------
+@pytest.fixture(scope="module")
+def gauge_docs():
+    project, _ = gauge.build()
+    return documents(project.boards[0].schematic.sheets[0].document())
+
+
+def test_every_gauge_part_device_names_a_footprint_that_exists(gauge_docs):
+    fps = {d[0][1]["uuid"]: d for d in gauge_docs["FOOTPRINT"]}
+    parts = [d for d in gauge_docs["DEVICE"]
+             if "Global Net Name" not in d[1][1]["attributes"]]
+    assert parts, "the gauge has no part device"
+    for dev in parts:
+        assert dev[1][1]["attributes"]["Footprint"] in fps
+
+
+def test_library_order_is_footprint_symbol_device_then_page(gauge_docs):
+    project, _ = gauge.build()
+    text = project.boards[0].schematic.sheets[0].document()
+    order = [p["docType"] for h, p in records(text.split("|\n"))
+             if h["type"] == "DOCHEAD"]
+    ranks = {"FOOTPRINT": 0, "SYMBOL": 1, "DEVICE": 2, "SCH_PAGE": 3}
+    assert [ranks[t] for t in order] == sorted(ranks[t] for t in order)
+
+
+def test_no_part_overrides_its_devices_footprint(gauge_docs):
+    """An editor-saved sheet carries a component `Footprint` ATTR only as a
+    per-part override.  Writing one with no value could mask the device's."""
+    page_recs = gauge_docs["SCH_PAGE"][0]
+    assert not [p for h, p in page_recs
+                if h["type"] == "ATTR" and p.get("key") == "Footprint"]
