@@ -110,11 +110,18 @@ def test_a_bottom_side_half_lands_pad_for_pad_over_its_mate(d):
 #: Wires whose plug, in the wrong header, silently changes what the brake,
 #: the kill or the motor does, or puts pack voltage where it does not belong.
 SENSITIVE_NETS = {"HV_BPLUS", "KSW", "LEVER_L", "LEVER_R", "BL", "ACC_PLUS",
-                  "RUN", "BOOST_OUT"}
+                  "IN11_RUN_WIRE", "BOOST_OUT"}
 
 
 def _fitted_harness(d):
     return [c for c in d.connectors if c.leaves_box and not c.dnp]
+
+
+def test_every_sensitive_net_named_here_is_a_net_the_design_has(d):
+    """SENSITIVE_NETS is typed. A renamed net would drop out of it silently and
+    the size check below would simply stop looking at that connector."""
+    missing = SENSITIVE_NETS - {n.name for n in d.nets}
+    assert missing == set(), f"no such net: {sorted(missing)}"
 
 
 def test_a_sensitive_plug_has_a_size_no_other_header_in_its_family_shares(d):

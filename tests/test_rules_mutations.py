@@ -35,10 +35,6 @@ def _r(ref, board, value, pkg="0805"):
                 v_max=150.0)
 
 
-def _fet(ref, board):
-    return Part(ref, "AO3400A", "SOT-23", board, "NFET", ("G", "D", "S"), 1.2, v_max=30.0)
-
-
 # ── CK-1: current through TVS / zener / 0 Ω link / MECH ──────────────────────
 def test_m06_a_tvs_from_the_switched_rail_onto_the_key_wire_latches_it():
     tvs = Part("D107", "SMCJ90A", "SMC", "POWER", "TVS", ("A", "K"), 2.6, v_max=90.0)
@@ -69,21 +65,9 @@ def test_m02_a_wrong_divider_overdrives_an_expander_pin():
     assert any("ACC_SENSE" in e for e in fired(D.replace_part("R343", value="10k"), "LV-LOGIC"))
 
 
-def test_m36_a_resistor_from_the_horn_gate_to_the_stop_lamp_gate():
-    bad = add(D, _r("R399", "OUTPUTS", "1k"), {"1": "HORN_GATE", "2": "Q1_GATE"})
-    assert any("HORN" in e for e in fired(bad, "LV-LOGIC")), "IO42 sees ~5.7 V"
-    assert fired(bad, "LISTEN"), "firmware now drives the stop lamp's gate"
-
-
-# ── CK-3: the module only listens to the brake and kill hardware ─────────────
-def test_m04_a_firmware_fet_that_holds_the_kill_off():
-    bad = add(D, _fet("Q306", "OUTPUTS"), {"G": "BUZZ_GATE", "D": "Q2_GATE", "S": "GND"})
-    assert any("Q2_GATE" in e for e in fired(bad, "LISTEN"))
-
-
-def test_m04b_boost_that_defeats_the_run_off_switch():
-    bad = add(D, _fet("Q402", "LOGIC"), {"G": "BOOST_GATE", "D": "RUN", "S": "GND"})
-    assert any("RUN" in e for e in fired(bad, "LISTEN"))
+def test_m36_a_resistor_from_the_horn_gate_to_the_12_v_rail():
+    bad = add(D, _r("R399", "OUTPUTS", "1k"), {"1": "HORN_GATE", "2": "V12"})
+    assert any("HORN" in e for e in fired(bad, "LV-LOGIC")), "IO42 sees ~11 V"
 
 
 # ── CK-4 / HV-3: a clamp must be under what it protects ──────────────────────
@@ -121,8 +105,9 @@ def test_m19_a_clamp_returned_through_10k_is_not_grounded():
 
 
 # ── CK-8: resistor power ─────────────────────────────────────────────────────
-def test_m27_a_100_ohm_lever_pull_up_burns_an_0805():
-    assert any("R313" in e for e in fired(D.replace_part("R313", value="100R"), "VR-POWER"))
+def test_m27_a_100_ohm_open_load_pull_up_burns_an_0805():
+    """R345 hangs the stop lamp's output on V12: 12 V across 100 Ω is 1.44 W."""
+    assert any("R345" in e for e in fired(D.replace_part("R345", value="100R"), "VR-POWER"))
 
 
 # ── CK-10: a switch to ground needs a pull-UP ────────────────────────────────
@@ -136,5 +121,5 @@ def test_m33_a_gate_tied_to_its_own_source():
 
 
 def test_the_real_design_passes_every_new_rule():
-    for rule_id in ("LISTEN", "VR-CLAMP", "VR-POWER", "PULL-DIR"):
+    for rule_id in ("VR-CLAMP", "VR-POWER", "PULL-DIR"):
         assert fired(D, rule_id) == [], rule_id

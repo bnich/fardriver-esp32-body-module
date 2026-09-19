@@ -104,8 +104,9 @@ def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
     design, sheet, bs = _emit("OUTPUTS", {})
     fps = _docs(sheet)["FOOTPRINT"]
     by_title = {d[1][1]["title"]: d for d in fps}
-    stack = next(d for t, d in by_title.items() if "2X25" in t.upper())
-    assert sorted(int(p["num"]) for h, p in stack if h["type"] == "PAD") == list(range(1, 51))
+    n = len(design.connector("J308").pins)
+    stack = next(d for t, d in by_title.items() if f"2X{n // 2}" in t.upper())
+    assert sorted(int(p["num"]) for h, p in stack if h["type"] == "PAD") == list(range(1, n + 1))
     assert {"J307", "J308"} <= set(bs.footprints_bound)
 
 

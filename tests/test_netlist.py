@@ -198,10 +198,11 @@ def test_ic_pin_lists_are_the_datasheets_not_a_convenient_subset(d, refdes):
 
 def test_every_net_states_a_voltage_nobody_has_to_guess(d):
     assert [n.name for n in d.nets if n.domain not in DOMAIN_VOLTS] == []
-    for name in ("LEVER_L", "LEVER_R", "Q1_GATE"):
-        assert d.net(name).domain == "12V", (
-            f"{name} idles at ~11.4 V (brake-circuit.md §3); a lower class "
-            f"lets a 5 V clamp hold the stop lamp on")
+    for name in ("LEVER_L", "LEVER_R", "IN11_RUN_WIRE"):
+        assert d.net(name).domain == "3V3", (
+            f"{name} is a dry contact pulled up to 3.3 V (IO-8); a higher class "
+            f"asks for a clamp that would let 12 V onto an S3 pin")
+    assert d.net("AUX12").domain == "12V"
     assert d.net("GND").domain == d.net("BASEPLATE").domain == "GND"
     assert d.net("V5").domain == "5V"
 
@@ -420,10 +421,10 @@ def test_nothing_but_the_open_drain_fault_joins_a_tps_pin_to_the_mcu(d, w):
                 assert pin == "FAULT", f"{u.refdes}.{pin} meets U401 directly"
 
 
-#: The two TPS4H160B channels no firmware commands: U301 OUT1 is AUX12, a
-#: current-limited FEED held on from V3P3, and U302 OUT4 is the STOP lamp, whose
-#: IN4 the hardware brake circuit drives (D23).  (device, input) -> source net.
-HARDWARE_INPUTS = {("U301", "IN1"): "V3P3", ("U302", "IN4"): "STOP_CMD"}
+#: The one TPS4H160B channel no firmware commands: U301 OUT1 is AUX12, a
+#: current-limited FEED held on from V3P3.  Every other channel, the STOP lamp
+#: included since IO-8, is driven from a GPIO.  (device, input) -> source net.
+HARDWARE_INPUTS = {("U301", "IN1"): "V3P3"}
 
 
 def test_every_used_tps_input_is_reachable_from_the_mcu_and_unused_ones_are_off(d, w):
@@ -555,102 +556,59 @@ def test_unidirectional_clamps_point_the_right_way(d, w):
             f"{t.refdes}: cathode on {k.name}, anode on {a.name}")
 
 
-# ─── D23: brake cutoff, brake lamp and run/off kill are hardware, on OUTPUTS ──────
-
-D23_NETS = ("LEVER_L", "LEVER_R", "Q1_GATE", "BL", "Q2_GATE", "ACC_PLUS",
-            "TAIL_STOP")
-
-
-def test_d23_hardware_touches_no_board_but_drv(d):
-    for name in D23_NETS:
-        boards = {d.board_of(r) for r, _ in d.net(name).pins}
-        assert boards == {"OUTPUTS"}, f"{name} depends on {sorted(boards - {'OUTPUTS'})}"
+# ─── IO-8: the brake, the brake lamp and the kill are plain firmware I/O ──────
+# There is no dedicated circuit left.  What still has to hold is the WIRING:
+# BL's own copper never crosses an interface, the lever contacts are conditioned
+# on the board that owns the connector, and the FarDriver's 5.1 V is a sensor.
+# tests/test_plain_io.py holds the FUNCTION (released at reset, off at reset).
 
 
-@pytest.mark.parametrize("lever", ["LEVER_L", "LEVER_R"])
-def test_a_lever_cuts_the_motor_and_lights_the_lamp_through_drv_parts_alone(d, w, lever):
-    assert [c.refdes for c in w.connectors_on(lever) if c.leaves_box and c.board == "OUTPUTS"]
-    reached = w.walk(lever, {"D"}, board="OUTPUTS")
-    assert "BL" in reached, f"{lever} has no diode path to BL on OUTPUTS"
-    for line in ("BL", "Q1_GATE"):
-        steer = w.between(lever, line, {"D"})
-        assert steer and all(w.net(x.refdes, "K") == lever for x in steer), (
-            f"{lever} -> {line}: the cathode faces the lever node")
-    lamp_switch = [q for q in w.parts_on("Q1_GATE", {"PFET"}, board="OUTPUTS")
-                   if w.net(q.refdes, "G") == "Q1_GATE"]
-    assert lamp_switch, "nothing on OUTPUTS switches the stop lamp"
-    q1 = lamp_switch[0]
-    assert w.net(q1.refdes, "S") == "V12"
-    assert w.between("Q1_GATE", "V12", {"R"}), "Q1's gate has no pull-up: lamp stuck on"
-    # Q1's drain commands exactly one TPS4H160B input, and that channel's
-    # output is the lamp wire leaving OUTPUTS -- with no GPIO anywhere on the way.
-    cmd = w.net(q1.refdes, "D")
-    path = w.walk(cmd, {"R"})
-    ins = [(u, n) for u in _tps(d) for n in "1234" if w.net(u.refdes, f"IN{n}") in path]
-    assert len(ins) == 1, f"Q1's drain reaches TPS inputs {ins}"
-    u, n = ins[0]
-    assert u.board == "OUTPUTS" and not any(d.net(x).gpio for x in path | {cmd})
-    stop = w.net(u.refdes, f"OUT{n}")
-    assert [c for c in w.connectors_on(stop) if c.leaves_box and c.board == "OUTPUTS"]
-
-
-def test_bl_leaves_the_box_from_drv_and_only_a_copy_goes_to_brain(d, w):
+def test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross(d, w):
+    """The command and the readback cross STACK; BL's own copper does not. One
+    walked-out inter-board contact must not be able to open the cut's return
+    path or short it."""
     exits = [c for c in w.connectors_on("BL") if c.leaves_box]
     assert exits and all(c.board == "OUTPUTS" for c in exits)
     assert not [c for c in w.connectors_on("BL") if c.interface], (
         "BL itself crosses an inter-board connector: one walked-out contact "
-        "and the motor cut fails open, silently")
+        "and the motor cut fails, silently")
+    cut = [q for q in w.parts_on("BL", {"NFET"}, board="OUTPUTS")
+           if w.net(q.refdes, "D") == "BL"]
+    assert cut, "nothing on OUTPUTS can pull BL low"
+    assert w.net(cut[0].refdes, "S") == "GND", "the cut FET has no source"
     copy = w.between("BL", "BL_SENSE", {"R"})
     assert copy and ohms(copy[0]) >= 100e3
     assert w.parts_on("BL_SENSE") and not w.between("BL", "BL_SENSE", FETS | {"D"})
 
 
-def test_the_run_switch_kills_through_drv_parts_and_fails_safe(d, w):
-    kill = [q for q in w.parts_on("BL", {"NFET"}, board="OUTPUTS")
-            if w.net(q.refdes, "D") == "BL"]
-    assert kill, "no FET on OUTPUTS can hold BL low"
-    q2 = kill[0]
-    assert w.net(q2.refdes, "S") == "GND", "Q2 has no source: it cannot pull BL"
-    gate = w.net(q2.refdes, "G")
-    assert "RUN" in w.walk(gate, {"R"}, board="OUTPUTS"), "RUN never reaches Q2's gate"
-    assert w.between(gate, "GND", {"R"}), "D14: Q2's gate has no bias-OFF"
-    pullups = [r for r in w.parts_on("RUN", {"R"}, board="OUTPUTS")
-               if w.nets_of(r) - {"RUN"} <= {"ACC_PLUS"}]
-    assert pullups, ("RUN's pull-up must be ON OUTPUTS: then an open pod, STACK "
-                     "or LOGIC leaves the node high = OFF = motor cut")
+def test_the_throttle_supply_is_sensed_and_never_used_as_a_rail(d, w):
+    """ACC+ comes in on J309 and feeds the sense divider alone (IO-8): nothing
+    on the module is powered or pulled up from the controller's 5.1 V."""
     feed = w.connectors_on("ACC_PLUS")
     assert feed and all(c.board == "OUTPUTS" and c.leaves_box for c in feed)
+    top = w.between("ACC_PLUS", "ACC_SENSE", {"R"})
+    assert len(top) == 1 and ohms(top[0]) >= 100e3
+    others = {r.refdes for r in w.parts_on("ACC_PLUS", {"R"})} - {top[0].refdes}
+    assert others == set(), f"ACC+ still feeds {sorted(others)}"
 
 
-def test_the_run_node_reads_as_a_valid_high_everywhere_it_is_read(w):
-    """RUN open = pulled to ACC+ (5.1 V), loaded by Q2's gate network AND the
-    IN-11 divider. It must turn Q2 hard on and clear the MCP23017's V_IH."""
-    r_pu = ohms(w.between("RUN", "ACC_PLUS", {"R"})[0])
-    gate = w.net(w.between("RUN", "Q2_GATE", {"R"})[0].refdes, "2")
-    r_gate = series_to(w, "RUN", "Q2_GATE") + ohms(w.between(gate, "GND", {"R"})[0])
-    r_top = ohms(w.between("RUN", "IN11_SENSE", {"R"})[0])
-    r_bot = ohms(w.between("IN11_SENSE", "GND", {"R"})[0])
-    load = 1 / (1 / r_gate + 1 / (r_top + r_bot))
-    node = 5.1 * load / (r_pu + load)
-    sense = node * r_bot / (r_top + r_bot)
-    assert node >= 2.5, f"RUN = {node:.2f} V: AO3400A is specified at V_GS 2.5 V"
-    assert 0.8 * 3.3 + 0.3 <= sense <= 3.3, (
-        f"IN-11 = {sense:.2f} V: needs >= 0.3 V over V_IH (0.8 x VDD = 2.64 V) "
-        f"and must not exceed VDD")
-
-
-def test_brake_inputs_are_pulled_up_on_drv_from_a_3v3_that_really_arrives(d, w):
-    # The pull-up sits on the D23 sense node, AHEAD of the class-A series
-    # resistor -- so the lever, its diode and its pull-up are all on OUTPUTS, and
-    # only the conditioned signal crosses to the MCU.
-    for node, wire in (("IN05_NODE", "IN05_BRAKE_L"), ("IN06_NODE", "IN06_BRAKE_R")):
-        pull = w.between(node, "V3P3", {"R"})
-        assert pull and pull[0].board == "OUTPUTS"
-        series = w.between(node, wire, {"R"})
-        assert series and series[0].board == "OUTPUTS", f"{wire} has no series resistor"
-        assert series[0].value == "1k"
-        assert any(p.kind == "C" and p.board == "LOGIC" for p in w.parts_on(wire, {"C"})), \
-            f"{wire} has no capacitor at the MCU pin (plan §4 class A)"
+@pytest.mark.parametrize("wire,node", [("IN05_BRAKE_L", "LEVER_L"),
+                                       ("IN06_BRAKE_R", "LEVER_R")])
+def test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board(d, w, wire, node):
+    """plan §4 class A, and the lever WIRE is the node: 1 kΩ pull-up and 1 kΩ
+    series on OUTPUTS, where J306 and the array are, and the 100 nF at the S3
+    pin on LOGIC.  Only the conditioned signal crosses STACK."""
+    assert [c.refdes for c in w.connectors_on(node)
+            if c.leaves_box and c.board == "OUTPUTS"]
+    pull = w.between(node, "V3P3", {"R"})
+    assert pull and pull[0].board == "OUTPUTS" and pull[0].value == "1k"
+    series = w.between(node, wire, {"R"})
+    assert series and series[0].board == "OUTPUTS", f"{wire} has no series resistor"
+    assert series[0].value == "1k"
+    assert not w.between(node, wire, {"D"}), (
+        "no steering diode stands between the lever and its input any more")
+    assert any(p.kind == "C" and p.board == "LOGIC" for p in w.parts_on(wire, {"C"})), \
+        f"{wire} has no capacitor at the MCU pin (plan §4 class A)"
     on_drv = [c for c in w.connectors_on("V3P3") if c.board == "OUTPUTS" and c.interface]
     assert on_drv, "V3P3 has no contact onto OUTPUTS"
 
@@ -737,12 +695,15 @@ def test_can_transceiver_mode_pin_is_terminated(d, w):
 
 #: The contract between OUTPUTS and LOGIC: these nets cross STACK, and no others.
 STACK_CONTRACT = {
+    # the seven lamp commands, the stop lamp among them since IO-8
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
+    "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2", "HORN_CMD",
-    "FAN_CMD", "BUZZ_CMD", "IN05_BRAKE_L", "IN06_BRAKE_R", "V12_SENSE", "RUN",
-    "CANH", "CANL", "V3P3", "BL_SENSE",
-    # ACC+ divided down for firmware: without it, a missing ACC+ wire leaves the
-    # run/off kill dead and nothing shows it
+    "FAN_CMD", "BUZZ_CMD", "IN05_BRAKE_L", "IN06_BRAKE_R", "V12_SENSE",
+    "CANH", "CANL", "V3P3",
+    # the motor cut: the command out, the 100 kΩ-isolated copy back (IO-8)
+    "BL_CMD", "BL_SENSE",
+    # ACC+ divided down: LOW with the key on means the controller is not alive
     "ACC_SENSE",
 }
 
@@ -751,14 +712,18 @@ def _interface(d, name):
     return [c for c in d.connectors if c.interface == name]
 
 
-def test_stack_is_2x25_and_carries_exactly_the_contracted_nets(d):
+def test_stack_is_one_row_per_signal_and_carries_exactly_the_contracted_nets(d):
+    """2 × N, N derived from the contract itself: every odd contact a signal,
+    every even one a ground, and no empty contact to grow a signal into by
+    accident."""
     ends = _interface(d, "STACK")
     assert {c.board for c in ends} == {"OUTPUTS", "LOGIC"}
     for c in ends:
-        assert len(c.pins) == 50
-        assert {cp.net for cp in c.pins} - {"", "GND"} == STACK_CONTRACT
+        assert len(c.pins) == 2 * len(STACK_CONTRACT)
+        assert {cp.net for cp in c.pins} - {"GND"} == STACK_CONTRACT
         grounds = [cp for cp in c.pins if cp.net == "GND"]
-        assert len(grounds) >= 25, "alternating grounds"
+        assert len(grounds) == len(STACK_CONTRACT), "alternating grounds"
+        assert c.footprint_mm[0] == pytest.approx(2.54 * len(STACK_CONTRACT))
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
 
 
@@ -824,12 +789,16 @@ def fewer_v12_contacts(design):
 
 
 DEFECTS = [
-    ("the kill FET has no source",
-     lambda d: d.without_pin("Q305", "S"),
-     test_the_run_switch_kills_through_drv_parts_and_fails_safe, {}),
-    ("the RUN pull-up sits on LOGIC",
-     lambda d: d.replace_part("R314", board="LOGIC"),
-     test_the_run_switch_kills_through_drv_parts_and_fails_safe, {}),
+    ("the cut FET has no source",
+     lambda d: d.without_pin("Q106", "S"),
+     test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross, {}),
+    ("the lever pull-up sits on LOGIC, across the interface",
+     lambda d: d.replace_part("R317", board="LOGIC"),
+     test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board,
+     {"wire": "IN05_BRAKE_L", "node": "LEVER_L"}),
+    ("the throttle's 5.1 V pressed into service as a pull-up",
+     lambda d: move_pin(d, "R346", "2", "ACC_PLUS"),
+     test_the_throttle_supply_is_sensed_and_never_used_as_a_rail, {}),
     ("the gate pull-down goes to the key line, not to a FET to ground",
      lambda d: move_pin(d, "R101B", "2", "KSW"),
      test_q101_is_turned_on_by_a_dc_path_from_its_gate_to_ground_through_q105, {}),
@@ -850,11 +819,11 @@ DEFECTS = [
     ("a second P-FET switches the KEY line",
      lambda d: d.with_part(replace(d.part("Q101"), refdes="Q104")),
      test_the_module_only_taps_the_key_line_it_never_switches_it, {}),
-    ("the 5 V array on the lever nodes",
-     lambda d: d.replace_part("D313", v_max=5.0),
+    ("a 5 V array on a 12 V output line",
+     lambda d: d.replace_part("D326", v_max=5.0),
      test_a_tvs_never_conducts_at_its_nets_working_voltage, {}),
-    ("the lever node mislabelled as logic level",
-     lambda d: d.replace_net("LEVER_L", domain="3V3"),
+    ("the lever wire mislabelled as a 12 V line",
+     lambda d: d.replace_net("LEVER_L", domain="12V"),
      test_every_net_states_a_voltage_nobody_has_to_guess, {}),
     ("a TVS array with an anode in the air",
      lambda d: d.without_pin("D313", "A5"),
@@ -900,17 +869,7 @@ DEFECTS = [
      test_inductive_loads_have_a_flyback_path, {}),
     ("BL taken to LOGIC across STACK",
      lambda d: d.replace_net("BL", pins=d.net("BL").pins + (("J308", "49"),)),
-     test_bl_leaves_the_box_from_drv_and_only_a_copy_goes_to_brain, {}),
-    ("a D23 node that depends on LOGIC",
-     lambda d: d.replace_part("R313", board="LOGIC"),
-     test_d23_hardware_touches_no_board_but_drv, {}),
-    ("a steering diode fitted backwards",
-     lambda d: swap_pins(d, "D301", "A", "K"),
-     test_a_lever_cuts_the_motor_and_lights_the_lamp_through_drv_parts_alone,
-     {"lever": "LEVER_L"}),
-    ("the IN-11 divider that reads 2.52 V",
-     lambda d: d.replace_part("R431", value="100k"),
-     test_the_run_node_reads_as_a_valid_high_everywhere_it_is_read, {}),
+     test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross, {}),
     ("CAN on pads the module does not have",
      lambda d: d.replace_net("TWAI_TX", pins=(("U401", "IO33"), ("U404", "D"))),
      test_no_net_lands_on_a_pad_the_module_does_not_have, {}),
@@ -1001,9 +960,9 @@ def test_each_choke_carries_supply_and_return_through_opposite_windings(d, ref, 
     ("R101A", "270k", "half of the 540 k pull-down that sets the ~51 ms ramp"),
     ("R101B", "270k", "half of the 540 k pull-down"),
     ("R113", "100k", "level-shifter divider bottom: 3.9 V at 43 V vs V_th ≤ 2.6 V"),
-    ("R314", "1k", "'R4', the kill's pull-up from ACC+ and the toggle's 5.1 mA wetting"),
-    ("R316", "100k", "'R6', Q2 gate to ground"),
-    ("R317", "10k", "'R3L': 10 k keeps the low level ~0.55 V through a 1N4148"),
+    ("R115", "10k", "BL's HARD gate pull-down: released at reset (IO-9)"),
+    ("R317", "1k", "the left lever's class-A pull-up: 3.3 mA of wetting current"),
+    ("R353", "4k7", "the STOP command's series resistor into U302 IN4"),
     ("R425", "10k", "boost: the HARD external pull-down (D14)"),
 ])
 def test_a_value_the_circuit_depends_on(d, ref, value, why):

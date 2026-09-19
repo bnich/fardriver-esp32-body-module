@@ -11,8 +11,8 @@ voltage across it. Everything that can be derived from connectivity IS derived:
   * a FET's gate, source and drain are its `G`, `S`, `D` pins, so OFF is
     "a fitted resistor joins the gate net to the source net" for both polarities;
   * a net's voltage is the HIGHER of its declared domain and whatever pulls it
-    up through resistors and forward diodes with no path to ground -- so a
-    lever node typed `3V3` is still seen at the 12 V that R313 holds it at;
+    up through resistors and forward diodes with no path to ground -- so a node
+    typed `3V3` is still seen at the 12 V a pull-up resistor holds it at;
   * a GPIO is the `IOn` pin the net lands on, cross-checked against its tag.
 
 Two kinds of walk, and the difference is deliberate:
@@ -29,7 +29,7 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER  LISTEN  VR-CLAMP
+  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER  VR-CLAMP
   VR-POWER  PULL-DIR
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
@@ -353,7 +353,8 @@ class _Ix:
 
     def pulled_up(self, name: str) -> tuple[float, str, list[str]] | None:
         """(volts, from net, via) if something holds this net UP with nothing
-        holding it down -- e.g. a lever node at 12 V through R313 and D303."""
+        holding it down -- e.g. a driver output at 12 V through its open-load
+        pull-up, or a contact at 3.3 V through its class-A pull-up."""
         if name not in self._pull:
             self._pull[name] = self._compute_pull(name)
         return self._pull[name]
@@ -820,8 +821,9 @@ def bus_order(d: Design) -> list[str]:
     upper half mirrored under its board, a palindromic pin order lands every
     net on itself. Mated one contact off, each contact meets its neighbour, so
     two different nets may sit side by side only if one is a return: a shift
-    can short a rail, never feed 84 V or 12 V into a logic input. (STACK is
-    2 x 25 with every even contact GND: reversed, every signal meets ground.)"""
+    can short a rail, never feed 84 V or 12 V into a logic input. (STACK
+    alternates signal and GND on every contact: reversed, every signal meets
+    ground.)"""
     errs = []
     seen = set()
     for c in d.connectors:
@@ -1313,9 +1315,8 @@ def _pin_drive(ix: _Ix, name: str) -> float | None:
 
 def _hard(ix: _Ix, name: str) -> bool:
     """A net something other than a resistor can drive or ground: a supply, a
-    wire, a pin of a chip or module, a FET channel, a diode (a lever through
-    its steering diode). A net held only by resistors, gates, capacitors and
-    clamps follows its resistors."""
+    wire, a pin of a chip or module, a FET channel, a diode. A net held only by
+    resistors, gates, capacitors and clamps follows its resistors."""
     if ix.is_source(name) or ix.net_conns.get(name):
         return True
     for ref, pin in ix.nets[name].pins:
@@ -1458,78 +1459,6 @@ def pull_direction(d: Design) -> list[str]:
     return errs
 
 
-# ── LISTEN: the module only listens to the brake and kill hardware ──────────
-#: The D23 hardware's nets: the levers, the stop lamp's gate, command and
-#: channel input, its output, the motor cut and the run/off kill. No firmware
-#: state may reach them except through a high impedance.
-BRAKE_KILL_NETS = ("LEVER_L", "LEVER_R", "Q1_GATE", "STOP_CMD", "STOP_IN4",
-                   "TAIL_STOP", "BL", "Q2_GATE", "RUN", "ACC_PLUS")
-
-
-def _firmware_reach(ix: _Ix) -> dict[str, tuple[float, list[str]]]:
-    """net -> (least ohms, path) from any MCU or expander pin, through
-    resistors (fitted or not: a footprint can be populated) and links both
-    ways, and through a diode only against its conduction -- a pin that pulls
-    a cathode low pulls its anode's net down with it. Never through a supply."""
-    import heapq
-    starts = {n for p in ix.parts.values()
-              if "ESP32" in p.mpn.upper() or p.mpn.upper().startswith("MCP23017")
-              for pin in ix.pins_of(p) for n in ix.nets_of_pin(p.refdes, pin)
-              if not ix.is_stiff(n)}
-    best: dict[str, tuple[float, list[str]]] = {n: (0.0, []) for n in starts}
-    heap = [(0.0, n) for n in starts]
-    while heap:
-        ohms, x = heapq.heappop(heap)
-        if ohms > best[x][0] or (ix.is_stiff(x) and x not in starts):
-            continue
-        for other, p, flow, _a, _b in ix.adj.get(x, ()):
-            k = _kind(p)
-            if k == "LINK":
-                step = 0.0
-            elif k == "R":
-                step = resistance(p.value)
-                if step is None:
-                    continue
-            elif k in _DIODES and flow == "in":
-                step = 0.0
-            else:
-                continue
-            total = ohms + step
-            if other not in best or total < best[other][0]:
-                best[other] = (total, best[x][1] + [p.refdes])
-                heapq.heappush(heap, (total, other))
-    return best
-
-
-def listen_only(d: Design) -> list[str]:
-    """CLAUDE.md: the brake cutoff and brake light are hardware and the module
-    only listens. Firmware may SENSE a brake or kill net through a high
-    impedance (the IN-11 tap reads RUN through 100 k); it may not drive one
-    through less, and it may not drive, through less, the gate of a FET whose
-    channel lands on one."""
-    ix = _index(d)
-    reach = _firmware_reach(ix)
-    errs = []
-    for name in BRAKE_KILL_NETS:
-        hit = reach.get(name)
-        if hit is not None and hit[0] < HI_Z_INPUT_OHMS:
-            errs.append(f"LISTEN: firmware reaches the brake/kill net {name!r} "
-                        f"through {hit[0]:g} Ω ({_via(hit[1])}); below "
-                        f"{HI_Z_INPUT_OHMS:g} Ω a pin can drive it. The module "
-                        f"only listens to the D23 hardware.")
-    for q in ix.fets():
-        gates = [n for n in ix.nets_of_pin(q.refdes, "G")
-                 if n in reach and reach[n][0] < HI_Z_INPUT_OHMS]
-        channel = [n for pin in ("D", "S") for n in ix.nets_of_pin(q.refdes, pin)
-                   if n in BRAKE_KILL_NETS]
-        if gates and channel:
-            errs.append(f"LISTEN: {q.refdes} ({q.mpn}) switches the brake/kill "
-                        f"net {channel[0]!r} and firmware drives its gate "
-                        f"{gates[0]!r} ({_via(reach[gates[0]][1])}). The module "
-                        f"only listens to the D23 hardware.")
-    return errs
-
-
 # ── HT: every body in the stack, against a stack derived from those bodies ───
 def _bodies(d: Design):
     for p in d.parts:
@@ -1577,7 +1506,6 @@ ALL_RULES = (
     polarity,
     heights,
     bus_order,
-    listen_only,
     clamp_ratings,
     resistor_power,
     pull_direction,

@@ -48,14 +48,18 @@ def test_the_service_pads_are_an_esp_prog_header_with_no_supply():
     assert not any(p.paste for p in land.pads), "Tag-Connect note 3: no paste"
 
 
-def test_the_board_has_no_usb_port_and_its_usb_pins_are_spare():
-    """Flashing and the console are on UART0 at J408; the S3's native USB pins
-    are ordinary spares in the pool."""
+def test_the_board_has_no_usb_port_and_its_usb_pins_are_ordinary_gpios():
+    """Flashing and the console are on UART0 at J408, so the S3's native USB
+    pins are ordinary pins here -- and both are now in service (IO-8): GPIO19
+    commands the stop lamp, GPIO20 reads the right brake lever."""
     d = _d()
     assert not [c.refdes for c in d.connectors if "USB" in c.name.upper()
                 and "USB-SERIAL" not in c.name.upper()]
-    assert {"IO19", "IO20"} <= set(d.part("U401").nc)
-    assert {19, 20} <= set(gpio_budget.POOL) and {19, 20} <= set(gpio_budget.spare(d))
+    assert {19, 20} <= set(gpio_budget.POOL)
+    assert not {19, 20} & set(gpio_budget.spare(d))
+    assert not {"IO19", "IO20"} & set(d.part("U401").nc)
+    assert (d.net_of("U401", "IO19").name, d.net_of("U401", "IO20").name) \
+        == ("LGT_STOP", "IN06_BRAKE_R")
 
 
 def test_u0txd_passes_a_series_resistor_to_the_service_pads():

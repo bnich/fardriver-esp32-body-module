@@ -161,26 +161,6 @@
    ]
   ]
  },
- "C15155": {
-  "footprint": "sot-23-3_l2_9-w1_6-p1_90-ls2_8-br",
-  "manufacturer": "AOS",
-  "mpn": "AO3407A",
-  "package": "SOT-23",
-  "symbol_pins": [
-   [
-    "3",
-    "D"
-   ],
-   [
-    "1",
-    "G"
-   ],
-   [
-    "2",
-    "S"
-   ]
-  ]
- },
  "C152611": {
   "footprint": "sot-23-3_l2_9-w1_3-p1_90-ls2_4-br",
   "manufacturer": "Infineon",
@@ -503,22 +483,6 @@
    [
     "1",
     "1"
-   ]
-  ]
- },
- "C19077393": {
-  "footprint": "sod-123_l2_7-w1_6-ls3_7-rd",
-  "manufacturer": "R+O",
-  "mpn": "BZT52B5V1",
-  "package": "SOD-123",
-  "symbol_pins": [
-   [
-    "1",
-    "K"
-   ],
-   [
-    "2",
-    "A"
    ]
   ]
  },
@@ -1622,22 +1586,6 @@
   "mpn": "WJ15EDGKM-3.81-02P-14-00A",
   "package": "P=3.81mm",
   "symbol_pins": null
- },
- "C81598": {
-  "footprint": "sod-123f_l2_7-w1_6-ls3_8-rd",
-  "manufacturer": "ST(Semtech)",
-  "mpn": "1N4148W",
-  "package": "SOD-123",
-  "symbol_pins": [
-   [
-    "2",
-    "A"
-   ],
-   [
-    "1",
-    "K"
-   ]
-  ]
  },
  "C894371": {
   "footprint": "sc-74-6_l3_0-w1_5-p0_95-ls2_8-bl",
