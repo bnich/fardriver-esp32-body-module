@@ -567,6 +567,10 @@ def device_for(item, part=None, connector=None):
     sep = "-" if part is not None and lcsc and part.kind in ("R", "C") else "_"
     title = _TITLE_BAD.sub("_", f"{name}{sep}{lcsc}" if lcsc else name).strip("_")[:60]
     attrs = (("Supplier", "LCSC"), ("Supplier Part", lcsc)) if lcsc else ()
+    if part is not None and part.kind == "FUSE":
+        # It sits in its clips, which are the PCB parts: Import Changes must
+        # not put its pads on top of theirs.
+        attrs += (("Convert to PCB", "no"),)
     return Device(key=("device", item.symbol.key) + ident, title=title,
                   attributes=attrs)
 
@@ -584,8 +588,6 @@ def _bind_library_footprint(page, item, thing, library, bound, unbound):
     from tools import footprint_lib, padmap
     from tools.model import Part
     from . import v2footprint
-    if not padmap.needs_footprint(thing):
-        return
     device = device_for(item, *((thing, None) if isinstance(thing, Part) else (None, thing)))
     code = padmap.footprint_source(thing)
     if code is None:

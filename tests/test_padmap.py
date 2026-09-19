@@ -28,20 +28,12 @@ def _fitted(d):
 
 def test_every_fitted_item_with_a_footprint_has_a_map_covering_every_pin(d):
     for x in _fitted(d):
-        if not padmap.needs_footprint(x):
-            continue
         m = padmap.pad_map(x)
         pins = set(padmap.pins_of(x))
         landed = {pin for pin in m.values() if pin is not None}
         assert pins <= landed, f"{x.refdes}: pins with no pad: {sorted(pins - landed)}"
         extra = landed - pins - set(getattr(x, "nc", ()))
         assert not extra, f"{x.refdes}: pads name pins it does not have: {sorted(extra)}"
-
-
-def test_the_fuse_has_no_footprint_of_its_own(d):
-    """F201 sits in FH201A/B; only the clips are soldered."""
-    assert not padmap.needs_footprint(d.part("F201"))
-    assert padmap.needs_footprint(d.part("FH201A"))
 
 
 @pytest.mark.parametrize("mpn,pad,pin", [

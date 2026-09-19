@@ -5,6 +5,7 @@ origin -- and the footprint must be the top view of it.  A drawing of the pin
 face or a BOTTOM VIEW mirrors into the top view; getting that wrong swaps a
 module's pins left for right on a board that passes every other check.
 """
+import json
 import math
 
 import pytest
@@ -124,6 +125,45 @@ def test_the_net_tie_is_one_unbroken_strip_of_copper_2_mm_wide():
     assert a.y_mm == b.y_mm and min(a.h_mm, b.h_mm) >= 2.0
 
 
+# --- The fuse: a footprint for the netlist export, never converted to PCB ---------------
+def test_the_fuse_footprint_sits_on_its_clip_rows():
+    """EasyEDA's Allegro netlist export refuses a part without a footprint even
+    when it is not converted to PCB.  F201 is never on the board -- its clips
+    are -- so its pads mark where the caps sit: on the clip rows, 17.8 mm
+    apart (FH201A's source)."""
+    a, b = sorted(drawn.BY_MPN["0001.2504"].pads, key=lambda p: p.x_mm)
+    assert (a.num, b.num) == ("1", "2")
+    assert b.x_mm - a.x_mm == pytest.approx(17.8) and a.y_mm == b.y_mm == 0
+
+
+def _devices(board):
+    project = Project("t")
+    project.add_board(board)
+    sheet = project.boards[0].schematic.sheets[0]
+    emit_board(netlist.current(), board, sheet)
+    out, cur = [], None
+    for rec in sheet.library_records:
+        head, _, payload = rec.partition("||")
+        h, p = json.loads(head), json.loads(payload)
+        if h["type"] == "DOCHEAD":
+            cur = p["docType"]
+        elif cur == "DEVICE" and h["type"] == "META":
+            out.append(p)
+    return out
+
+
+def test_only_the_fuse_is_left_off_the_pcb():
+    """Import Changes honours `Convert to PCB`: the fuse's pads must not land on
+    top of FH201A/B's."""
+    off = [d["title"] for d in _devices("CONV")
+           if "Global Net Name" not in d["attributes"]      # net flags are not parts
+           and d["attributes"].get("Convert to PCB") != "yes"]
+    assert off == ["0001.2504_C1665055"]
+    assert all(d["attributes"].get("Convert to PCB") == "yes"
+               for b in ("HVIN", "DRV", "BRAIN") for d in _devices(b)
+               if "Global Net Name" not in d["attributes"])
+
+
 # --- Every drawn footprint --------------------------------------------------------------
 @pytest.mark.parametrize("mpn", sorted(drawn.BY_MPN))
 def test_every_symbol_pin_has_a_pad_and_no_pad_is_extra(mpn):
@@ -175,7 +215,7 @@ def test_repeated_pad_numbers_need_declaring():
 
 
 @pytest.mark.parametrize("board, refs", [("HVIN", {"L101", "L102"}),
-                                         ("CONV", {"U201", "U202", "R211"})])
+                                         ("CONV", {"U201", "U202", "R211", "F201"})])
 def test_the_drawn_parts_are_bound_without_the_library(board, refs):
     project = Project("t")
     project.add_board(board)

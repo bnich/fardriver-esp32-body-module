@@ -35,6 +35,7 @@ FOOTPRINT_FROM_MPN = {
     "EC7BW-110S05": None,           # no library device: generated from Cincon's drawing
     "7448022010": None,             # no library device: generated from Würth's drawing
     "NET-TIE": None,                # copper, generated
+    "0001.2504": None,              # the fuse: never on the PCB, a stand-in (drawn_footprints)
 }
 
 # ── Explicit tables, pad -> pin, typed from each datasheet ────────────────────
@@ -90,12 +91,6 @@ def pins_of(x):
     if isinstance(x, Connector):
         return tuple(cp.pin for cp in x.pins)
     return tuple(x.pins)
-
-
-def needs_footprint(x):
-    """False only for F201: the fuse sits in FH201A/B, and only the clips are
-    soldered."""
-    return not (isinstance(x, Part) and x.kind == "FUSE")
 
 
 def footprint_source(x):
