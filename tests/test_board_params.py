@@ -2,8 +2,9 @@
 building small designs whose answer can be worked out by hand.
 
 Every expectation below is arithmetic on the fixture's own heights plus the
-four stated parameters (PCB 1.6, clearance 1.0, tails 1.5, plate 3.0). None of
-them re-implements `layer_gaps`; each states the number a person would get.
+stated parameters (PCB 1.6, clearance 1.0, trimmed tails 1.5, plate 3.0 with
+flush screws, floor liner 0.5, floor boss 3.0). None of them re-implements
+`layer_gaps`; each states the number a person would get.
 """
 import math
 from dataclasses import replace
@@ -131,7 +132,41 @@ def test_a_bottom_side_part_deeper_than_everything_else_sets_the_gap():
 
 def test_a_bottom_side_part_on_the_bottom_board_lifts_it_off_the_floor():
     d = four_boards().with_part(part("C101", "HVIN", 9.0, side="bottom"))
-    assert gap(bp.stack_height(d), "FLOOR", "HVIN").gap_mm == pytest.approx(10.0)
+    # 0.5 liner + 9.0 part + 1.0 clearance
+    assert gap(bp.stack_height(d), "FLOOR", "HVIN").gap_mm == pytest.approx(10.5)
+
+
+# --- leads, the floor liner, the plate's screws (MX-7, HV-1) ------------------------
+def test_pins_too_stiff_to_trim_are_charged_at_the_drawing_length():
+    """The brick's pins are 5 ± 0.5: 5.5 - 1.6 = 3.9 under CONV, not 1.5."""
+    d = four_boards(22.0).replace_part("U201", lead_mm=5.5)
+    g = gap(bp.stack_height(d), "HVIN", "CONV")
+    assert (g.hang_mm, g.hang_ref) == (pytest.approx(3.9), "U201 pins")
+    assert g.gap_mm == pytest.approx(22.0 + 1.0 + 3.9)
+
+
+def test_a_connector_under_its_board_sends_its_pins_up_through_it():
+    """An upper inter-board half's pins come out on top of its board."""
+    d = four_boards()
+    d = replace(d, connectors=d.connectors + (replace(
+        conn("J311", "DRV", 2.5), side="bottom", lead_mm=6.1, leaves_box=False),))
+    g = gap(bp.stack_height(d), "DRV", "BRAIN")
+    assert (g.top_mm, g.top_ref) == (pytest.approx(7.0), "J301")   # 4.5 pins < 7.0
+    tall = d.replace_connector("J311", lead_mm=10.6)                 # 9.0 up
+    assert gap(bp.stack_height(tall), "DRV", "BRAIN").top_ref == "J311 pins"
+
+
+def test_84v_pins_stand_off_an_insulated_floor():
+    """HVIN's pins face the grounded metal floor through the liner."""
+    d = four_boards().replace_part("L101", lead_mm=6.0)              # 4.4 down
+    assert gap(bp.stack_height(d), "FLOOR", "HVIN").gap_mm == pytest.approx(
+        bp.FLOOR_LINER_T + 4.4 + 1.0)
+    assert bp.FLOOR_LINER_T > 0
+
+
+def test_the_plate_screws_sit_flush():
+    """ISO 10642 countersunk heads sink into the 3.0 mm plate: nothing over it."""
+    assert bp.PLATE_SCREW_HEAD <= bp.PLATE_T and bp.PLATE_HARDWARE_ABOVE == 0.0
 
 
 # --- the plate ---------------------------------------------------------------------

@@ -274,7 +274,8 @@ def test_q101_gate_drive_stays_inside_the_part_at_every_pack_voltage(w):
 
 def test_q105_is_driven_by_the_key_and_biases_off_without_it(d, w):
     en = w.net("Q105", "G")
-    key_tap = [cp.net for cp in d.connector("J102").pins if cp.net != "GND"]
+    key_tap = [cp.net for cp in d.connector("J101").pins
+               if cp.net and d.net(cp.net).domain == "84V" and cp.net != "HV_BPLUS"]
     assert len(key_tap) == 1
     assert key_tap[0] in w.walk(en, {"R"}), "Q105's gate is not fed from the key"
     assert w.between(en, "GND", {"R"}), "D14: nothing pulls Q105's gate to GND"
@@ -315,13 +316,14 @@ def test_the_module_only_taps_the_key_line_it_never_switches_it(d, w):
     assert [p.refdes for p in d.parts
             if p.kind == "PFET" and (p.v_max or 0) >= DOMAIN_VOLTS["84V"]] == ["Q101"], (
         "one 84 V P-FET: the module's own power switch")
-    ksw = [cp.net for cp in d.connector("J102").pins if cp.net != "GND"][0]
+    ksw = d.net_of("R112A", "1").name
     assert not w.parts_on(ksw, FETS), "a FET sits on the key line"
-    assert {cp.net for cp in d.connector("J102").pins} == {ksw, "GND"}
+    assert [c.refdes for c in w.connectors_on(ksw)] == ["J101"], (
+        "the key tap enters on the pack connector and goes nowhere else")
 
 
 def test_key_sense_reads_the_key_switch_output(d, w):
-    ksw = [cp.net for cp in d.connector("J102").pins if cp.net != "GND"][0]
+    ksw = d.net_of("R112A", "1").name
     assert ksw in w.walk("KEY_SENSE", {"R"})
     top = series_to(w, "KEY_SENSE", ksw)
     bottom = ohms(w.between("KEY_SENSE", "GND", {"R"})[0])
@@ -706,7 +708,7 @@ def test_the_module_has_its_reset_rc_and_a_recovery_path(d, w):
 def test_the_pin_map_obeys_the_silicon(d, w):
     by_gpio = {n.gpio: n for n in d.nets if n.gpio}
     adc1 = {f"GPIO{n}" for n in range(1, 11)}
-    for analog in ("KEY_SENSE", "V12_SENSE", "CS1", "CS2"):
+    for analog in ("KEY_SENSE_PIN", "V12_SENSE", "CS1", "CS2"):
         assert d.net(analog).gpio in adc1, f"{analog}: ADC2 dies with WiFi"
     for strap in ("GPIO0", "GPIO3", "GPIO45", "GPIO46", "GPIO43"):
         if strap in by_gpio:
@@ -775,13 +777,13 @@ def test_stack_is_2x25_and_carries_exactly_the_contracted_nets(d):
 
 def test_pwr_up_shares_the_load_current_over_three_contacts(d):
     ends = _interface(d, "PWR-UP")
-    assert {c.board for c in ends} == {"CONV", "DRV", "BRAIN"}
+    assert {c.board for c in ends} == {"CONV", "DRV"}
     for c in ends:
         nets = [cp.net for cp in c.pins]
         assert nets.count("V12") >= 3, "2.62 A: one fretted contact of two is 100 %"
         assert nets.count("GND") >= 4
         assert set(nets) == {"V12", "GND", "V5", "KEY_SENSE"}
-    assert ends[0].pins == ends[1].pins == ends[2].pins
+    assert ends[0].pins == ends[1].pins
 
 
 def test_hv_link_carries_both_converter_pairs_two_grounds_and_no_5v(d, w):
@@ -838,11 +840,12 @@ def swap_pins(design, refdes, a, b):
 
 
 def fewer_v12_contacts(design):
+    """Every V12 contact of PWR-UP but two becomes a ground."""
     out = design
     for c in _interface(design, "PWR-UP"):
-        first = next(cp for cp in c.pins if cp.net == "V12")
+        extra = [cp for cp in c.pins if cp.net == "V12"][2:]
         out = out.replace_connector(c.refdes, pins=tuple(
-            replace(cp, net="GND") if cp is first else cp for cp in c.pins))
+            replace(cp, net="GND") if cp in extra else cp for cp in c.pins))
     return out
 
 

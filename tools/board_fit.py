@@ -20,6 +20,9 @@ Three budgets, three plain answers:
             built, and says so -- the number is not explained away. What
             overrules it is a placed outline, not an argument.
   HEIGHT    `board_params.stack_height`, gap by gap, against the height there.
+  PLUGS     each board's harness headers end to end, against the edges of the
+            envelope whose wall is far enough away for a mated plug and the
+            bend of the wire leaving straight out of its back.
 
 ⚠️ Both are provisional until M18 is measured and the enclosure is chosen;
 the report says so on its first line for as long as that is true.
@@ -48,6 +51,8 @@ MOUNT_AREA = 4 * (2 * M3_INSET_MM) ** 2
 NEGLIGIBLE_BELOW_MM = 2.0
 
 SIDES = ("top", "bottom")
+#: Between two harness headers on one edge: their flange screws and a finger.
+HEADER_GAP = 1.0
 
 
 @dataclass(frozen=True)
@@ -73,12 +78,11 @@ class Side:
 
 
 def bodies(d: Design, board: str, side: str):
-    """[(refdes, w, l)] of everything with a footprint on that side. Connectors
-    have no side of their own and are counted on top."""
+    """[(refdes, w, l)] of everything with a footprint on that side."""
     out = [(p.refdes, *p.footprint_mm) for p in d.parts
            if p.board == board and p.side == side]
-    if side == "top":
-        out += [(c.refdes, *c.footprint_mm) for c in d.connectors if c.board == board]
+    out += [(c.refdes, *c.footprint_mm) for c in d.connectors
+            if c.board == board and c.side == side]
     return [(r, w, l) for r, w, l in out if w > 0 and l > 0]
 
 
@@ -112,6 +116,47 @@ def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
     return tuple(rows)
 
 
+@dataclass(frozen=True)
+class Edge:
+    board: str
+    headers: tuple[str, ...]
+    length_mm: float           # the harness headers end to end, HEADER_GAP apart
+    room_mm: float             # deepest mated plug's overhang + the wire's bend
+
+
+def edge_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Edge, ...]:
+    """Every board with harness headers: the edge they take and the room to
+    the wall their plugs need. An unfitted header still takes its edge."""
+    out = []
+    for board in order:
+        hs = [c for c in d.connectors if c.board == board and c.leaves_box]
+        if not hs:
+            continue
+        length = sum(c.footprint_mm[0] for c in hs) + HEADER_GAP * (len(hs) - 1)
+        room = max((c.overhang_mm for c in hs if not c.dnp), default=0.0) + bp.WIRE_BEND
+        out.append(Edge(board, tuple(c.refdes for c in hs), length, room))
+    return tuple(out)
+
+
+def edge_verdicts(d: Design) -> list[str]:
+    """A board whose plugs no wall of the envelope has room for. The walls'
+    allowances are provisional (M18, the enclosure), so this is a verdict
+    against an estimate until `envelope_is_binding()`."""
+    out = []
+    for e in edge_budget(d):
+        ends = 2 * bp.BOARD_W if bp.END_ALLOWANCE >= e.room_mm else 0.0
+        sides = 2 * bp.BOARD_L if bp.SIDE_CLEARANCE >= e.room_mm else 0.0
+        if e.length_mm <= ends + sides:
+            continue
+        out.append(
+            f"plugs: {e.board}'s {len(e.headers)} harness headers take "
+            f"{e.length_mm:.0f} mm of edge and need {e.room_mm:.1f} mm to the wall "
+            f"(the mated plug, then the wire's bend); the envelope leaves "
+            f"{bp.END_ALLOWANCE:g} mm at each end ({2 * bp.BOARD_W:.0f} mm of edge) "
+            f"and {bp.SIDE_CLEARANCE:g} mm at each side ({2 * bp.BOARD_L:.0f} mm)")
+    return out
+
+
 def unseen(d: Design, order=bp.STACK_ORDER) -> list[str]:
     """Bodies the area budget cannot see: no footprint, but not negligible."""
     out = [f"{c.refdes} ({c.name}) on {c.board}" for c in d.connectors
@@ -141,6 +186,8 @@ def problems(d: Design) -> list[str]:
     errs += [f"area: {what} has no footprint -- the area budget cannot see it"
              for what in unseen(d)]
     errs += bp.stack_height(d).problems
+    if bp.envelope_is_binding():
+        errs += edge_verdicts(d)
     return errs
 
 
@@ -212,8 +259,18 @@ def report(d: Design) -> str:
             out.append(f"  {'⭐' if starred else '  '} {board:6} {h:5.1f} mm  "
                        f"{what}: {' '.join(refs)}")
 
+    out.append(f"\nPLUGS   harness headers end to end, {HEADER_GAP:g} mm apart; room = "
+               f"the deepest mated plug + a {bp.WIRE_BEND:g} mm wire bend")
+    for e in edge_budget(d):
+        out.append(f"  {e.board:6} {e.length_mm:5.0f} mm of edge, {e.room_mm:4.1f} mm to "
+                   f"the wall   {' '.join(e.headers)}")
+    edges = [] if bp.envelope_is_binding() else edge_verdicts(d)
+
     errs = problems(d)
     out.append("")
+    for verdict in edges:
+        out.append(f"⚠️  PROVISIONAL -- {verdict}. Binding the moment M18 and the "
+                   f"enclosure are settled")
     for verdict in stack.envelope_verdicts:
         out.append(f"⚠️  PROVISIONAL -- {verdict}")
         if stack.total_mm > bp.CAVITY_H:
@@ -224,8 +281,8 @@ def report(d: Design) -> str:
     if errs:
         out.append(f"⛔ FAIL -- {len(errs)} problem(s)")
         out += [f"  - {e}" for e in errs]
-    elif stack.envelope_verdicts:
-        out.append("⚠️  NOT A PASS -- the stack overruns the ESTIMATED envelope. It is "
+    elif stack.envelope_verdicts or edges:
+        out.append("⚠️  NOT A PASS -- the design overruns the ESTIMATED envelope. It is "
                    "not a failure only because the envelope is not yet a fact.")
     else:
         out.append("✅ PASS" + (f" -- provisional: {len(stack.load_bearing)} unconfirmed "
@@ -241,7 +298,7 @@ def main(argv=None, d: Design | None = None) -> int:
     if problems(d):
         return 1
     # 2 = over the ESTIMATED envelope: not a failure yet, and never a pass.
-    return 2 if bp.stack_height(d).envelope_verdicts else 0
+    return 2 if bp.stack_height(d).envelope_verdicts or edge_verdicts(d) else 0
 
 
 if __name__ == "__main__":

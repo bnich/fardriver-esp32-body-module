@@ -28,7 +28,7 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY
+  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
 must look at but a gate must not fail on (HT-W*, BOX-W*).
@@ -659,12 +659,59 @@ def _adc1(ix: _Ix, gpios: dict[str, set[int]]) -> list[str]:
                 analog[name] = f"reads the current-sense output {hit[0]} {_via(path)}"
                 break
     for name, why in sorted(analog.items()):
-        gs = gpios.get(name, set())
+        gs = gpios.get(name, set()) or {
+            g for other in _one_resistor_away(ix, name) for g in gpios.get(other, ())}
         if not gs:
             errs.append(f"GPIO-ADC1: {name!r} {why} but lands on no MCU pin.")
         for g in sorted(gs - GPIO_ADC1):
             errs.append(f"GPIO-ADC1: {name!r} {why} but is on GPIO{g}. ADC2 "
                         f"dies with WiFi -- use GPIO1-10.")
+    return errs
+
+
+def _one_resistor_away(ix: _Ix, name: str) -> set[str]:
+    """Nets joined to `name` by one fitted two-pin resistor: an ADC net may
+    meet its pin through its series resistor."""
+    out = set()
+    for ref, pin in ix.nets[name].pins:
+        p = ix.parts.get(ref)
+        if p is not None and p.kind == "R" and not p.dnp and len(p.pins) == 2:
+            other = p.pins[1] if pin == p.pins[0] else p.pins[0]
+            out.update(ix.pin_nets.get((ref, other), ()))
+    out.discard(name)
+    return out
+
+
+# ── BUS-ORDER: an inter-board power bus survives being mated wrong ───────────
+#: Nets at ground potential: a converter's -Vin joins GND through its choke's
+#: second winding only, so it is a return, not a rail.
+_RETURN_NETS = frozenset({"GND", "HV_C1_N", "HV_C2_N"})
+
+
+def bus_order(d: Design) -> list[str]:
+    """Every interface but STACK carries a supply. Mated reversed, or with its
+    upper half mirrored under its board, a palindromic pin order lands every
+    net on itself. Mated one contact off, each contact meets its neighbour, so
+    two different nets may sit side by side only if one is a return: a shift
+    can short a rail, never feed 84 V or 12 V into a logic input. (STACK is
+    2 x 25 with every even contact GND: reversed, every signal meets ground.)"""
+    errs = []
+    seen = set()
+    for c in d.connectors:
+        if not c.interface or c.interface == "STACK" or c.interface in seen:
+            continue
+        seen.add(c.interface)
+        nets = [cp.net for cp in c.pins]
+        if nets != nets[::-1]:
+            errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) reads "
+                        f"{'/'.join(n or '-' for n in nets)}: not the same from "
+                        f"both ends, so a reversed or mirrored half lands nets on "
+                        f"each other")
+        for i, (a, b) in enumerate(zip(nets, nets[1:]), start=1):
+            if a != b and not ({a, b} & _RETURN_NETS):
+                errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) puts {a or '-'} "
+                            f"beside {b or '-'} on contacts {i}/{i + 1}: mated one "
+                            f"contact off, one lands on the other")
     return errs
 
 
@@ -989,7 +1036,7 @@ def _bodies(d: Design):
     for p in d.parts:
         yield p.refdes, p.mpn, p.board, p.side, p.height_mm, p.height_confirmed, False
     for c in d.connectors:
-        yield (c.refdes, c.name, c.board, "top", c.height_mm, c.height_confirmed,
+        yield (c.refdes, c.name, c.board, c.side, c.height_mm, c.height_confirmed,
                c.interface is not None)
 
 
@@ -1030,6 +1077,7 @@ ALL_RULES = (
     mcp23017_bit7,
     polarity,
     heights,
+    bus_order,
 )
 
 
@@ -1059,7 +1107,9 @@ def _near_limit(d: Design) -> dict[str, str]:
             out[ref] = "its mated height sets the spacing between two boards"
             continue
         top, top_ref = tallest[(board, side)]
-        if top - h <= UNCONFIRMED_MARGIN_MM:
+        if top_ref == ref:
+            out[ref] = f"the tallest body on the {side} of {board}, so it sets that gap"
+        elif top - h <= UNCONFIRMED_MARGIN_MM:
             out[ref] = (f"within {UNCONFIRMED_MARGIN_MM:g} mm of the tallest body "
                         f"on the {side} of {board} ({top_ref}, {top:g} mm), which "
                         f"sets that gap")

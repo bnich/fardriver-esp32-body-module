@@ -107,7 +107,9 @@ GPIOS = {
 
 
 def _good() -> Design:
-    hv_link = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE")
+    # Power buses read the same from both ends, a return beside every rail.
+    hv_link = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE", "GND", "HV_C1_N", "HV_C1_P")
+    pwr = ("V12", "GND", "KEY_SENSE", "GND", "V12")
     stack = ("HORN_CMD", "GND", "IN05_BRAKE_L", "GND", "V3P3", "GND", "CS1",
              "GND", "LGT_LOW")
     connectors = (
@@ -118,12 +120,13 @@ def _good() -> Design:
               pitch_mm=5.08, interface="HV-LINK"),
         # CONV
         _conn("J201", "CONV", "HV-LINK", hv_link, leaves_box=False,
-              pitch_mm=5.08, interface="HV-LINK"),
-        _conn("J202", "CONV", "PWR-UP", ("V12", "GND", "KEY_SENSE"),
-              leaves_box=False, interface="PWR-UP"),
+              pitch_mm=5.08, interface="HV-LINK", side="bottom"),
+        _conn("J202", "CONV", "PWR-UP", pwr, leaves_box=False, interface="PWR-UP"),
         # DRV
-        _conn("J307", "DRV", "PWR-UP", ("V12", "GND"), leaves_box=False,
-              interface="PWR-UP"),
+        _conn("J311", "DRV", "PWR-UP", pwr, leaves_box=False, interface="PWR-UP",
+              side="bottom"),
+        _conn("J307", "DRV", "PWR-BRAIN", pwr, leaves_box=False,
+              interface="PWR-BRAIN"),
         _conn("J308", "DRV", "STACK", stack, leaves_box=False, interface="STACK"),
         _conn("J301", "DRV", "Headlight", ("HL_LOW", "GND")),
         _conn("J302", "DRV", "Stop lamp", ("STOP_OUT", "GND")),
@@ -131,9 +134,10 @@ def _good() -> Design:
         _conn("J306", "DRV", "Brake lever", ("LEVER_L", "GND")),
         _conn("J305", "DRV", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True),
         # BRAIN
-        _conn("J406", "BRAIN", "STACK", stack, leaves_box=False, interface="STACK"),
-        _conn("J407", "BRAIN", "PWR-UP", ("V12", "GND", "KEY_SENSE"),
-              leaves_box=False, interface="PWR-UP"),
+        _conn("J406", "BRAIN", "STACK", stack, leaves_box=False, interface="STACK",
+              side="bottom"),
+        _conn("J407", "BRAIN", "PWR-BRAIN", pwr, leaves_box=False,
+              interface="PWR-BRAIN", side="bottom"),
         _conn("J401", "BRAIN", "USB-C", ("USB_DM", "USB_DP", "GND")),
         _conn("J402", "BRAIN", "Left pod", ("SW_WIRE", "POD2_WIRE", "GND")),
         _conn("J408", "BRAIN", "Service header",
@@ -335,7 +339,7 @@ RULE_IDS = {
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
-    "D10", "SUPPLY",
+    "D10", "SUPPLY", "BUS-ORDER",
 }
 
 
@@ -561,6 +565,36 @@ def test_adc1_fires_when_an_analog_net_is_on_no_mcu_pin():
     """Audit 6b."""
     bad = GOOD.without_pin("U401", "IO1").replace_net("KEY_SENSE", gpio=None)
     assert any("KEY_SENSE" in e for e in fired(bad, "GPIO-ADC1"))
+
+
+def _behind_resistors(d, n):
+    """KEY_SENSE meets IO1 through `n` series resistors, the pin net last."""
+    d = d.without_pin("U401", "IO1").replace_net("KEY_SENSE", gpio=None)
+    prev = "KEY_SENSE"
+    for i in range(n):
+        ref, net = f"R49{i}", f"KS_{i}"
+        d = d.with_part(_r(ref, "BRAIN", "1k"))
+        d = add_pin(d, prev, ref, "1")
+        pins = ((ref, "2"),) + ((("U401", "IO1"),) if i == n - 1 else ())
+        d = replace(d, nets=d.nets + (Net(net, pins, "3V3",
+                                          gpio="GPIO1" if i == n - 1 else None),))
+        prev = net
+    return d
+
+
+def test_adc1_follows_an_analog_net_through_its_series_resistor():
+    """KEY_SENSE meets the ADC pin through R476: still read by the ADC, so
+    still held to ADC1 -- and a move to ADC2 behind the resistor still fires."""
+    ok = _behind_resistors(GOOD, 1)
+    assert not fired(ok, "GPIO-ADC1")
+    moved = ok.without_pin("U401", "IO1")
+    moved = add_pin(moved.replace_net("KS_0", gpio="GPIO11"), "KS_0", "U401", "IO11")
+    assert any("GPIO11" in e for e in fired(moved, "GPIO-ADC1"))
+
+
+def test_adc1_does_not_look_further_than_one_resistor():
+    bad = _behind_resistors(GOOD, 2)
+    assert any("KEY_SENSE" in e and "no MCU pin" in e for e in fired(bad, "GPIO-ADC1"))
 
 
 def test_adc1_is_not_fooled_by_renaming_the_current_sense_net():
@@ -1045,6 +1079,43 @@ def test_ht_says_so_when_there_is_no_geometry_to_check_against(monkeypatch):
 
 
 # ── warnings: reported, never trusted, never a gate failure ──────────────────
+# ── BUS-ORDER ────────────────────────────────────────────────────────────────
+def _rebus(d, iface, nets):
+    out = d
+    for c in d.connectors:
+        if c.interface == iface:
+            out = out.replace_connector(c.refdes, pins=tuple(
+                ConnPin(str(i + 1), n) for i, n in enumerate(nets)))
+    return out
+
+
+def test_bus_order_fires_on_a_bus_that_reads_differently_reversed():
+    """The old HV-LINK order: reversed, HV_C1_P meets KEY_SENSE."""
+    bad = _rebus(GOOD, "HV-LINK", ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE"))
+    assert any("HV-LINK" in e and "both ends" in e for e in fired(bad, "BUS-ORDER"))
+
+
+def test_bus_order_fires_on_a_rail_beside_a_signal():
+    """Palindromic, but one contact off puts V12 on KEY_SENSE."""
+    bad = _rebus(GOOD, "PWR-UP", ("GND", "V12", "KEY_SENSE", "V12", "GND"))
+    errs = fired(bad, "BUS-ORDER")
+    assert any("V12 beside KEY_SENSE" in e for e in errs)
+    assert not any("both ends" in e for e in errs)
+
+
+def test_bus_order_lets_a_converter_return_sit_beside_its_feed():
+    """HV_C1_N joins GND through the choke's winding: a shift that lands the
+    feed on it shorts the input, the same as landing it on GND."""
+    assert not fired(GOOD, "BUS-ORDER")
+    assert "HV_C1_N" in [cp.net for cp in GOOD.connector("J104").pins]
+
+
+def test_bus_order_leaves_the_stack_to_its_ground_row():
+    stack = GOOD.connector("J308")
+    odd = _rebus(GOOD, "STACK", tuple(cp.net for cp in stack.pins)[::-1][:-1] + ("GND",))
+    assert not fired(odd, "BUS-ORDER")
+
+
 def _warned(d, wid, ref=None):
     return [w for w in rules.warnings(d)
             if w.startswith(wid + ":") and (ref is None or f" {ref} " in f" {w}")]

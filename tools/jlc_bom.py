@@ -71,10 +71,10 @@ def hand_list(d: Design) -> str:
 
 def plug_list(d: Design) -> str:
     """The loose screw plugs: ordered with the boards, not placed, wired by
-    the owner.  One line per plug part."""
+    the owner.  One line per plug part.  An unfitted header needs no plug."""
     by_plug = {}
     for c in d.connectors:
-        if c.plug:
+        if c.plug and not c.dnp:
             by_plug.setdefault(c.plug, []).append(c)
     lines = []
     for plug, cs in sorted(by_plug.items(), key=lambda kv: _refkey(kv[1][0].refdes)):

@@ -22,7 +22,7 @@ from typing import Literal
 
 Board = Literal["HVIN", "CONV", "DRV", "BRAIN"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
-Interface = Literal["HV-LINK", "PWR-UP", "STACK"]
+Interface = Literal["HV-LINK", "PWR-UP", "PWR-BRAIN", "STACK"]
 Side = Literal["top", "bottom"]
 Assembly = Literal["", "jlc", "hand"]
 Kind = Literal[
@@ -68,6 +68,10 @@ class Part:
     #: "jlc" when JLC assembles it from `lcsc`; "hand" when the owner buys it
     #: and solders it, because LCSC has nothing that meets its constraints.
     assembly: Assembly = ""
+    #: A through-hole part's leads below its seating plane, the drawing's
+    #: maximum, when they are too short or stiff to trim (a brick's pins, a
+    #: choke's). None: long leads, trimmed to board_params.TAIL when soldered.
+    lead_mm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,14 @@ class Connector:
     #: Footprint laid out, part not fitted: JLC skips it, and the owner fits it
     #: when it is wanted.
     dnp: bool = False
+    #: The face of its board it stands on.  The upper half of an inter-board
+    #: pair hangs under its board, facing the half below.
+    side: Side = "top"
+    #: As on Part: its pins below the seating plane, the drawing's maximum.
+    lead_mm: float | None = None
+    #: How far its mated plug stands out past the board edge, from the plug's
+    #: drawing; the wire leaves straight out of the back of it.
+    overhang_mm: float = 0.0
 
 
 @dataclass(frozen=True)

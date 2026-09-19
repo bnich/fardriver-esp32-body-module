@@ -45,11 +45,14 @@ def _nc_ok(mpn: str, pin: str) -> bool:
     return False
 
 
-#: The boards each inter-board interface physically joins.
+#: The two neighbouring boards each inter-board interface joins, lower first.
+#: One interface is ONE crossing: a bus that must reach a third board does so
+#: on a second interface, with parts of its own.
 INTERFACE_BOARDS = {
-    "HV-LINK": {"HVIN", "CONV"},
-    "PWR-UP": {"CONV", "DRV", "BRAIN"},
-    "STACK": {"DRV", "BRAIN"},
+    "HV-LINK": ("HVIN", "CONV"),
+    "PWR-UP": ("CONV", "DRV"),
+    "PWR-BRAIN": ("DRV", "BRAIN"),
+    "STACK": ("DRV", "BRAIN"),
 }
 
 
@@ -146,7 +149,7 @@ def check(d: Design) -> list[str]:
         bridged: set[str] = set()
         for c in d.connectors:
             if c.interface and c.refdes in refs:
-                bridged |= INTERFACE_BOARDS[c.interface] & {c.board}
+                bridged |= set(INTERFACE_BOARDS.get(c.interface, ())) & {c.board}
         for b in sorted(boards - bridged):
             errs.append(f"interface: {net.name!r} has pins on {b} but no "
                         f"inter-board contact on {b} carries it -- the net "
@@ -172,6 +175,42 @@ def check(d: Design) -> list[str]:
     for g, n in gpios.items():
         if n > 1:
             errs.append(f"gpio: {g} is assigned to {n} nets")
+
+    # -- every interface: two halves that mate, one on each board --------------
+    # The pin tables alone cannot show a missing half: PWR-UP once ran from
+    # CONV to DRV with no part between them, and J407.1 could be set to GND
+    # against J307.1's V12 without a complaint.
+    for c in d.connectors:
+        if c.interface and c.interface not in INTERFACE_BOARDS:
+            errs.append(f"interface: {c.refdes} names {c.interface!r}, which "
+                        f"joins no known pair of boards")
+    for iface, (lower, upper) in INTERFACE_BOARDS.items():
+        halves = [c for c in d.connectors if c.interface == iface]
+        lo = [c for c in halves if c.board == lower]
+        up = [c for c in halves if c.board == upper]
+        stray = [c.refdes for c in halves if c.board not in (lower, upper)]
+        if stray:
+            errs.append(f"interface: {iface} joins {lower} and {upper}, but "
+                        f"{', '.join(stray)} sits elsewhere")
+        if not halves:
+            continue
+        if len(lo) != 1 or len(up) != 1:
+            errs.append(f"interface: {iface} needs one half on {lower} and one "
+                        f"on {upper}; found {[c.refdes for c in lo]} and "
+                        f"{[c.refdes for c in up]}")
+            continue
+        a, b = lo[0], up[0]
+        if (a.side, b.side) != ("top", "bottom"):
+            errs.append(f"interface: {a.refdes} must stand on top of {lower} and "
+                        f"{b.refdes} hang under {upper} to face each other; "
+                        f"they are {a.side} and {b.side}")
+        ta = {cp.pin: cp.net for cp in a.pins}
+        tb = {cp.pin: cp.net for cp in b.pins}
+        for pin in sorted(set(ta) | set(tb), key=lambda x: (len(x), x)):
+            if ta.get(pin) != tb.get(pin):
+                errs.append(f"interface: {a.refdes}.{pin} carries "
+                            f"{ta.get(pin)!r} but its mate {b.refdes}.{pin} "
+                            f"carries {tb.get(pin)!r}")
 
     # -- heights must be numbers ------------------------------------------------
     for p in d.parts:

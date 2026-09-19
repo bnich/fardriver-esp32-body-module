@@ -25,7 +25,7 @@ def _fitted(d):
 
 #: The inter-board connectors wait on the owner's choice of family
 #: (docs/esp32-needed-from-owner.md item 6). When it is made, empty this set.
-AWAITING_OWNER = {"J104", "J201", "J202", "J307", "J407", "J308", "J406"}
+AWAITING_OWNER = {"J104", "J201", "J202", "J311", "J307", "J407", "J308", "J406"}
 
 
 def test_every_fitted_item_has_a_way_onto_the_board(d):
@@ -56,14 +56,16 @@ def test_one_value_one_part(d):
 
 
 # --- every wire into the box lands on a pluggable screw terminal ---------------------
-#: Kangnex LOCKING pluggable terminal blocks (the RM header's flanges carry the nuts
-#: the KM plug's two screws draw into), (pitch mm, positions) -> (the right-angle
+#: LOCKING pluggable terminal blocks, Kangnex at 3.81 and 5.08 mm and Kefa at
+#: 7.62 mm (the RM header's flanges carry the nuts the KM plug's two screws draw into), (pitch mm, positions) -> (the right-angle
 #: header JLC places, the loose screw plug the owner wires).  Typed from LCSC.
 TERMINALS = {
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
     (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
+    (3.81, 6): ("C160126", "C157470"),
     (3.81, 7): ("C489994", "C489981"), (3.81, 9): ("C489995", "C384932"),
-    (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
+    (5.08, 3): ("C49238", "C49239"), (5.08, 4): ("C122715", "C122716"),
+    (7.62, 6): ("C441304", "C441154"),
 }
 
 
@@ -74,18 +76,22 @@ def test_every_wire_into_the_box_lands_on_a_pluggable_screw_terminal(d):
     cannot block a screwdriver.  The plug screws to the header's flanges:
     retention under vibration, as the plan's vibration rule asks."""
     harness = [c for c in d.connectors if c.leaves_box]
-    assert len(harness) == 14
+    assert len(harness) == 13
     for c in harness:
         assert TERMINALS.get((c.pitch_mm, len(c.pins))) == (c.lcsc, c.plug), c.refdes
         assert c.assembly == "jlc" and c.height_confirmed, c.refdes
 
 
-def test_the_84_v_terminals_are_the_5_08_mm_family(d):
-    """The 3.81 mm family is rated 160 V IEC; the 5.08 mm one 320 V, and BD-4
-    asks 5.08 mm of any connector carrying pack voltage."""
+#: A pitch per job, so a plug of one job cannot seat in a header of another:
+#: pack voltage alone at 7.62 mm (400 V IEC); the brake and kill exits alone at
+#: 5.08 mm; lamps, pods and serial at 3.81 mm (160 V IEC).
+FAMILY = {"J101": 7.62, "J306": 5.08, "J309": 5.08}
+
+
+def test_each_job_has_its_own_terminal_pitch(d):
     for c in d.connectors:
         if c.leaves_box:
-            assert c.pitch_mm == (5.08 if c.refdes in ("J101", "J102") else 3.81), c.refdes
+            assert c.pitch_mm == FAMILY.get(c.refdes, 3.81), c.refdes
 
 
 def test_nothing_but_a_harness_terminal_has_a_plug(d):

@@ -46,7 +46,8 @@ OK = Design(
         Net("LEVER", (("R2", "2"), ("J306", "1"), ("D1", "K")), domain="12V"),
     ),
     connectors=(
-        _conn("J406", "BRAIN", "STACK", STACK, leaves_box=False, interface="STACK"),
+        _conn("J406", "BRAIN", "STACK", STACK, leaves_box=False, interface="STACK",
+              side="bottom"),
         _conn("J308", "DRV", "STACK", STACK, leaves_box=False, interface="STACK"),
         _conn("J306", "DRV", "Lever", ("LEVER", "GND", "")),
     ),
@@ -190,6 +191,38 @@ def test_a_connector_of_the_wrong_interface_bridges_nothing():
     bad = OK.replace_connector("J308", interface="HV-LINK")
     errs = problems(bad, "interface")
     assert any("'SIG'" in e and "DRV" in e for e in errs)
+
+
+# ── an interface is two halves that mate ─────────────────────────────────────
+def test_a_crossing_with_a_half_missing():
+    """PWR-UP once ran CONV -> DRV -> BRAIN with no part between CONV and DRV."""
+    bad = replace(OK, connectors=tuple(c for c in OK.connectors if c.refdes != "J406"))
+    errs = " ".join(problems(bad, "interface"))
+    assert "STACK needs one half on DRV and one on BRAIN" in errs
+
+
+def test_a_half_whose_contact_disagrees_with_its_mate():
+    """J407.1 set to GND against J307.1's V12 once passed every check."""
+    j = OK.connector("J406")
+    bad = OK.replace_connector("J406", pins=(ConnPin("1", "GND"),) + j.pins[1:])
+    errs = problems(bad, "interface")
+    assert any("J308.1 carries 'SIG' but its mate J406.1 carries 'GND'" in e for e in errs)
+
+
+def test_a_third_half_on_a_board_the_interface_does_not_join():
+    extra = _conn("J999", "HVIN", "STACK", STACK, leaves_box=False, interface="STACK")
+    bad = replace(OK, connectors=OK.connectors + (extra,))
+    assert any("J999 sits elsewhere" in e for e in problems(bad, "interface"))
+
+
+def test_the_upper_half_must_hang_under_its_board():
+    bad = OK.replace_connector("J406", side="top")
+    assert any("J406 hang under BRAIN" in e for e in problems(bad, "interface"))
+
+
+def test_an_interface_nobody_defined():
+    bad = OK.replace_connector("J306", interface="PWR-SIDEWAYS")
+    assert any("J306 names 'PWR-SIDEWAYS'" in e for e in problems(bad, "interface"))
 
 
 def test_cross_board_net_that_names_no_interface():

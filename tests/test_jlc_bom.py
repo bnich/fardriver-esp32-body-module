@@ -42,13 +42,16 @@ def test_hand_list_names_every_hand_soldered_item():
 
 def test_the_loose_plugs_are_listed_by_part_with_their_count():
     """The screw plugs are not placed: they are ordered with the boards and
-    wired by the owner.  One line per plug part, with every terminal it fits."""
+    wired by the owner.  One line per plug part, with every terminal it fits.
+    A parked terminal has no header fitted, so no plug is bought for it."""
     d = netlist.current()
     lines = jlc_bom.plug_list(d).splitlines()
     by_part = {}
     for c in d.connectors:
-        if c.plug:
+        if c.plug and not c.dnp:
             by_part.setdefault(c.plug, []).append(c.refdes)
+    parked = [c.refdes for c in d.connectors if c.parked]
+    assert parked and not any(r in jlc_bom.plug_list(d) for r in parked)
     assert len(lines) == len(by_part)
     for plug, refs in by_part.items():
         line = next(l for l in lines if l.startswith(plug))

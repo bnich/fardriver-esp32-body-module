@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from . import padmap
@@ -95,7 +96,17 @@ def generated(thing):
         rows = 2 if thing.interface == "STACK" else 1
         cols = n // rows
         title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
-        return title, footprints.header(n, thing.pitch_mm, rows=rows), frozenset()
+        pads = footprints.header(n, thing.pitch_mm, rows=rows)
+        if thing.side == "bottom":
+            # The upper half of a pair hangs under its board, and the editor
+            # mirrors a part placed there.  Drawn mirrored here, the flip puts
+            # every pad back over its mate's (a 180° turn after the flip covers
+            # an editor that mirrors the other axis).  Drawn as the lower half
+            # is, no turn can align a dual row: its rows swap, and STACK's
+            # signals land on the ground row.
+            pads = tuple(replace(p, x_mm=-p.x_mm) for p in pads)
+            title += "-UNDER"
+        return title, pads, frozenset()
     return None
 
 

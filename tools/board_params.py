@@ -60,18 +60,38 @@ PCB_T = 1.6
 #: tolerance and vibration never make them touch. ⚠️ Mechanical only -- it is
 #: not a creepage or insulation figure.
 CLEARANCE = 1.0
-#: How far a trimmed through-hole lead stands out of the underside of its
-#: board (IPC-A-610 allows 1.5 mm). ⚠️ Untrimmed module pins are longer: trim
-#: them or raise this. Left out, tails touch the plate or the part below.
+#: How far a TRIMMED through-hole lead stands out of the far side of its board
+#: (IPC-A-610 allows 1.5 mm): the default for a part with long leads, which
+#: the build trims. A part whose pins are too short or stiff to trim states
+#: its drawing's `lead_mm`, and its tail is that less the PCB. Left out, tails
+#: touch the plate or the part below.
 TAIL = 1.5
 #: Least space under the bottom board. The derivation never goes below
-#: tails + clearance; this is the enclosure's boss height. PROVISIONAL.
+#: liner + tails + clearance; this is the enclosure's boss height. PROVISIONAL.
 FLOOR_STANDOFF_MIN = 3.0
+#: An insulating sheet on the metal floor under HVIN, whose underside carries
+#: 84 V pins (J101, the chokes). The box is bonded to ground, so without it
+#: one bent tail, a stray strand or a flexed board is a pack short. A 0.43 mm
+#: polypropylene sheet (Formex GK-17 class) is the kind meant. PROVISIONAL:
+#: chosen with the enclosure.
+FLOOR_LINER_T = 0.5
 #: BD-9: the alloy plate in the gap above `PLATE_ABOVE` -- heatsink for the
 #: brick it bolts down onto, and the barrier between the 84 V and logic halves.
 PLATE_ABOVE = "CONV"
 PLATE_T = 3.0
 PLATE_SEATS_ON = "U201"
+#: The plate bolts to U201's M3 baseplate threads with countersunk ISO 10642
+#: M3 screws, whose heads (k = 1.86 mm max) sink into the plate's countersinks.
+#: A pan or button head (1.65-2.4 mm) would stand proud into the gap under DRV,
+#: where DRV's pins already hang.
+PLATE_SCREW_HEAD = 1.86
+PLATE_HARDWARE_ABOVE = max(0.0, PLATE_SCREW_HEAD - PLATE_T)
+
+# --- harness plugs at the walls (MX-3) ---------------------------------------
+#: A harness wire leaves straight out of the back of its screw plug and has to
+#: turn along the wall. ~3x the OD of a 1.5 mm² wire; tighter fatigues the
+#: conductor where the plug clamps it. PROVISIONAL, with the cable exit (M18).
+WIRE_BEND = 10.0
 
 FLOOR_NAME, LID_NAME = "FLOOR", "LID"
 
@@ -84,6 +104,30 @@ _THROUGH_HOLE = re.compile(
 
 def is_through_hole(package: str) -> bool:
     return bool(_THROUGH_HOLE.search(package))
+
+
+def tail_mm(x) -> float:
+    """How far a through-hole item's leads stand out of the far side of its
+    board: its drawing's pins less the PCB, or TAIL where the build trims them.
+    A connector is always through-hole."""
+    if isinstance(x, Part) and not is_through_hole(x.package):
+        return 0.0
+    lead = getattr(x, "lead_mm", None)
+    return TAIL if lead is None else max(0.0, lead - PCB_T)
+
+
+def _tails(d: Design, board: str, side: str) -> tuple[float, str]:
+    """(mm, what) of the longest tails pointing out of `board`'s other face
+    from items mounted on `side`."""
+    items = [x for x in (*d.parts, *d.connectors)
+             if x.board == board and getattr(x, "side", "top") == side]
+    best = max(((tail_mm(x), x) for x in items), default=(0.0, None),
+               key=lambda t: t[0])
+    mm, x = best
+    if not mm:
+        return 0.0, "-"
+    return mm, ("solder tails" if getattr(x, "lead_mm", None) is None
+                else f"{x.refdes} pins")
 
 
 @dataclass(frozen=True)
@@ -247,32 +291,36 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
         tops = [(p.height_mm, p.refdes) for p in d.parts
                 if p.board == below and p.side == "top" and not _bad_height(p.height_mm)]
         tops += [(c.height_mm, c.refdes) for c in d.connectors
-                 if c.board == below and c.refdes not in paired
+                 if c.board == below and c.side == "top" and c.refdes not in paired
                  and not _bad_height(c.height_mm)]
+        if below in order:                   # pins of parts mounted underneath
+            up_tails, up_ref = _tails(d, below, "bottom")
+            if up_tails:
+                tops.append((up_tails, up_ref))
         top_mm, top_ref = _tallest(tops)
 
         hangs = [(p.height_mm, p.refdes) for p in d.parts
                  if p.board == above and p.side == "bottom"
                  and not _bad_height(p.height_mm)]
-        tails = TAIL if above in order and (
-            any(c.board == above for c in d.connectors)
-            or any(p.board == above and is_through_hole(p.package) for p in d.parts)
-        ) else 0.0
+        hangs += [(c.height_mm, c.refdes) for c in d.connectors
+                  if c.board == above and c.side == "bottom" and c.refdes not in paired
+                  and not _bad_height(c.height_mm)]
+        tails, tails_ref = _tails(d, above, "top") if above in order else (0.0, "-")
         part_mm, part_ref = _tallest(hangs)
-        hang_mm, hang_ref = (part_mm, part_ref) if part_mm >= tails else (tails, "solder tails")
+        hang_mm, hang_ref = (part_mm, part_ref) if part_mm >= tails else (tails, tails_ref)
         if hang_mm == 0.0:
             hang_ref = "-"
 
         plate_mm = PLATE_T if below == PLATE_ABOVE and above in order else 0.0
         if below == FLOOR_NAME:
-            need = max(FLOOR_STANDOFF_MIN, hang_mm + CLEARANCE)
+            need = max(FLOOR_STANDOFF_MIN, FLOOR_LINER_T + hang_mm + CLEARANCE)
         elif above == LID_NAME:
             need = top_mm + CLEARANCE
         elif plate_mm:
             seat = [h for h, r in tops if r == PLATE_SEATS_ON]
             others = [h + CLEARANCE for h, r in tops if r != PLATE_SEATS_ON]
             under_plate = max(seat + others, default=0.0)
-            need = under_plate + plate_mm + CLEARANCE + hang_mm
+            need = under_plate + plate_mm + PLATE_HARDWARE_ABOVE + CLEARANCE + hang_mm
         else:
             need = max(top_mm + CLEARANCE + tails, part_mm + CLEARANCE)
 

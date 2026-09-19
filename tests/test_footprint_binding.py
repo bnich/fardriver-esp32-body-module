@@ -27,7 +27,7 @@ def _v2(pads):
 
 
 SOT23 = _v2([_pad("e1", "1", -40), _pad("e2", "2", 40), _pad("e3", "3", 0)])
-TB3 = _v2([_pad(f"e{i}", str(i), i * 200) for i in range(1, 4)])
+TB6 = _v2([_pad(f"e{i}", str(i), i * 300) for i in range(1, 7)])
 
 
 def _docs(sheet):
@@ -66,11 +66,11 @@ def test_a_fets_footprint_pads_become_gate_source_drain():
 
 
 def test_the_b_plus_terminal_binds_its_library_footprint_pad_for_pin():
-    """J101 is a 3-position 5.08 mm screw terminal: B+, B−, B−."""
+    """J101 is a 6-position 7.62 mm screw terminal: B+, empty, B−, B−, empty, KSW."""
     code = netlist.current().connector("J101").lcsc
-    design, sheet, bs = _emit("HVIN", {code: ("TB3", TB3)})
-    fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "TB3")
-    assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == ["1", "2", "3"]
+    design, sheet, bs = _emit("HVIN", {code: ("TB6", TB6)})
+    fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "TB6")
+    assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == [str(i) for i in range(1, 7)]
     assert "J101" in bs.footprints_bound
 
 
@@ -94,7 +94,7 @@ def test_without_a_library_only_generated_footprints_are_bound():
     project.add_board("DRV")
     sheet = project.boards[0].schematic.sheets[0]
     bs = emit_board(design, "DRV", sheet)
-    assert set(bs.footprints_bound) == {"J307", "J308"}
+    assert set(bs.footprints_bound) == {"J307", "J308", "J311"}
     assert "Q301" in bs.footprints_unbound
 
 

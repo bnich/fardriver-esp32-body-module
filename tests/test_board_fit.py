@@ -21,10 +21,12 @@ def part(ref, board, height, footprint=(2.0, 1.25), *, side="top", confirmed=Tru
                 footprint, side=side)
 
 
-def conn(ref, board, height, footprint=(20.0, 9.0), *, confirmed=True, interface=None):
+def conn(ref, board, height, footprint=(20.0, 9.0), *, confirmed=True, interface=None,
+         leaves_box=None, overhang=0.0):
     return Connector(ref, board, f"{ref} harness", (ConnPin("1", ""),), height,
-                     confirmed, footprint, leaves_box=interface is None,
-                     interface=interface)
+                     confirmed, footprint,
+                     leaves_box=interface is None if leaves_box is None else leaves_box,
+                     interface=interface, overhang_mm=overhang)
 
 
 def with_connectors(design, *more):
@@ -32,12 +34,15 @@ def with_connectors(design, *more):
 
 
 def good() -> Design:
-    """Closes on every budget: 61.6 mm of 64, sparse boards."""
+    """Closes on every budget: 61.6 mm of 64, sparse boards. Its two 7.0 mm
+    connectors are internal: no harness plug fits the envelope's walls as
+    estimated (see the PLUGS tests)."""
     return Design(
         parts=(part("L101", "HVIN", 14.0, (22.0, 14.0), package="THT"),
                part("U201", "CONV", 12.7, (58.3, 37.2), package="brick"),
                part("U401", "BRAIN", 3.1, (25.5, 18.0), package="module")),
-        connectors=(conn("J301", "DRV", 7.0), conn("J401", "BRAIN", 7.0)))
+        connectors=(conn("J301", "DRV", 7.0, leaves_box=False),
+                    conn("J401", "BRAIN", 7.0, leaves_box=False)))
 
 
 def run(capsys, design):
@@ -103,6 +108,38 @@ def test_a_bottom_side_part_taller_than_the_gap_below_it_fails(capsys):
     assert code == 1
     assert "C450 hangs 12.0 mm under BRAIN" in out
     assert "J308+J406" in out and "11.0" in out
+
+
+# --- plugs at the walls (MX-3) ------------------------------------------------------
+def test_the_edge_a_board_s_headers_take_by_hand():
+    """Two 20 mm headers 1 mm apart; room = the 9.6 mm plug + the 10 mm bend."""
+    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6),
+                        conn("J303", "DRV", 7.0, overhang=0.0))
+    (e,) = bf.edge_budget(d)
+    assert (e.board, e.headers) == ("DRV", ("J302", "J303"))
+    assert (e.length_mm, e.room_mm) == (pytest.approx(41.0), pytest.approx(19.6))
+
+
+def test_a_plug_no_wall_has_room_for_is_never_printed_as_a_pass(capsys):
+    """The walls leave 4 mm at each end and 1 mm at each side: a mated plug
+    stands 9.6 mm proud and its wire must bend after it."""
+    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    code, out = run(capsys, d)
+    assert code == 2 and "NOT A PASS" in out and "✅ PASS" not in out
+    assert "DRV's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
+
+
+def test_a_plug_no_wall_has_room_for_fails_once_the_envelope_is_a_fact(capsys, binding_envelope):
+    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    code, out = run(capsys, d)
+    assert code == 1 and "plugs: DRV" in out
+
+
+def test_walls_with_room_let_the_plugs_through(capsys, monkeypatch):
+    from tools import board_params as bp
+    monkeypatch.setattr(bp, "END_ALLOWANCE", 20.0)
+    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    assert bf.edge_verdicts(d) == [] and run(capsys, d)[0] == 0
 
 
 def test_an_unknown_height_fails_instead_of_vanishing(capsys):
