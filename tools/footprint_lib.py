@@ -74,21 +74,28 @@ def open_library():
 
 
 def generated(thing):
-    """(title, pads) for a footprint generated here rather than taken from the
-    library, or None when there is no generator for `thing` yet.
+    """(title, pads, shared pad numbers) for a footprint generated here rather
+    than taken from the library, or None when there is no generator for
+    `thing` yet.
 
-    The inter-board connectors: their family is the owner's open decision
-    (docs/esp32-needed-from-owner.md item 6), but every family on the list
-    sits on the 2.54 mm grid -- the family sets the mated height, not the
-    holes -- so the land pattern does not wait for it."""
+    - The parts with no library device, drawn from their datasheets
+      (`drawn_footprints`).
+    - The inter-board connectors: their family is the owner's open decision
+      (docs/esp32-needed-from-owner.md item 6), but every family on the list
+      sits on the 2.54 mm grid -- the family sets the mated height, not the
+      holes -- so the land pattern does not wait for it."""
+    from . import drawn_footprints
     from .eprj3 import footprints
-    from .model import Connector
+    from .model import Connector, Part
+    if isinstance(thing, Part) and thing.mpn in drawn_footprints.BY_MPN:
+        d = drawn_footprints.BY_MPN[thing.mpn]
+        return d.title, d.pads, d.shared
     if isinstance(thing, Connector) and thing.interface is not None and not thing.lcsc:
         n = len(thing.pins)
         rows = 2 if thing.interface == "STACK" else 1
         cols = n // rows
         title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
-        return title, footprints.header(n, thing.pitch_mm, rows=rows)
+        return title, footprints.header(n, thing.pitch_mm, rows=rows), frozenset()
     return None
 
 

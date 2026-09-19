@@ -87,11 +87,14 @@ def _pad_payload(pad, z):
 
 
 def footprint_records(uuid, title, pads, *, client, epoch_ms,
-                      edit_version=EDIT_VERSION):
-    """The `FOOTPRINT` document for `pads`.  Pad numbers must be unique."""
+                      edit_version=EDIT_VERSION, shared=frozenset()):
+    """The `FOOTPRINT` document for `pads`.  Pad numbers must be unique,
+    except those in `shared`: several pads for one pin, which EasyEDA joins by
+    number (a module's two mounting holes)."""
     nums = [p.num for p in pads]
-    if len(set(nums)) != len(nums):
-        raise ValueError(f"{title}: pad numbers repeat: {nums}")
+    repeated = {n for n in nums if nums.count(n) > 1} - set(shared)
+    if repeated:
+        raise ValueError(f"{title}: pad numbers repeat: {sorted(repeated)}")
     head = serialize_record(
         {"type": "DOCHEAD"},
         payload={"docType": "FOOTPRINT", "client": client, "uuid": uuid,

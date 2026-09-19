@@ -53,6 +53,10 @@ python3 -m tools.jlc_bom       # the JLC BOM, and what the owner hand-solders
 - ⛔ **A pad map is typed from the datasheet and checked against the library symbol**
   (`tools/padmap.py`, `tests/test_padmap.py`). Never infer one from a footprint's geometry. A
   wrong map wires a FET backwards on a board that passes every other check.
+- **A part with no library device gets a land pattern drawn from its manufacturer's drawing**
+  (`tools/drawn_footprints.py`). A footprint is the **top view, Y up**. ⛔ A drawing of the pin face
+  or a **bottom view** must be mirrored, or the module's pins land left for right. The tests type
+  each drawing as the vendor draws it and check the mirror (`tests/test_drawn_footprints.py`).
 - **Resistors are rated parts.** A resistor's `v_max` is its chosen part's WORKING voltage, never
   the overload figure: 0603 is 75 V, 0805 150 V, 1206 200 V. `VR-UNDER` checks it against the node.
 

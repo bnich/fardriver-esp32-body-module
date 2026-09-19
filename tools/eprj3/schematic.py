@@ -319,7 +319,7 @@ class Page:
         return placed
 
     # -- output ----------------------------------------------------------
-    def bind_footprint(self, symbol, title, pads, device=None):
+    def bind_footprint(self, symbol, title, pads, device=None, shared=frozenset()):
         """Give a device (default: `symbol`'s own) a FOOTPRINT document built
         from `pads`.
 
@@ -335,7 +335,7 @@ class Page:
         uuid = self.footprint_uuid(device)
         self._footprints[device.key] = (uuid, footprints.footprint_records(
             uuid, title, pads, client=self.client, epoch_ms=self.epoch_ms,
-            edit_version=self.edit_version))
+            edit_version=self.edit_version, shared=shared))
 
     def footprint_uuid(self, device):
         return _uid("footprint", self.sheet_uuid,
@@ -594,8 +594,9 @@ def _bind_library_footprint(page, item, thing, library, bound, unbound):
             unbound.append(item.ref)
             return
         if not page.has_footprint(device):
-            page.bind_footprint(item.symbol, footprint_lib.allegro_safe(gen[0]), gen[1],
-                                device=device)
+            title, pads, shared = gen
+            page.bind_footprint(item.symbol, footprint_lib.allegro_safe(title), pads,
+                                device=device, shared=shared)
         bound.append(item.ref)
         return
     if library is None:

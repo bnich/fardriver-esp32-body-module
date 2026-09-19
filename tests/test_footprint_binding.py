@@ -68,7 +68,7 @@ def test_a_fets_footprint_pads_become_gate_source_drain():
 
 def test_the_vh_header_loses_its_second_post():
     design, sheet, bs = _emit("HVIN", {"C157996": ("VH4", VH4)})
-    fp = next(d for d in _docs(sheet)["FOOTPRINT"])
+    fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "VH4")
     assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == ["1", "3", "4"]
     assert "J101" in bs.footprints_bound
 
