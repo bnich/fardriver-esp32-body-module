@@ -75,9 +75,9 @@ def open_library():
 
 
 def generated(thing):
-    """(title, pads, shared pad numbers) for a footprint generated here rather
-    than taken from the library, or None when there is no generator for
-    `thing` yet.
+    """(title, pads, shared pad numbers, outline) for a footprint generated
+    here rather than taken from the library, or None when there is no
+    generator for `thing` yet.
 
     - The parts with no library device, drawn from their datasheets
       (`drawn_footprints`).
@@ -90,7 +90,7 @@ def generated(thing):
     from .model import Connector, Part
     if isinstance(thing, Part) and thing.mpn in drawn_footprints.BY_MPN:
         d = drawn_footprints.BY_MPN[thing.mpn]
-        return d.title, d.pads, d.shared
+        return d.title, d.pads, d.shared, d.outline
     if isinstance(thing, Connector) and thing.interface is not None and not thing.lcsc:
         n = len(thing.pins)
         rows = 2 if thing.interface == "STACK" else 1
@@ -106,7 +106,7 @@ def generated(thing):
             # signals land on the ground row.
             pads = tuple(replace(p, x_mm=-p.x_mm) for p in pads)
             title += "-UNDER"
-        return title, pads, frozenset()
+        return title, pads, frozenset(), ()
     return None
 
 

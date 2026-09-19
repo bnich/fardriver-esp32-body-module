@@ -25,7 +25,10 @@ from .model import Connector, Part
 #: hand-soldered parts, and LCSC parts EasyEDA's library has no device for.
 #: None means the footprint is generated here, from the part's datasheet.
 FOOTPRINT_FROM_MPN = {
-    "VY2472M49Y5US6": "C1620119",   # the same Vishay part on another reel: same leads
+    "VY2472M49Y5US6": None,         # drawn FLAT: 7.5 mm leads (C1620119's library land is 10 mm)
+    "EKXJ221ELL221MM25S": None,     # drawn LYING, with its body outline
+    "PA25V680M8x12": None,          # drawn LYING, with its body outline
+    "01110501Z": None,              # both clips in one drawn footprint, 17.8 mm apart
     "CN150B110-12/CO": None,        # no library device: generated from TDK's drawing
     "EC7BW-110S05": None,           # no library device: generated from Cincon's drawing
     "7448022010": None,             # no library device: generated from Würth's drawing
@@ -125,8 +128,6 @@ def pad_map(x):
         return {"1": "G", "2": "S", "3": "D"}
     if x.kind == "TVS" and all(re.fullmatch(r"[AK]\d", p) for p in pins):
         return {p[1:]: p for p in pins}      # SMS05/15: pads 1/3/4/6 K, 2/5 A
-    if x.kind == "FUSECLIP" and pins == ("1",):
-        return {"1": "1", "2": "1"}          # both legs of the one clip
     if footprint_source(x) is None:
         return {p: p for p in pins + tuple(x.nc)}   # generated: pads ARE the pins
     if pins == tuple(str(i + 1) for i in range(len(pins))):

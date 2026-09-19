@@ -350,7 +350,7 @@ _CONV_PARTS = (
                 f"≤ 1.5 mm below CONV before soldering"),
     Part("C201", "EKXJ221ELL221MM25S", "radial can 18 × 25 mm, lying down",
          "CONV", "C", ("+", "-"), 18.5, height_confirmed=True,
-         footprint_mm=(18.5, 26.5), v_max=220.0, side="bottom",
+         footprint_mm=(18.5, 29.6), v_max=220.0, side="bottom",
          value="220uF 220V",
          source=f"'C1': TDK's input bulk across HV_C1_P / HV_C1_N at U201's "
                 f"terminals ({_DS_TDK} p.7: ≥100 µF, KXJ class). UNDERSIDE, "
@@ -358,40 +358,43 @@ _CONV_PARTS = (
                 f"max = 18.5 mm, L' = L + 1.5 max = 26.5 mm. BOM E8"),
     Part("C202", "EKXJ221ELL221MM25S", "radial can 18 × 25 mm, lying down",
          "CONV", "C", ("+", "-"), 18.5, height_confirmed=True,
-         footprint_mm=(18.5, 26.5), v_max=220.0, side="bottom",
+         footprint_mm=(18.5, 29.6), v_max=220.0, side="bottom",
          value="220uF 220V",
          source=f"'C2': hold-up across U202's ±Vin, BEHIND D201 and F201. "
                 f"⚠️ Not interchangeable with C1: on the common node ride-out "
                 f"collapses from ~237 ms to ~20 ms (plan §3.2.2). UNDERSIDE "
                 f"(BD-14). {_DS_KXJ} p.1: 18.5 mm. BOM E8"),
     Part("C203", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
-         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 16.5),
+         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C1_P to BASEPLATE at U201's terminals ({_DS_TDK} p.8 "
                 f"C2/C3: 4700 pF). {_DS_VY2} p.2: D max 12.5, T max 5.0 mm — "
                 f"FLAT it is 5.0 mm where upright it is 15.5-16.5; p.1 "
-                f"1000 VDC, IEC 60384-14 Y2. BOM E9"),
+                f"1000 VDC, IEC 60384-14 Y2; leads ø0.6, 7.5 mm apart (the "
+                f"'…TV7' reel). BOM E9"),
     Part("C204", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
-         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 16.5),
+         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C1_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
     Part("C205", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
-         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 16.5),
+         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"U202 +Vin (HV_C2_HOLD) to BASEPLATE. {_DS_VY2} p.2: T max "
                 f"5.0 mm. BOM E9"),
     Part("C206", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
-         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 16.5),
+         ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C2_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
     Part("C207", "PA25V680M8x12", "radial polymer 8 × 12.5 mm, lying down",
-         "CONV", "C", ("+", "-"), 8.5, footprint_mm=(8.5, 15.0), v_max=25.0,
+         "CONV", "C", ("+", "-"), 8.5, height_confirmed=True,
+         footprint_mm=(8.5, 16.5), v_max=25.0,
          value="680uF 25V polymer, 20 mΩ",
          source=f"U201 +V to -V. {_DS_TDK} p.9 Table 6-1: '12,15V: 25V 680μF "
                 f"(Solid Cap.)', 'For stable operation' (Chemi-Con PSG class). "
                 f"JIERR PA25V680M8x12: solid polymer, 20 mΩ, 4.1 A ripple, "
-                f"-55…105 °C. ⬜ 8 mm can lying down is ~8.5 mm, not read "
-                f"off a drawing; under the 12.7 mm brick either way"),
+                f"-55…105 °C. JIERR PA series (jierr_pa25v680m8x12.pdf) p.2: "
+                f"φD + 0.5 max = 8.5 mm, L + α = 13.5 mm, F 3.5, ø0.6 leads. "
+                f"LYING DOWN, under the 12.7 mm brick"),
     _c("C208", "CONV", "2.2uF", 25.0,
        f"U201 +V to -V. {_DS_TDK} p.8 C6: 2.2 µF ceramic against output spike "
        f"noise", pkg="1206"),
@@ -411,17 +414,18 @@ _CONV_PARTS = (
                 f"surge; it carries <= 0.62 A (the whole module at 60 V) "
                 f"behind F201. The DO-41 1N4007 (BOM E10) is the breadboard's. "
                 f"⬜ SMA envelope 2.44 mm, not read off a drawing"),
-    Part("FH201A", "01110501Z", "PCB fuse clip, 5 × 20", "CONV",
-         "FUSECLIP", ("1",), 7.1, footprint_mm=(4.8, 3.8),
-         source="F201's input-end clip. ⛔ Not the in-hand Schurter FAC "
-                "0031.3803: that is a 47.5 mm VERTICAL holder. The DC "
-                "interrupting duty is the fuse's, not the clip's. Littelfuse "
-                "01110501Z (111 501): 5 mm clip with fuse stop, 10 A; catalogue "
-                "body 7.1 mm tall, 4.8 × 3.8 mm, rows 17.8 mm apart for 5 × 20. "
-                "⬜ seated height to confirm on a real part"),
-    Part("FH201B", "01110501Z", "PCB fuse clip, 5 × 20", "CONV",
-         "FUSECLIP", ("1",), 7.1, footprint_mm=(4.8, 3.8),
-         source="F201's output-end clip, as FH201A"),
+    Part("FH201", "01110501Z", "5 × 20 fuse holder: two PCB clips", "CONV",
+         "FUSECLIP", ("1", "2"), 7.1, footprint_mm=(22.6, 5.2),
+         value="2 × Littelfuse 01110501Z",
+         source="F201's holder: BOTH clips in one footprint, their 17.8 mm "
+                "fixed in copper. Pin 1 is the input-end clip, pin 2 the "
+                "output-end; the clips do not conduct to each other, the fuse "
+                "does. ⛔ Not the in-hand Schurter FAC 0031.3803: that is a "
+                "47.5 mm VERTICAL holder. The DC interrupting duty is the "
+                "fuse's, not the clip's. Littelfuse 01110501Z (111 501): 5 mm "
+                "clip with fuse stop, 10 A; catalogue body 7.1 mm tall, 4.8 × "
+                "3.8 mm, rows 17.8 mm apart for 5 × 20. ⬜ seated height to "
+                "confirm on a real part"),
     Part("F201", "0001.2504", "5 × 20 ceramic, in clips FH201A/B", "CONV",
          "FUSE", ("1", "2"), 8.0, footprint_mm=(5.2, 20.0), v_max=300.0,
          value="1A T-lag 300VDC",
@@ -1076,9 +1080,9 @@ _NETS_84V = (
         domain="84V", interface="HV-LINK",
         source="DC-DC #2 -Vin, its OWN net: it joins GND only through L102's "
                "3-2 winding"),
-    Net("HV_C2_HOLD_IN", _p("D201.K FH201A.1 F201.1"), domain="84V",
+    Net("HV_C2_HOLD_IN", _p("D201.K FH201.1 F201.1"), domain="84V",
         source="Between the hold-up diode and the fuse"),
-    Net("HV_C2_HOLD", _p("FH201B.1 F201.2 C202.+ U202.+Vin C205.1"),
+    Net("HV_C2_HOLD", _p("FH201.2 F201.2 C202.+ U202.+Vin C205.1"),
         domain="84V",
         source="⚠️ THE HOLD-UP NODE: C2 lives here and C1 does not "
                "(plan §3.2.2). 237 ms of ride-out depends on it"),
@@ -1895,17 +1899,30 @@ _FAB_BY_MPN = {
                          "version B; never the A version, C485918"),
     "ESP32-S3-WROOM-1U-N8": ("C2980297", "Espressif ESP32-S3-WROOM-1U-N8", "Extended",
                              "-40…+85 °C; never the 65 °C N8R8 / N16R8"),
-    "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", "Extended",
-                           "the part itself; through-hole"),
-    "PA25V680M8x12": ("C46550437", "JIERR PA25V680M8x12", "Extended",
-                      "680 µF 25 V polymer, 20 mΩ; through-hole"),
-    "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", "Extended",
-                       "the same series, X1/Y2: reel, kinked 7.5 mm leads"),
     "CGA9N1C0G2J683JT0Y0S": ("C2175506", "TDK CGA9N1C0G2J683JT0Y0S", "Extended",
                              "C0G, 630 V, ±5 %"),
-    "0001.2504": ("C1665055", "Schurter 0001.2504", "Extended", "the part itself"),
-    "01110501Z": ("C151075", "Littelfuse 01110501Z", "Extended", "5 mm clip with fuse stop"),
 }
+
+#: Parts ordered from LCSC with the boards but fitted by the owner, because
+#: JLC would fit them wrong: through-hole parts that must LIE on the board
+#: (the height budget counts them flat; JLC inserts upright), and the fuse,
+#: which clips into its holder. mpn -> (LCSC, maker part, per refdes, why).
+_LOOSE_BY_MPN = {
+    "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", 1,
+                           "bent over and bonded LYING on CONV's underside"),
+    "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", 1,
+                       "X1/Y2, kinked 7.5 mm leads on reel: bent FLAT"),
+    "PA25V680M8x12": ("C46550437", "JIERR PA25V680M8x12", 1,
+                      "680 µF 25 V polymer, 20 mΩ: bent over LYING"),
+    "0001.2504": ("C1665055", "Schurter 0001.2504", 1, "clipped into FH201"),
+    "01110501Z": ("C151075", "Littelfuse 01110501Z", 2,
+                  "two clips, soldered into FH201's footprint"),
+}
+
+def loose_per(mpn: str) -> int:
+    """How many of a loose part each refdes takes (FH201: two clips)."""
+    return _LOOSE_BY_MPN[mpn][2]
+
 
 #: Parts LCSC cannot supply to their constraints: the owner buys them and
 #: solders them by hand (owner, 2026-09-18). mpn -> why.
@@ -1932,12 +1949,18 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
             lcsc, maker, cls, check = fab
             p = replace(p, lcsc=lcsc, assembly="jlc",
                         source=f"{p.source}. LCSC {lcsc}: {maker}, JLC {cls}; {check}")
+        elif p.mpn in _LOOSE_BY_MPN:
+            used.add(p.mpn)
+            lcsc, maker, per, why = _LOOSE_BY_MPN[p.mpn]
+            p = replace(p, lcsc=lcsc, assembly="loose",
+                        source=f"{p.source}. LOOSE, LCSC {lcsc} × {per}: {maker}, "
+                               f"ordered with the boards and fitted by the owner; {why}")
         elif p.mpn in _HAND_BY_MPN:
             used.add(p.mpn)
             p = replace(p, assembly="hand",
                         source=f"{p.source}. HAND-SOLDERED: {_HAND_BY_MPN[p.mpn]}")
         out.append(p)
-    stale = (set(_FAB_BY_MPN) | set(_HAND_BY_MPN)) - used
+    stale = (set(_FAB_BY_MPN) | set(_LOOSE_BY_MPN) | set(_HAND_BY_MPN)) - used
     if stale:
         raise ValueError(f"_FAB_BY_MPN entries no part uses: {sorted(stale)}")
     return tuple(out)

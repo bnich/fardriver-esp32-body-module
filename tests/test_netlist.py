@@ -25,7 +25,7 @@ from tools.netlist import BOARDS
 #: everything is "connected" through ground, and that proves nothing.
 RAILS = {"GND", "BASEPLATE", "V12", "V5", "V3P3"}
 FETS = {"NFET", "PFET"}
-DC_PATH = {"R", "L", "CMCHOKE", "FUSE", "FUSECLIP"}   # conducts DC, both ways
+DC_PATH = {"R", "L", "CMCHOKE", "FUSE"}   # conducts DC, both ways
 
 
 class Walker:

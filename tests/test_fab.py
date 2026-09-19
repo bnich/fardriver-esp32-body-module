@@ -35,11 +35,14 @@ def test_every_fitted_item_has_a_way_onto_the_board(d):
         f"chosen since, so drop from AWAITING_OWNER: {sorted(AWAITING_OWNER - missing)}")
 
 
-def test_lcsc_numbers_are_well_formed_and_say_jlc(d):
+def test_lcsc_numbers_are_well_formed_and_say_who_fits_them(d):
+    """An LCSC part is JLC's to place, or 'loose': ordered with the boards and
+    fitted by the owner."""
     for x in _fitted(d):
         if x.lcsc:
             assert LCSC.match(x.lcsc), f"{x.refdes}: {x.lcsc!r}"
-            assert x.assembly == "jlc", f"{x.refdes} has {x.lcsc} but assembly {x.assembly!r}"
+            assert x.assembly in ("jlc", "loose"), (
+                f"{x.refdes} has {x.lcsc} but assembly {x.assembly!r}")
         if x.assembly == "hand":
             assert not x.lcsc, f"{x.refdes} is hand-soldered and names {x.lcsc}"
             assert "HAND" in x.source.upper(), f"{x.refdes}: say why it is hand-soldered"

@@ -244,11 +244,17 @@ def _two_pin(kind, pins):
         body_x = 10
         graphics = [_rect(-10, -3, 10, 3), _poly((-10, 0), (10, 0))]
         body = (-10, -3, 10, 3)
-    elif kind == "FUSECLIP":
+    elif kind == "FUSECLIP" and right is None:
         # One end of a fuse holder: a clip open toward the fuse it holds.
         body_x = 10
         graphics = [_poly((4, -4), (-10, -4), (-10, 4), (4, 4))]
         body = (-10, -4, 4, 4)
+    elif kind == "FUSECLIP":
+        # A whole holder: two clips open toward each other, no fuse between.
+        body_x = 10
+        graphics = [_poly((-4, -4), (-10, -4), (-10, 4), (-4, 4)),
+                    _poly((4, -4), (10, -4), (10, 4), (4, 4))]
+        body = (-10, -4, 10, 4)
     elif kind == "L":
         body_x = 10
         graphics = [_arc((-10, 0), (-5, -5), (0, 0)),

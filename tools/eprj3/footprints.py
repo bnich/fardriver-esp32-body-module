@@ -6,7 +6,10 @@ footprint by the uuid of a `FOOTPRINT` document in the same project, so a
 schematic cannot be netlist-checked until every device names one.
 
 A footprint here is DOCHEAD, META, CANVAS and one PAD per pin, the record set of
-an editor-saved SMD footprint minus its silkscreen and layer table.  The pads
+an editor-saved SMD footprint minus its silkscreen and layer table.  One with a
+body `outline` (a part that lies on the board beside its holes) also carries
+the layer table rows it draws on, ACTIVE_LAYER, and one silkscreen POLY per
+shape, in the order and form `v2footprint.convert` writes a library footprint.  The pads
 are a land pattern for layout, NOT a checked one: `two_pad` is a generic chip
 outline so the netlist can be read.  Real land patterns come from the parts'
 LCSC footprints, bound in EasyEDA Pro.
@@ -22,11 +25,42 @@ from .units import mm_to_pcb
 #: The PCB top copper layer id, and the all-copper-layers id a drilled pad
 #: sits on (the id the library's through-hole footprints use).
 TOP_LAYER = 1
+TOP_SILK = 3
 MULTI_LAYER = 12
+#: Silkscreen stroke for a body outline: JLC's minimum line width is 0.15 mm.
+OUTLINE_STROKE_MM = 0.2
+#: The layer-table rows a footprint with an outline declares, exactly as
+#: `v2footprint.convert` writes them from an LCSC footprint.
+_LAYER_ROWS = (
+    (TOP_LAYER, "TOP", "Top Layer", "#FF0000", "#7F0000"),
+    (TOP_SILK, "TOP_SILK", "Top Silkscreen Layer", "#FFCC00", "#7F6600"),
+    (MULTI_LAYER, "MULTI", "Multi-Layer", "#C0C0C0", "#606060"),
+)
 #: A 2.54 mm pin header's land: 1.0 mm drill, 1.7 mm pad -- the common
 #: pattern for 0.64 mm square posts, whatever the header family.
 HEADER_HOLE_MM = 1.0
 HEADER_PAD_MM = 1.7
+
+
+@dataclass(frozen=True)
+class Outline:
+    """One silkscreen shape, in mm: ("CIRCLE", cx, cy, r) or a closed polygon
+    [(x, y), ...]."""
+    shape: tuple
+
+    def path(self):
+        if self.shape and self.shape[0] == "CIRCLE":
+            _, cx, cy, r = self.shape
+            return ["CIRCLE", _u(cx), _u(cy), _u(r)]
+        pts = list(self.shape) + [self.shape[0]]
+        out = [_u(pts[0][0]), _u(pts[0][1]), "L"]
+        for x, y in pts[1:]:
+            out += [_u(x), _u(y)]
+        return out
+
+
+def _u(mm):
+    return round(mm_to_pcb(mm), 4)
 
 
 @dataclass(frozen=True)
@@ -87,10 +121,10 @@ def _pad_payload(pad, z):
 
 
 def footprint_records(uuid, title, pads, *, client, epoch_ms,
-                      edit_version=EDIT_VERSION, shared=frozenset()):
+                      edit_version=EDIT_VERSION, shared=frozenset(), outline=()):
     """The `FOOTPRINT` document for `pads`.  Pad numbers must be unique,
     except those in `shared`: several pads for one pin, which EasyEDA joins by
-    number (a module's two mounting holes)."""
+    number (a module's two mounting holes).  `outline`: silkscreen shapes."""
     nums = [p.num for p in pads]
     repeated = {n for n in nums if nums.count(n) > 1} - set(shared)
     if repeated:
@@ -101,13 +135,25 @@ def footprint_records(uuid, title, pads, *, client, epoch_ms,
                  "updateTime": epoch_ms, "version": str(epoch_ms),
                  "editVersion": edit_version, "user": {}})
     body = [("META", "META", {"title": title, "description": "", "tags": [],
-                              "source": ""}),
-            ("CANVAS", "CANVAS", {"originX": 0, "originY": 0, "unit": "mm",
-                                  "gridXSize": 0.1, "gridYSize": 0.1,
-                                  "gridType": "NONE", "multiGridType": "NONE",
-                                  "highlightValue": 0.5})]
+                              "source": ""})]
+    if outline:
+        body += [("LAYER", f'["LAYER",{lid}]', {
+            "layerType": ltype, "layerName": name, "use": True, "show": True,
+            "locked": False, "activeColor": active, "activateTransparency": 1,
+            "inactiveColor": inactive, "inactiveTransparency": 0.5})
+            for lid, ltype, name, active, inactive in _LAYER_ROWS]
+        body += [("ACTIVE_LAYER", "ACTIVE_LAYER", {"layerId": TOP_LAYER})]
+    body += [("CANVAS", "CANVAS", {"originX": 0, "originY": 0, "unit": "mm",
+                                   "gridXSize": 0.1, "gridYSize": 0.1,
+                                   "gridType": "NONE", "multiGridType": "NONE",
+                                   "highlightValue": 0.5})]
     body += [("PAD", f"e{n}", _pad_payload(p, n))
              for n, p in enumerate(pads, start=1)]
+    body += [("POLY", f"e{n}", {
+        "groupId": 0, "netName": "", "layerId": TOP_SILK,
+        "width": _u(OUTLINE_STROKE_MM), "path": o.path(), "locked": False,
+        "zIndex": n, "polyType": "NORMAL"})
+        for n, o in enumerate(outline, start=len(pads) + 1)]
     return [head] + [serialize_record({"type": t, "ticket": n, "id": i},
                                       payload=pl)
                      for n, (t, i, pl) in enumerate(body, start=1)]

@@ -24,7 +24,7 @@ Board = Literal["HVIN", "CONV", "DRV", "BRAIN"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
 Interface = Literal["HV-LINK", "PWR-UP", "PWR-BRAIN", "STACK"]
 Side = Literal["top", "bottom"]
-Assembly = Literal["", "jlc", "hand"]
+Assembly = Literal["", "jlc", "hand", "loose"]
 Kind = Literal[
     "R", "C", "L", "CMCHOKE", "D", "ZENER", "TVS", "FUSE", "FUSECLIP",
     "NFET", "PFET", "IC", "MODULE", "CONVERTER", "MECH",
@@ -66,7 +66,9 @@ class Part:
     #: The LCSC part JLC places (`C` + digits), or "" when none is chosen.
     lcsc: str = ""
     #: "jlc" when JLC assembles it from `lcsc`; "hand" when the owner buys it
-    #: and solders it, because LCSC has nothing that meets its constraints.
+    #: and solders it, because LCSC has nothing that meets its constraints;
+    #: "loose" when it is ordered from LCSC with the boards but fitted by the
+    #: owner (a part formed to lie flat, a fuse that clips in).
     assembly: Assembly = ""
     #: A through-hole part's leads below its seating plane, the drawing's
     #: maximum, when they are too short or stiff to trim (a brick's pins, a

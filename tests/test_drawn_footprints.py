@@ -71,18 +71,14 @@ def test_the_tdk_brick_is_the_mirror_of_its_pin_face_drawing():
     assert centres(drawn.BY_MPN["CN150B110-12/CO"]) == mirrored(TDK_PIN_FACE)
 
 
-def test_the_tdk_brick_holes_fit_its_pins_and_the_m3_screws():
-    """Note C: output pins ø1.5; note D: input and signal pins ø1.0.  The M3
-    holes take the screw of TDK's standard mounting (manual Fig. 8-1a), and
-    the pad seats its plain washer: that contact is what puts BASEPLATE on
-    the net."""
-    fp = drawn.BY_MPN["CN150B110-12/CO"]
-    for p in fp.pads:
-        lead = {"-V": 1.5, "+V": 1.5, "BASEPLATE": 3.0}.get(p.num, 1.0)
-        assert p.hole_mm is not None and p.hole_mm >= lead + 0.3, p
-        assert p.w_mm - p.hole_mm >= 1.0, p           # 0.5 mm annular ring
-    for p in (p for p in fp.pads if p.num == "BASEPLATE"):
-        assert 3.2 <= p.hole_mm <= 3.4 and p.w_mm >= 7.0
+def test_the_tdk_brick_takes_tdks_own_holes_and_lands():
+    """Manual p.24: input / signal pins (ø1.0) hole 1.5, land 2.5; output pins
+    (ø1.5) hole 2.0, land 3.5; the M3 mounting holes (FG) hole 3.5, land 7.0,
+    which seats the washer that puts BASEPLATE on the net."""
+    want = {"-V": (2.0, 3.5), "+V": (2.0, 3.5), "BASEPLATE": (3.5, 7.0)}
+    for p in drawn.BY_MPN["CN150B110-12/CO"].pads:
+        assert (p.hole_mm, p.w_mm, p.h_mm) == (*want.get(p.num, (1.5, 2.5)),
+                                               want.get(p.num, (1.5, 2.5))[1]), p
 
 
 # --- Cincon EC7BW-110: datasheet V15 p.7, BOTTOM VIEW, inches ---------------------------
@@ -175,12 +171,26 @@ def test_every_symbol_pin_has_a_pad_and_no_pad_is_extra(mpn):
     assert repeated == set(fp.shared)
 
 
+#: Pads a part's own datasheet joins: TDK p.17 straps +S to +V and -S to -V
+#: at the brick, so TDK's p.24 lands may sit 0.81 mm apart there.
+STRAPPED = {"CN150B110-12/CO": {frozenset({"+V", "+S"}), frozenset({"-V", "-S"})}}
+
+
 @pytest.mark.parametrize("mpn", sorted(set(drawn.BY_MPN) - {"NET-TIE"}))
 def test_no_two_pads_touch(mpn):
     pads = drawn.BY_MPN[mpn].pads
     for i, a in enumerate(pads):
         for b in pads[i + 1:]:
+            if a.num == b.num or frozenset({a.num, b.num}) in STRAPPED.get(mpn, ()):
+                assert edge_gap(a, b) > 0, (mpn, a.num, b.num)
+                continue
             assert edge_gap(a, b) >= 1.0, (mpn, a.num, b.num, edge_gap(a, b))
+
+
+def test_the_strapped_pads_really_share_a_net():
+    d = netlist.current()
+    for pair in STRAPPED["CN150B110-12/CO"]:
+        assert len({d.net_of("U201", pin).name for pin in pair}) == 1, pair
 
 
 @pytest.mark.parametrize("mpn", ["CN150B110-12/CO", "EC7BW-110S05"])
@@ -223,3 +233,67 @@ def test_the_drawn_parts_are_bound_without_the_library(board, refs):
     bs = emit_board(netlist.current(), board, sheet)
     assert refs <= set(bs.footprints_bound)
     assert not refs & set(bs.footprints_unbound)
+
+
+# --- Parts that lie on the board, and the fuse holder ------------------------------------
+def _outline_bounds(fp):
+    xs, ys = [], []
+    for o in fp.outline:
+        if o.shape[0] == "CIRCLE":
+            _, cx, cy, r = o.shape
+            xs += [cx - r, cx + r]
+            ys += [cy - r, cy + r]
+        else:
+            xs += [x for x, _ in o.shape]
+            ys += [y for _, y in o.shape]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+@pytest.mark.parametrize("mpn,pitch,lead,body", [
+    # Vishay doc 28535 p.2: the '…TV7' reel's leads are 7.5 mm apart, ø0.6 ± 0.05,
+    # disc D 12.5 max. C1620119's library land put them 10 mm apart.
+    ("VY2472M49Y5US6", 7.5, 0.65, (12.5, 12.5)),
+    # Chemi-Con KXJ p.1, φ18: F 7.5, φd 0.8; φD' 18.5 × L' 26.5 lying down.
+    ("EKXJ221ELL221MM25S", 7.5, 0.8, (18.5, 26.5)),
+    # JIERR PA p.2, 8 × 12.5: F 3.5, φd 0.6 ± 0.05; φD + 0.5 = 8.5 × L + α = 13.5.
+    ("PA25V680M8x12", 3.5, 0.65, (8.5, 13.5)),
+])
+def test_a_part_lying_beside_its_holes_has_its_leads_pitch_and_its_body_drawn(mpn, pitch, lead, body):
+    fp = drawn.BY_MPN[mpn]
+    a, b = sorted(fp.pads, key=lambda p: p.x_mm)
+    assert b.x_mm - a.x_mm == pytest.approx(pitch) and a.y_mm == b.y_mm == 0
+    assert all(p.hole_mm >= lead + 0.3 for p in fp.pads)
+    x0, y0, x1, y1 = _outline_bounds(fp)
+    assert (x1 - x0, y1 - y0) == (pytest.approx(body[0]), pytest.approx(body[1]))
+    assert y0 >= max(p.h_mm / 2 for p in fp.pads), "the body sits clear of its holes"
+
+
+def test_the_fuse_holder_fixes_its_clips_17_8_mm_apart():
+    """Littelfuse 01110501Z: two pins 5.0 mm apart per clip; rows 17.8 mm
+    apart hold a 5 × 20 fuse. One footprint, so layout cannot move them."""
+    fp = drawn.BY_MPN["01110501Z"]
+    assert fp.shared == {"1", "2"}
+    rows = {n: sorted(p.x_mm for p in fp.pads if p.num == n) for n in ("1", "2")}
+    assert rows["2"][0] - rows["1"][0] == pytest.approx(17.8)
+    for n in ("1", "2"):
+        ys = sorted(p.y_mm for p in fp.pads if p.num == n)
+        assert ys[1] - ys[0] == pytest.approx(5.0)
+    x0, _, x1, _ = _outline_bounds(fp)
+    assert x1 - x0 == pytest.approx(20.0), "the fuse body is drawn between them"
+
+
+def test_an_outline_is_written_as_the_library_writes_silkscreen():
+    """The layer rows, ACTIVE_LAYER and a POLY per shape on layer 3, as
+    v2footprint.convert writes an LCSC footprint's body."""
+    fp = drawn.BY_MPN["EKXJ221ELL221MM25S"]
+    recs = [(json.loads(h), json.loads(p)) for h, _, p in
+            (r.partition("||") for r in footprints.footprint_records(
+                "fp", fp.title, fp.pads, client="c", epoch_ms=1, outline=fp.outline))]
+    types = [h["type"] for h, _ in recs]
+    assert types[:2] == ["DOCHEAD", "META"] and types.index("ACTIVE_LAYER") < types.index("CANVAS")
+    layers = {h["id"]: p["layerType"] for h, p in recs if h["type"] == "LAYER"}
+    assert layers == {'["LAYER",1]': "TOP", '["LAYER",3]': "TOP_SILK", '["LAYER",12]': "MULTI"}
+    polys = [p for h, p in recs if h["type"] == "POLY"]
+    assert len(polys) == 1 and polys[0]["layerId"] == 3 and polys[0]["path"][2] == "L"
+    bare = footprints.footprint_records("fp", "T", fp.pads, client="c", epoch_ms=1)
+    assert not any('"LAYER"' in r or '"POLY"' in r for r in bare)

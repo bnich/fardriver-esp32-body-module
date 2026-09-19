@@ -319,7 +319,8 @@ class Page:
         return placed
 
     # -- output ----------------------------------------------------------
-    def bind_footprint(self, symbol, title, pads, device=None, shared=frozenset()):
+    def bind_footprint(self, symbol, title, pads, device=None, shared=frozenset(),
+                       outline=()):
         """Give a device (default: `symbol`'s own) a FOOTPRINT document built
         from `pads`.
 
@@ -335,7 +336,7 @@ class Page:
         uuid = self.footprint_uuid(device)
         self._footprints[device.key] = (uuid, footprints.footprint_records(
             uuid, title, pads, client=self.client, epoch_ms=self.epoch_ms,
-            edit_version=self.edit_version, shared=shared))
+            edit_version=self.edit_version, shared=shared, outline=outline))
 
     def footprint_uuid(self, device):
         return _uid("footprint", self.sheet_uuid,
@@ -532,18 +533,26 @@ def _part_attrs(item, x, y, unique_id, *, part=None, connector=None):
         attrs += [("Manufacturer Part", part.mpn, None, None, None),
                   ("Value", part.value, None, None, None),
                   ("Description", part.package, None, None, None)]
-        if part.dnp:
-            attrs.append(("DNP", "yes", None, None, None))
     if connector is not None:
         attrs.append(("Description",
                       f"{connector.pitch_mm:g} mm pitch · {connector.name}",
                       None, None, None))
-        if connector.dnp:
-            attrs.append(("DNP", "yes", None, None, None))
+    thing = part or connector
+    if thing is not None and thing.dnp:
+        attrs.append(("DNP", "yes", None, None, None))
+    if thing is not None and not jlc_places(thing):
+        # EasyEDA reads this, not DNP, for its BOM and its assembly order.
+        attrs.append(("Add into BOM", "no", None, None, None))
     attrs += [("Reuse Block", None, None, None, None),
               ("Group ID", None, None, None, None),
               ("Channel ID", None, None, None, None)]
     return attrs
+
+
+def jlc_places(thing):
+    """False for what JLC must not fit: an unfitted part, and the parts the
+    owner fits (hand-soldered, or ordered loose)."""
+    return not thing.dnp and thing.assembly not in ("hand", "loose")
 
 
 _TITLE_BAD = re.compile(r"[^\x21-\x7e]+")
@@ -607,9 +616,9 @@ def _bind_library_footprint(page, item, thing, library, bound, unbound):
             unbound.append(item.ref)
             return
         if not page.has_footprint(device):
-            title, pads, shared = gen
+            title, pads, shared, outline = gen
             page.bind_footprint(item.symbol, footprint_lib.allegro_safe(title), pads,
-                                device=device, shared=shared)
+                                device=device, shared=shared, outline=outline)
         bound.append(item.ref)
         return
     if library is None:

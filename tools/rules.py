@@ -116,10 +116,11 @@ RATED_KINDS = ("C", "D", "ZENER", "TVS", "NFET", "PFET", "R")
 def _is_link(p: Part) -> bool:
     """A 0 R link or a copper net-tie: a conductor, with no voltage across it."""
     return p.kind == "R" and (p.mpn == "NET-TIE" or p.value.strip().upper() in ("0R", "0"))
-#: What a DC path may pass through.
-_SERIES = ("R", "L", "FUSE", "FUSECLIP")
+#: What a DC path may pass through. A fuse holder is not one: its two clips
+#: meet only through the fuse it holds, and the fuse is the FUSE part.
+_SERIES = ("R", "L", "FUSE")
 _HAZARD_PATH = _SERIES + ("D", "CMCHOKE") + FETS
-_HV_JOIN = ("L", "FUSE", "FUSECLIP", "D", "CMCHOKE") + FETS
+_HV_JOIN = ("L", "FUSE", "D", "CMCHOKE") + FETS
 _GROUND_JOIN = _SERIES + ("CMCHOKE",)
 
 #: Ratings READ FROM DATASHEETS, keyed by MPN prefix. A hand-typed `v_max`

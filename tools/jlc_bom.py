@@ -5,8 +5,11 @@
 
 One line per LCSC part, with every designator that uses it. Parts marked
 `assembly="hand"` are left off: the owner buys and solders them, and they are
-listed separately. DNP parts are left off. The LCSC numbers themselves live in
-`netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN, _FAB_CONN), and nowhere else.
+listed separately. Parts marked `assembly="loose"` are left off too: they are
+ordered from LCSC with the boards and the owner fits them (formed to lie
+flat, or clipped in). DNP parts are left off. The LCSC numbers themselves live
+in `netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN, _LOOSE_BY_MPN, _FAB_CONN), and
+nowhere else.
 """
 import argparse
 import csv
@@ -60,6 +63,23 @@ def bom_csv(d: Design) -> str:
     return out.getvalue()
 
 
+def loose_list(d: Design) -> str:
+    """Parts ordered with the boards and fitted by the owner: one line per
+    LCSC part, with the count to order and what to do with it."""
+    groups = defaultdict(list)
+    for x in _items(d):
+        if x.assembly == "loose":
+            groups[x.lcsc].append(x)
+    lines = []
+    for code, xs in sorted(groups.items(), key=lambda kv: _refkey(kv[1][0].refdes)):
+        xs.sort(key=lambda x: _refkey(x.refdes))
+        per = netlist.loose_per(xs[0].mpn)
+        how = xs[0].source.rsplit("; ", 1)[-1]
+        lines.append(f"{code:8} x{per * len(xs)} {_label(xs[0])[:24]}, for "
+                     f"{' '.join(x.refdes for x in xs)}: {how}")
+    return "\n".join(lines)
+
+
 def hand_list(d: Design) -> str:
     lines = []
     for x in sorted(_items(d), key=lambda x: _refkey(x.refdes)):
@@ -99,6 +119,7 @@ def main(argv=None):
     pending = [x.refdes for x in _items(d) if not x.lcsc and x.assembly != "hand"
                and getattr(x, "mpn", "") != "NET-TIE"]
     print("\nLOOSE, order with the boards (not placed; you wire them):\n" + plug_list(d))
+    print("\nLOOSE, order with the boards (not placed; you fit them):\n" + loose_list(d))
     print("\nHAND-SOLDERED by the owner:\n" + hand_list(d))
     if pending:
         print(f"\n⚠️ NOT YET CHOSEN (no LCSC part, not hand-soldered): {' '.join(pending)}")
