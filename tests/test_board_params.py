@@ -197,6 +197,19 @@ def test_nothing_beside_the_brick_may_hang_deeper_than_its_seat():
     assert not bp.stack_height(bad).ok
 
 
+def test_the_seat_has_to_be_on_the_bottom_board_underside():
+    """Flipped to POWER's top the stack still derives, and comes out 1.2 mm
+    SHORTER (the 13.2 mm seat gap collapses to the 3.0 mm boss, and 12.7 mm of
+    brick moves into a gap the 14.0 mm choke already sets) -- an arrangement
+    that reads as an improvement while the brick has nothing to cool it."""
+    flipped = three_boards().replace_part("U201", side="top")
+    assert bp.stack_height(flipped).total_mm < bp.stack_height(three_boards()).total_mm
+    assert any(p.startswith("seat: U201 sits on POWER top") and "heatsink" in p
+               for p in bp.stack_height(flipped).problems)
+    # ...and a design that does not carry the part says nothing either way.
+    assert bp.stack_height(three_boards().without_part("U201")).ok
+
+
 def test_a_stiff_lead_beside_the_brick_lifts_it_off_the_floor_too():
     """A tail stands on the liner like a part does: a 15 mm lead leaves
     15.0 - 1.6 = 13.4 mm through the board, and 0.5 + 13.4 + 1.0 > 13.2."""

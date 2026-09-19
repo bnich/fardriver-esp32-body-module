@@ -170,9 +170,10 @@ def _good() -> Design:
         Part("L101", "CM-CHOKE", "THT", "POWER", "CMCHOKE", ("1", "2", "3", "4"),
              5.0, source="fixture"),
         # ── POWER ──
+        # Under POWER, on its floor seat, as in the design.
         _ic("U201", "CN150B110-12/CO", "BRICK", "POWER", "CONVERTER",
             ("-Vin", "CNT", "+Vin", "-V", "-S", "TRM", "+S", "+V", "BASEPLATE"),
-            {"TRM"}, 5.0),
+            {"TRM"}, 5.0, side="bottom"),
         _c("C201", "POWER", "220u", 160.0, side="bottom"),
         # The logic rail's own converter, so LOGIC's regulator is not on the
         # clamped 12 V rail (no TVS holds 12 V under its 16 V).
@@ -453,7 +454,9 @@ def test_bd4_boundary_is_508_not_anything_above_254():
 
 
 def test_bd4_fires_on_a_harness_connector_carrying_84v():
-    """Audit 9b: the key tap leaves the box at pack voltage."""
+    """Audit 9b: the key tap leaves the box at pack voltage. And audit 9a: what
+    makes a connector an HV connector is the 84 V net ON it, never a label --
+    J102 carries no interface name and the rule finds it anyway."""
     bad = GOOD.replace_connector("J102", pitch_mm=1.0)
     assert any("J102" in e for e in fired(bad, "BD-4"))
 

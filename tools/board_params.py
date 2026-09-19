@@ -73,18 +73,29 @@ FLOOR_STANDOFF_MIN = 3.0
 #: 84 V copper -- both converters' input pins, and the trimmed tails of J101 and
 #: the chokes. The box is bonded to ground, so without it one bent tail, a stray
 #: strand or a flexed board is a pack short. A 0.43 mm polypropylene sheet
-#: (Formex GK-17 class) is the kind meant. ⚠️ It is CUT AWAY under `FLOOR_SEAT`,
-#: where the baseplate has to reach the floor. PROVISIONAL: chosen with the
+#: (Formex GK-17 class) is the kind meant. PROVISIONAL: chosen with the
 #: enclosure.
+#: ⚠️ It is CUT AWAY over `FLOOR_SEAT`'s footprint, where the baseplate has to
+#: reach the floor -- and that is where U201's own pads sit, `+Vin` among them.
+#: ⬜ OPEN: what holds those pads off the brick's case, which is metal and at
+#: FG, is the case-to-board standoff when the pins are seated. TDK's outline
+#: CA952-02-01A does not fix it (note F gives the pin length only), and the
+#: height model here takes the conservative reading that the case seats flush.
+#: Settle it from TDK's mounting guidance or the brick in hand BEFORE the
+#: enclosure floor is cut. Everything the liner protects is outside this
+#: footprint; nothing here says the cut-out itself is safe.
 FLOOR_LINER_T = 0.5
 #: The part that seats the bottom board on the floor: the 12 V brick is
 #: conduction-cooled, and its baseplate bolts to the box floor through a thermal
-#: pad, which is the heatsink (owner, 2026-09-19 -- there is no alloy plate in
-#: the stack). Its seat sets how high the bottom board sits, so nothing else on
-#: that face may hang deeper than it does; `stack_height` fails the design when
-#: something does.
+#: pad, which is the heatsink (BD-27; BD-9's alloy plate is WITHDRAWN, there is
+#: none in the stack). Its seat sets how high the bottom board sits, so nothing
+#: else on that face may hang deeper than it does, and it has to BE on that
+#: face; `stack_height` fails the design on either.
 FLOOR_SEAT = "U201"
-#: Thermal interface material between that baseplate and the floor. PROVISIONAL:
+#: Thermal interface material between that baseplate and the floor. Two things
+#: ride on it: it is a term in the stack height (the board sits this much higher
+#: than the brick is tall), and its conductivity sets how far the brick's case
+#: runs above the floor -- a thicker or poorer pad spends both. PROVISIONAL:
 #: chosen with the enclosure.
 THERMAL_PAD_T = 0.5
 
@@ -386,6 +397,21 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
 
     gaps = layer_gaps(d, order)
     by_ref = {x.refdes: x for x in items}
+
+    # The seat has to BE on the bottom board's underside. Flipped to the top,
+    # or moved up a board, every gap still derives and the stack comes out
+    # SHORTER -- the one arrangement that reads as an improvement while the
+    # brick has nothing to cool it. A design that does not carry the part at
+    # all (a fixture) says nothing either way, so the check needs it present.
+    seat_part = by_ref.get(FLOOR_SEAT)
+    if seat_part is not None:
+        seat_side = getattr(seat_part, "side", "top")
+        if (seat_part.board, seat_side) != (order[0], "bottom"):
+            problems.append(
+                f"seat: {FLOOR_SEAT} sits on {seat_part.board} {seat_side}, not "
+                f"under {order[0]} -- its baseplate bolted to the box floor "
+                f"through the thermal pad is the stack's ONLY heatsink (IO-11, "
+                f"BD-27), and the FLOOR gap is derived from that seat")
     for c in _through(d, order):
         notes.append(
             f"{c.refdes} ({c.interface}) is the middle of a three-board bus: its one "

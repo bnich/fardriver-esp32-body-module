@@ -210,7 +210,7 @@ def test_84_volts_never_reaches_the_logic_boards(d):
     for net in d.nets:
         if net.domain == "84V":
             boards = {d.board_of(r) for r, _ in net.pins}
-            assert boards <= {"POWER", "POWER"}, (net.name, boards)
+            assert boards <= {"POWER"}, (net.name, boards)
 
 
 def test_a_part_tied_to_ground_is_rated_for_the_node_it_sits_on(d, w):

@@ -1,6 +1,6 @@
 # Design-time tooling
 
-Checks the four-board set and generates its EasyEDA Pro project from a checked-in netlist.
+Checks the three-board set and generates its EasyEDA Pro project from a checked-in netlist.
 **Stdlib only**, no virtualenv, with two exceptions. Without either, everything else still runs and
 says what it could not do:
 
@@ -49,7 +49,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `soft_start.py` | The D13 main-switch gate network, simulated |
 | `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
-| `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
+| `build_project.py` | Generates the EasyEDA Pro project for the three boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
 | `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `project.py` (the folder and its index), `pcb.py` (outline, 4-layer stackup, holes, rules), `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `v2footprint.py` (EasyEDA library footprints, V2 → V3), `placement.py` (sheet layout), `schematic.py` (sheets, devices and nets), `reader.py` (reads a sheet back and derives its nets) |
 | `padmap.py` | Which footprint pad each netlist pin lands on, typed from the datasheets |
@@ -66,15 +66,19 @@ Holds the M18 cavity (`CAVITY_MEASURED = False` until it is measured); the wall 
 **allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's model sets them — the box is
 all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
 trimmed through-hole lead stands out of its board (IPC); the 0.5 mm insulating liner on the metal
-floor under HVIN, whose underside carries 84 V pins; the 3.0 mm plate above CONV that the brick
-bolts down onto, with countersunk screws so nothing stands above it; and the wire-bend room behind
-a harness plug. `STACK_ORDER` is bottom to top.
+floor under POWER, whose underside carries 84 V pins; the floor seat — `U201` bolts its baseplate
+to the box floor through a 0.5 mm thermal pad, which is the only heatsink (BD-27), and the liner is
+cut away there; and the wire-bend room behind a harness plug. `STACK_ORDER` is bottom to top, three
+boards. ⛔ BD-9's alloy plate is withdrawn: there is none in the stack, and nothing here models one.
 
 ⛔ No layer ceiling is typed anywhere. `layer_gaps(design)` and `stack_height(design)` work the stack
 out from the netlist's own heights:
 
 - a gap is the larger of *tallest top-side body below + clearance + solder tails above* and
-  *deepest bottom-side part above + clearance*, with the plate stacked in where there is one;
+  *deepest bottom-side part above + clearance*. The FLOOR gap instead takes the larger of *pad +
+  the floor seat's height* and *liner + the deepest other underside item + clearance*, and fails
+  the design when anything beside the seat hangs deeper than it, or when the seat is not on the
+  bottom board's underside at all;
 - solder tails are per part: a through-hole part whose pins are too short or stiff to trim states
   its drawing's maximum (`lead_mm`) and is charged that, less the board; every other lead is
   trimmed to 1.5 mm;
@@ -149,13 +153,13 @@ class is not known from any file here, and a guessed record can corrupt the proj
 voltage needs **1.25 mm** (IPC-2221B B2, 151–300 V: the 160 V do-not-exceed). This lists, per board,
 every net that can sit at pack voltage — typed 84 V, or joined to one through copper, a switch, a
 choke or a diode — as the net class **HV**. `build_project.py` writes the same text to
-`build-eprj3/layout-rules.txt`. ⚠️ **Set the class up in the editor before routing HVIN and CONV:**
+`build-eprj3/layout-rules.txt`. ⚠️ **Set the class up in the editor before routing POWER:**
 PCB → Design → Net Class, a class `HV` holding those nets; Design Rules → Safe Spacing, a 1.25 mm
 rule applied to `HV`.
 
 It also lists each drawn land's keep-out: `J408`, the Tag-Connect TC2030-NL service pads, wants no
 track or via between its pad centres and nothing within 0.51 mm of a pad (Tag-Connect's drawing,
-notes 1–2). Draw it as a keep-out region before routing BRAIN.
+notes 1–2). Draw it as a keep-out region before routing LOGIC.
 
 ### `jlc_bom.py`
 
@@ -282,7 +286,7 @@ flag alone, and flag with wire name, which is what the build emits. `NAMING = "b
   pair, which hangs under its board, and it is generated mirrored: after the flip, plus at most a
   180° turn, every pad sits over its mate's. A same-numbered dual-row footprint cannot be aligned by
   any turn — STACK's signals would land on its ground row.
-- **Set up the HV net class before routing HVIN and CONV, and J408's keep-out before routing BRAIN**
+- **Set up the HV net class before routing POWER, and J408's keep-out before routing LOGIC**
   (`layout_rules.py`, above).
 - ⬜ **Check the paste layer has no aperture over `J408`'s six pads** (Gerber viewer, top paste). The
   pads carry a paste expansion past their own radius, which should close the aperture; this has not

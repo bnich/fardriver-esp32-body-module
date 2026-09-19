@@ -207,7 +207,7 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
 # ════════════════════════════════════════════════════════════════════════════
 # PARTS — POWER (L1): 84 V entry, protection, the D13 module power switch.
 # ════════════════════════════════════════════════════════════════════════════
-_HVIN_PARTS = (
+_POWER_ENTRY_PARTS = (
     Part("D101", "SMCJ90A", "DO-214AB (SMC)", "POWER", "TVS", ("A", "K"), 2.62,
          height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0, v_clamp=146.0,
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
@@ -321,7 +321,7 @@ _HVIN_PARTS = (
 # PARTS — POWER (L1), continued: both converters. Each converter's −Vin is its own net and
 # reaches GND only through its choke winding; −Vout IS GND (isolated bricks).
 # ════════════════════════════════════════════════════════════════════════════
-_CONV_PARTS = (
+_POWER_CONVERTER_PARTS = (
     Part("U201", "CN150B110-12/CO", "quarter brick 58.3 × 37.2 × 12.7 mm",
          "POWER", "CONVERTER",
          ("-Vin", "CNT", "+Vin", "-V", "-S", "+S", "+V", "BASEPLATE"), 12.7,
@@ -334,7 +334,22 @@ _CONV_PARTS = (
                 f"(`board_params.FLOOR_SEAT`), so nothing else on this face may "
                 f"hang deeper than it does. {_DS_TDK} p.5 pins: 1 -Vin, "
                 f"2 CNT, 3 +Vin, 4 -V, 5 -S, 6 TRM, 7 +S, 8 +V; 'Base-plate can "
-                f"be connected to FG by M3 threaded holes' = pin BASEPLATE. "
+                f"be connected to FG by M3 threaded holes' = pin BASEPLATE, "
+                f"which reaches board copper at the two ø7.0 FG lands (p.24 "
+                f"§(3) 'Mounting Holes on Printed Circuit Board'): the screw's "
+                f"washer on the land IS the contact -- the brick has no "
+                f"baseplate pin of its own. {_DS_TDK_OUT} note B: the /CO model carries 2 × M3 "
+                f"THREADED holes 'for customer chassis mounting (FG)'. They "
+                f"were BD-9's plate screws; under BD-27 they are the floor "
+                f"bolts. ⬜ UNCONFIRMED, and needed before the floor is "
+                f"drilled: the drawing gives no thread DEPTH and does not say "
+                f"whether the holes pass through the case, so whether one "
+                f"screw can both seat the FG land's washer at the board and "
+                f"reach the floor -- or whether the two jobs take two screws "
+                f"into one thread from opposite ends -- is open. Ask TDK for "
+                f"the thread depth, or measure the brick. ⬜ And the bolt "
+                f"heads: outside the floor, or in a counterbore in the 3.0 mm "
+                f"floor allowance -- an enclosure decision, with the model. "
                 f"p.18 CNT is negative logic, 'H Level or Open → OFF'; 'When "
                 f"ON/OFF control function is not used, CNT terminal should be "
                 f"shorted to -Vin terminal'. p.17 'short +S terminal to +V "
@@ -412,8 +427,13 @@ _CONV_PARTS = (
                 f"part's rating (rules VR-CLAMP). JIERR PA series "
                 f"(jierr_pa25v680m8x12.pdf) p.7: PA35V680M10X15, 680 µF, 16 mΩ, "
                 f"4.1 A ripple, -55…105 °C; p.2: φD + 0.5 max = 10.5 mm, "
-                f"L + α = 16 mm, F 5.0, ø0.6 leads. LYING DOWN: 10.5 mm, "
-                f"against the 16 mm it stands at upright"),
+                f"L + α = 16 mm, F 5.0, ø0.6 leads. LYING DOWN: 10.5 mm "
+                f"against the 16 mm it stands at upright. ⚠️ With BD-9's plate "
+                f"withdrawn nothing on POWER's top face holds it to 10.5 any "
+                f"more -- the 22 mm chokes set that gap -- so this is headroom, "
+                f"not a ceiling. It stays lying and bonded like the bulk cans "
+                f"(BD-14): a 16 mm can standing on its leads is the shock path "
+                f"the lying ones were chosen to avoid"),
     _c("C208", "POWER", "2.2uF", 25.0,
        f"U201 +V to -V. {_DS_TDK} p.8 C6: 2.2 µF ceramic against output spike "
        f"noise", pkg="1206"),
@@ -453,11 +473,21 @@ _CONV_PARTS = (
                 f"ø 5.2 × 20 mm; 8.0 mm assumes a ≤2.8 mm clip seat. BOM E11"),
     Part("R211", "NET-TIE", "copper net-tie, ≥2 mm wide", "POWER", "R", ("1", "2"),
          0.04, footprint_mm=(4.0, 2.0), value="0R",
-         source="Single-point tie BASEPLATE → GND, so a shorted Y2 blows the "
-                "KLKD002 instead of floating a plate at 84 V. COPPER, not a "
-                "chip jumper: the prospective current is ~200 A, and a 1206 "
-                "0 Ω would race the 2 A fuse and could open first -- leaving "
-                "the plate floating at 84 V, the exact fault this tie prevents"),
+         source="Tie BASEPLATE → GND. A shorted Y2 puts the pack on U201's "
+                "BASEPLATE, and BD-27 bolts that baseplate to the box floor, "
+                "so the metal of the box goes with it: the fault has to blow "
+                "the harness KLKD002, never leave touchable metal sitting at "
+                "84 V. COPPER, not a chip jumper: the prospective current is "
+                "~200 A, and a 1206 0 Ω would race the 2 A fuse and could open "
+                "first -- leaving the baseplate floating at 84 V, the exact "
+                "fault this tie prevents. ⚠️ NOT a proven single-point tie any "
+                "more: bolted to a floor the box bonds to ground, BASEPLATE "
+                "reaches GND through the chassis as well as through R211, so "
+                "the fault splits between them and the two paths enclose a "
+                "loop. ⬜ OPEN with the enclosure: bring the box's bond and "
+                "this tie to the SAME point, or state which one carries the "
+                "fault. The old wording called R211 the single point; with a "
+                "bonded box bolted to the baseplate that is no longer true"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -502,7 +532,7 @@ def _open_load_pullup(refdes: str, channel: str) -> Part:
               f"BOM D2")
 
 
-_DRV_PARTS = (
+_OUTPUTS_PARTS = (
     _tps4h160("U301", "Headlight: LOW, HIGH, DRL. OUT1 is AUX12, the "
               "current-limited feed to horn +, fan + and buzzer +"),
     _tps4h160("U302", "Tail running + turn L/R. OUT4 is the STOP lamp, its IN4 "
@@ -784,7 +814,7 @@ def _class_a_parts(pull: str, series: str, cap: str, net: str) -> tuple[Part, ..
     )
 
 
-_BRAIN_PARTS = (
+_LOGIC_PARTS = (
     Part("U401", "ESP32-S3-WROOM-1U-N8", "WROOM-1 / WROOM-1U SMD module",
          "LOGIC", "MODULE", _U401_PINS, 3.35, height_confirmed=True,
          footprint_mm=(18.0, 25.5), nc=("IO3", "IO19", "IO20", "IO45", "IO46"),
@@ -964,7 +994,7 @@ _BRAIN_PARTS = (
     _c("C422", "LOGIC", "100nF", 50.0, "IN-06 to GND at the MCU pin, as C421"),
 )
 
-_PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
+_PARTS = _POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _OUTPUTS_PARTS + _LOGIC_PARTS
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFACE PIN MAPS — the three inter-board spines (BD-3, BD-4).
@@ -977,12 +1007,12 @@ _PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
 
 #: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS. Four V12 contacts: 2.62 A is 0.66 A
 #: each, and 0.87 A with one open. V5 and KEY_SENSE only pass through OUTPUTS.
-_PWRUP_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
+_PWROUT_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
                "GND", "V12", "V12")
 
 #: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: only what LOGIC uses. Its ground
 #: return is also every even STACK contact.
-_PWRBRAIN_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
+_PWRLOGIC_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
 
 #: STACK, J308 ↔ J406, 2 × 25: odd contacts carry these in order, every even
 #: contact is GND, so each signal (CS1/CS2 above all) faces a ground.
@@ -1001,13 +1031,13 @@ def _p(spec: str) -> tuple[tuple[str, str], ...]:
                  (tok.split(".", 1) for tok in spec.split()))
 
 
-def _pwrup(net: str) -> tuple[tuple[str, str], ...]:
-    return tuple((c, str(i + 1)) for i, n in enumerate(_PWRUP_NETS)
+def _pwrout(net: str) -> tuple[tuple[str, str], ...]:
+    return tuple((c, str(i + 1)) for i, n in enumerate(_PWROUT_NETS)
                  if n == net for c in ("J202", "J311"))
 
 
-def _pwrbrain(net: str) -> tuple[tuple[str, str], ...]:
-    return tuple((c, str(i + 1)) for i, n in enumerate(_PWRBRAIN_NETS)
+def _pwrlogic(net: str) -> tuple[tuple[str, str], ...]:
+    return tuple((c, str(i + 1)) for i, n in enumerate(_PWRLOGIC_NETS)
                  if n == net for c in ("J307", "J407"))
 
 
@@ -1085,10 +1115,10 @@ _NETS_84V = (
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_RAILS = (
     Net("GND",
-        # POWER
+        # POWER: entry
         _p("J101.3 J101.4 D101.A Q105.S R113.2 D106.A C108.2 "
            "R109.2 C109.2 L101.2 L102.2")
-        # POWER
+        # POWER: converters
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
              "R211.2")
         # OUTPUTS
@@ -1118,7 +1148,7 @@ _NETS_RAILS = (
              "J402.1 J403.1 J404.4 J404.7 J408.4 J409.2 J409.16")
         + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
         + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
-        + _p("D413.K3 D413.K4 D413.K6") + _pwrup("GND") + _pwrbrain("GND") + _STACK_GND,
+        + _p("D413.K3 D413.K4 D413.K6") + _pwrout("GND") + _pwrlogic("GND") + _STACK_GND,
         domain="GND", interface="PWR-OUT",
         source="The star net, on all three boards and across all three "
                "interfaces (PWR-OUT × 4, PWR-LOGIC × 2, every even STACK "
@@ -1134,7 +1164,7 @@ _NETS_RAILS = (
                "interface it bolts to. The Y2 caps and TDK's C4/C5 return "
                "here; R211 ties it to GND at one point"),
     Net("V12",
-        _p("U201.+V U201.+S C207.+ C208.1 C209.1") + _pwrup("V12")
+        _p("U201.+V U201.+S C207.+ C208.1 C209.1") + _pwrout("V12")
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
              "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 R345.2 "
              "Q304.S R313.2 D315.K R337.1"),
@@ -1143,7 +1173,7 @@ _NETS_RAILS = (
                "measured (plan §3.2.3). It never leaves the box: every 12 V "
                "wire out is a TPS4H160B channel. D315 is its clamp"),
     Net("V5",
-        _p("U202.+Vout C211.1 C212.1") + _pwrup("V5") + _pwrbrain("V5")
+        _p("U202.+Vout C211.1 C212.1") + _pwrout("V5") + _pwrlogic("V5")
         + _p("U405.IN U405.EN C415.1"),
         domain="5V", interface="PWR-OUT",
         source="DC-DC #2's isolated output, referenced to the star. Feeds "
@@ -1407,10 +1437,10 @@ _NETS_DISPLAY = (
 # ════════════════════════════════════════════════════════════════════════════
 # NETS — LOGIC: the module's support pins, buses, serial, CAN, boost.
 # ════════════════════════════════════════════════════════════════════════════
-_NETS_BRAIN = (
+_NETS_LOGIC = (
     Net("KEY_SENSE",
-        _p("R108.2 R109.1 C109.1") + _pwrup("KEY_SENSE")
-        + _pwrbrain("KEY_SENSE") + _p("R476.1"),
+        _p("R108.2 R109.1 C109.1") + _pwrout("KEY_SENSE")
+        + _pwrlogic("KEY_SENSE") + _p("R476.1"),
         domain="3V3", interface="PWR-OUT",
         source="IN-12, ADC1_CH0: KSW through 330 k / 10 k, 84 V → 2.47 V. "
                "Tapped UPSTREAM of the hold-up diode, so key-off shows at once "
@@ -1532,7 +1562,7 @@ _NETS_CLASS_A = (
 )
 
 _NETS = (_NETS_84V + _NETS_RAILS + _NETS_12V + _NETS_BRAKE + _NETS_STACK
-         + _NETS_DISPLAY + _NETS_BRAIN + _NETS_CLASS_A)
+         + _NETS_DISPLAY + _NETS_LOGIC + _NETS_CLASS_A)
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONNECTORS. One keyed, latched shell per harness bundle: ⛔ "colour is never
@@ -1638,7 +1668,7 @@ _CONNECTORS = (
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
     Connector("J202", "POWER", "PWR-OUT, POWER side: 4 × V12, 4 × GND, 2 × V5, "
-              "KEY_SENSE", _bus(_PWRUP_NETS), 8.5, footprint_mm=(27.94, 2.54),
+              "KEY_SENSE", _bus(_PWROUT_NETS), 8.5, footprint_mm=(27.94, 2.54),
               leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
     # ── OUTPUTS ─────────────────────────────────────────────────────────────
     _tb("J301", "OUTPUTS", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
@@ -1682,11 +1712,11 @@ _CONNECTORS = (
                         "pod plug seats here, and no other header in the "
                         "family is 4-way"),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
-              "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWRUP_NETS), 2.54,
+              "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
               footprint_mm=(27.94, 2.54), leaves_box=False,
               interface="PWR-OUT", side="bottom", source=_INTERBOARD),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5, KEY_SENSE and ground "
-              "for LOGIC", _bus(_PWRBRAIN_NETS), 8.5,
+              "for LOGIC", _bus(_PWRLOGIC_NETS), 8.5,
               footprint_mm=(12.7, 2.54), leaves_box=False,
               interface="PWR-LOGIC", source=_INTERBOARD),
     Connector("J308", "OUTPUTS", "STACK, OUTPUTS side: 2 × 25, alternating grounds",
@@ -1776,7 +1806,7 @@ _CONNECTORS = (
               footprint_mm=(63.5, 5.08), leaves_box=False, interface="STACK",
               side="bottom", source=_INTERBOARD),
     Connector("J407", "LOGIC", "PWR-LOGIC, LOGIC side, under the board",
-              _bus(_PWRBRAIN_NETS), 2.54, footprint_mm=(12.7, 2.54),
+              _bus(_PWRLOGIC_NETS), 2.54, footprint_mm=(12.7, 2.54),
               leaves_box=False, interface="PWR-LOGIC", side="bottom",
               source=_INTERBOARD),
     Connector("J408", "LOGIC", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "

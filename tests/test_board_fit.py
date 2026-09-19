@@ -209,6 +209,7 @@ def test_bottom_side_parts_are_packed_on_the_underside():
     under = good().with_part(part("C201", "POWER", 5.0, (25.0, 18.0), side="bottom"))
     rows_top = {(s.board, s.side): s for s in bf.area_budget(top)}
     rows_under = {(s.board, s.side): s for s in bf.area_budget(under)}
+    assert ("OUTPUTS", "bottom") not in rows_top      # an empty side gets no row
     # POWER already has the brick underneath, so read the two arrangements
     # against each other: the 450 mm² body moves from the top row to the bottom.
     assert rows_under[("POWER", "bottom")].raw_mm2 \

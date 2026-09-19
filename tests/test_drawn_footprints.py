@@ -225,8 +225,8 @@ def test_repeated_pad_numbers_need_declaring():
     assert sum('"num": "M"' in r or '"num":"M"' in r for r in recs) == 2
 
 
-@pytest.mark.parametrize("board, refs", [("POWER", {"L101", "L102"}),
-                                         ("POWER", {"U201", "U202", "R211", "F201"})])
+@pytest.mark.parametrize("board, refs", [
+    ("POWER", {"L101", "L102", "U201", "U202", "R211", "F201"})])
 def test_the_drawn_parts_are_bound_without_the_library(board, refs):
     project = Project("t")
     project.add_board(board)

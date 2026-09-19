@@ -223,9 +223,14 @@ def report(d: Design) -> str:
         out.append(f"  {small} part(s) carry no footprint and are not in the area figures.")
 
     stack = bp.stack_height(d)
-    out.append(f"\nHEIGHT   derived: PCB {bp.PCB_T}, clearance {bp.CLEARANCE}, solder tails "
-               f"{bp.TAIL}, {bp.FLOOR_SEAT} bolted to the floor on a "
-               f"{bp.THERMAL_PAD_T} mm pad (liner {bp.FLOOR_LINER_T} elsewhere)")
+    seated = next((g for g in stack.gaps
+                   if g.below == bp.FLOOR_NAME and g.seat_mm), None)
+    head = (f"\nHEIGHT   derived: PCB {bp.PCB_T}, clearance {bp.CLEARANCE}, "
+            f"solder tails {bp.TAIL}, ")
+    out.append(head + (
+        f"{seated.seat_ref} bolted to the floor on a {bp.THERMAL_PAD_T} mm pad "
+        f"(liner {bp.FLOOR_LINER_T} elsewhere)" if seated else
+        f"floor liner {bp.FLOOR_LINER_T}, nothing on the floor seat"))
     z = 0.0
     for g in stack.gaps:
         why = [f"{g.top_ref} {g.top_mm:.1f} up" if g.top_mm else "",
