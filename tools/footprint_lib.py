@@ -12,6 +12,7 @@ and says so.
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,15 @@ from . import padmap
 from .eprj3.records import serialize_record
 
 TOOL = Path(os.environ.get("LCSC_SEARCH_HOME", Path.home() / "tools" / "lcsc-search"))
+
+
+def allegro_safe(title):
+    """A footprint name an Allegro netlist accepts.  EasyEDA's netlist export
+    (.tel) is Allegro's format, which rejects '; ! .' and spaces -- the editor
+    warns and names the parts -- and library names also carry non-ASCII text.
+    Everything outside letters, digits and `_ - ( ) + = , #` becomes '_'."""
+    safe = re.sub(r"[^A-Za-z0-9_\-()+=,#]", "_", title or "")
+    return re.sub(r"_+", "_", safe).strip("_") or "FOOTPRINT"
 
 
 class Library:
@@ -34,7 +44,9 @@ class Library:
         doc = self._svc.document(dev["footprint_uuid"])
         if doc is None or doc.get("format") != "v2":
             return None
-        return dev["footprint_name"] or dev["title"], doc["data"]
+        # The document's own name (ASCII, e.g. sot-23-3_l2.9-w1.3-p1.90) over
+        # LCSC's category label, which can be Chinese ('弯插,P=2mm').
+        return doc.get("title") or dev["footprint_name"] or dev["title"], doc["data"]
 
 
 class FakeLibrary(Library):
@@ -75,7 +87,7 @@ def generated(thing):
         n = len(thing.pins)
         rows = 2 if thing.interface == "STACK" else 1
         cols = n // rows
-        title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM"
+        title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
         return title, footprints.header(n, thing.pitch_mm, rows=rows)
     return None
 

@@ -106,3 +106,15 @@ def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
     stack = next(d for t, d in by_title.items() if "2X25" in t.upper())
     assert sorted(int(p["num"]) for h, p in stack if h["type"] == "PAD") == list(range(1, 51))
     assert {"J307", "J308"} <= set(bs.footprints_bound)
+
+
+def test_every_footprint_title_is_safe_for_an_allegro_netlist():
+    """EasyEDA's netlist export (.tel) is Allegro's format, which rejects
+    '; ! .' and spaces in a footprint name (the editor warns and names the
+    parts).  Library titles also carry non-ASCII text ('弯插,P=2mm')."""
+    code = next(p.lcsc for p in netlist.current().parts if p.mpn == "AO3400A")
+    design, sheet, bs = _emit("DRV", {code: ("SOT-23-3_L2.9-W1.3 弯插", SOT23)})
+    import re
+    for d in _docs(sheet)["FOOTPRINT"]:
+        title = d[1][1]["title"]
+        assert re.fullmatch(r"[A-Za-z0-9_\-()+=,#]+", title), title

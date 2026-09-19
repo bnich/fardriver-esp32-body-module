@@ -268,3 +268,62 @@ def test_no_account_or_an_ambiguous_one_falls_back_to_the_template(template, tmp
     out = tmp_path / "a.eprj2"
     eprj2.write(template, out, STREAM, {}, "A")
     assert eprj2.read(out)["owner"] == OWNER
+
+
+# --- a project the editor has saved into: a chain of deltas ---------------------------
+def _append_delta(path, delta_text, parent_hid, hid, key="11" * 16):
+    """Append a history entry the way the editor does on save: a child row
+    whose snapshot holds only what changed."""
+    import base64, gzip
+    db = sqlite3.connect(path)
+    (table,) = db.execute("select name from sqlite_master where name like 'project_history_%'").fetchone()
+    blob = AESGCM(bytes.fromhex(key)).encrypt(bytes.fromhex(hid), gzip.compress(delta_text.encode()), None)
+    db.execute(f"insert into {table} (uuid, parent, snapshot, key) values (?,?,NULL,?)", (hid, parent_hid, key))
+    db.execute("insert into history_data (uuid, history_uuid, dataStr) values (?,?,?)",
+               (hid, hid, base64.b64encode(blob).decode()))
+    db.commit()
+    db.close()
+
+
+BASE = ('{"type":"EDIT_HEAD"}||{"uuid":"x","updateTime":1}|\n'
+        '{"type":"DOCHEAD"}||{"docType":"PCB","uuid":"P1","updateTime":1}|\n'
+        '{"type":"META","ticket":1,"id":"META"}||{"title":"A"}|\n'
+        '{"type":"LINE","ticket":2,"id":"e1"}||{"w":1}|\n'
+        '{"type":"LINE","ticket":3,"id":"e2"}||{"w":2}')
+
+
+def test_an_editor_saved_project_reads_as_the_chain_replayed(template, tmp_path):
+    """Editor saves append a delta: the same (document, record) replaces the
+    base's, a new record is added.  read() must give the design, not the last
+    fragment."""
+    out = tmp_path / "a.eprj2"
+    ids = eprj2.write(template, out, BASE, {}, "A")
+    delta = ('{"type":"EDIT_HEAD"}||{"uuid":"x","updateTime":2}|\n'
+             '{"type":"DOCHEAD","ticket":9}||{"docType":"PCB","uuid":"P1","updateTime":2}|\n'
+             '{"type":"LINE","ticket":10,"id":"e2"}||{"w":5}|\n'
+             '{"type":"NET","ticket":11,"id":"[\\"NET\\",\\"\\"]"}||{"n":0}')
+    _append_delta(out, delta, ids["history"], "22" * 16)
+    snap = eprj2.read(out)
+    recs = {(h["type"], h.get("id")): p for h, p in eprj2.split_records(snap["text"])}
+    assert recs[("LINE", "e1")] == '{"w":1}'          # untouched
+    assert recs[("LINE", "e2")] == '{"w":5}'          # replaced by the delta
+    assert ("NET", '["NET",""]') in recs                # added by the delta
+    assert snap["deltas"] == 1
+
+
+def test_a_record_with_an_empty_payload_in_a_delta_is_a_deletion(template, tmp_path):
+    out = tmp_path / "a.eprj2"
+    ids = eprj2.write(template, out, BASE, {}, "A")
+    _append_delta(out, '{"type":"EDIT_HEAD"}||{"uuid":"x"}|\n'
+                       '{"type":"DOCHEAD","ticket":9}||{"docType":"PCB","uuid":"P1"}|\n'
+                       '{"type":"LINE","ticket":10,"id":"e1"}||', ids["history"], "33" * 16)
+    types = [(h["type"], h.get("id")) for h, p in eprj2.split_records(eprj2.read(out)["text"])]
+    assert ("LINE", "e1") not in types and ("LINE", "e2") in types
+
+
+def test_a_branching_history_is_refused(template, tmp_path):
+    out = tmp_path / "a.eprj2"
+    eprj2.write(template, out, BASE, {}, "A")
+    _append_delta(out, '{"type":"EDIT_HEAD"}||{"uuid":"x"}', "ab" * 16, "44" * 16)
+    with pytest.raises(ValueError, match="not a single chain"):
+        eprj2.read(out)

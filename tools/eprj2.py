@@ -2,10 +2,11 @@
 """EasyEDA Pro `.eprj2` projects: read them, write them, and wrap a generated
 `.eprj3` folder as one.  EasyEDA Pro 3.2.149 opens `.eprj2` and not `.eprj3`.
 
-An `.eprj2` is SQLite.  The whole design is ONE snapshot: the V3 record
-stream (`{"type":...}||{...}` records joined by "|\\n", the same records the
-`.eprj3` files hold), gzip'd, AES-128-GCM encrypted under a random key that is
-stored in the same file, base64'd.  The `schematics`, `documents` and
+An `.eprj2` is SQLite.  The design is a chain of snapshots: V3 record streams
+(`{"type":...}||{...}` records joined by "|\\n", the same records the `.eprj3`
+files hold), each gzip'd, AES-128-GCM encrypted under a random key stored in
+the same file, base64'd.  This tool writes one snapshot; each save in the
+editor appends a delta, and `read()` replays the chain.  The `schematics`, `documents` and
 `components` tables stay EMPTY -- a writer that fills them makes a project that
 opens empty.
 
@@ -127,17 +128,54 @@ def _history_table(db):
     return names[0]
 
 
+def _replay(texts):
+    """Snapshots in chain order -> one stream.  The first is the design; each
+    later one is what a save changed.  A record replaces the record with the
+    same (document, type, id) and keeps its place; a new one is appended to its
+    document; a new document is appended.  An empty payload is read as a
+    deletion -- INFERRED: no editor-saved deletion has been seen yet."""
+    lead, order, docs = [], [], {}
+    for text in texts:
+        head, found = documents(split_records(text))
+        lead = head or lead
+        for doc_type, uuid, recs in found:
+            if uuid not in docs:
+                docs[uuid] = {}
+                order.append(uuid)
+            doc = docs[uuid]
+            for h, p in recs:
+                key = (h["type"], h.get("id"))
+                if p == "" and h["type"] != "DOCHEAD":
+                    doc.pop(key, None)
+                else:
+                    doc[key] = (h, p)
+    out = list(lead)
+    for uuid in order:
+        out.extend(docs[uuid].values())
+    return join(out)
+
+
 def read(path):
-    """The newest snapshot: {text, structure, name, owner, branch, history}."""
+    """The design: {text, structure, name, owner, branch, history, deltas}.
+
+    A file this tool wrote holds one snapshot.  A file the editor has saved
+    into holds a CHAIN: each save appends a history row whose parent is the
+    previous one and whose snapshot holds only what changed.  The chain is
+    replayed in order (`_replay`); a history that branches is refused."""
     db = _open_ro(path)
     try:
         table = _history_table(db)
-        hid, key = db.execute(f'select uuid, key from "{table}" '
-                              f'order by id desc limit 1').fetchone()
-        data = db.execute("select dataStr from history_data where uuid=?",
-                          (hid,)).fetchone()[0]
-        plain = _aesgcm(key).decrypt(bytes.fromhex(hid),
-                                     base64.b64decode(data), None)
+        rows = db.execute(f'select uuid, key, parent from "{table}" order by id').fetchall()
+        texts, prev = [], None
+        for hid, key, parent in rows:
+            if (parent or None) != prev:
+                raise ValueError(f"{path}: history is not a single chain "
+                                 f"({hid} follows {parent!r}, expected {prev!r})")
+            data = db.execute("select dataStr from history_data where uuid=?",
+                              (hid,)).fetchone()[0]
+            plain = _aesgcm(key).decrypt(bytes.fromhex(hid), base64.b64decode(data), None)
+            texts.append(gzip.decompress(plain).decode("utf-8"))
+            prev = hid
         structure = json.loads(db.execute(
             "select structure from project_structures order by id desc "
             "limit 1").fetchone()[0])
@@ -145,9 +183,9 @@ def read(path):
             "select name, owner_uuid, branch_uuid from projects").fetchone()
     finally:
         db.close()
-    return {"text": gzip.decompress(plain).decode("utf-8"),
-            "structure": structure, "name": name, "owner": owner,
-            "branch": branch, "history": hid}
+    text = texts[0] if len(texts) == 1 else _replay(texts)
+    return {"text": text, "structure": structure, "name": name, "owner": owner,
+            "branch": branch, "history": prev, "deltas": len(texts) - 1}
 
 
 # --- writing --------------------------------------------------------------------

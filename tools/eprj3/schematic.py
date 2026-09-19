@@ -594,7 +594,8 @@ def _bind_library_footprint(page, item, thing, library, bound, unbound):
             unbound.append(item.ref)
             return
         if not page.has_footprint(device):
-            page.bind_footprint(item.symbol, gen[0], gen[1], device=device)
+            page.bind_footprint(item.symbol, footprint_lib.allegro_safe(gen[0]), gen[1],
+                                device=device)
         bound.append(item.ref)
         return
     if library is None:
@@ -607,7 +608,8 @@ def _bind_library_footprint(page, item, thing, library, bound, unbound):
             return
         title, v2_text = got
         uuid = page.footprint_uuid(device)
-        records = v2footprint.convert(v2_text, uuid=uuid, title=title, client=page.client,
+        records = v2footprint.convert(v2_text, uuid=uuid, title=footprint_lib.allegro_safe(title),
+                                      client=page.client,
                                       epoch_ms=page.epoch_ms, edit_version=page.edit_version)
         page.bind_footprint_records(device, uuid, footprint_lib.fit(records, thing),
                                     padmap.pins_of(thing), f"{item.ref} ({code})")
