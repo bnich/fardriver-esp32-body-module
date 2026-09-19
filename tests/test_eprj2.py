@@ -321,6 +321,52 @@ def test_a_record_with_an_empty_payload_in_a_delta_is_a_deletion(template, tmp_p
     assert ("LINE", "e1") not in types and ("LINE", "e2") in types
 
 
+def _append_chunk(path, delta_text, hid):
+    """Append to an existing history entry the way the editor's save does when
+    it does not open a new one: history_data row `<hid>-<n>`, encrypted under
+    that entry's key with IV = the entry's uuid, and the entry's `num` = n."""
+    import base64, gzip
+    db = sqlite3.connect(path)
+    (table,) = db.execute("select name from sqlite_master where name like 'project_history_%'").fetchone()
+    key, num = db.execute(f"select key, num from {table} where uuid=?", (hid,)).fetchone()
+    blob = AESGCM(bytes.fromhex(key)).encrypt(bytes.fromhex(hid), gzip.compress(delta_text.encode()), None)
+    db.execute("insert into history_data (uuid, history_uuid, dataStr) values (?,?,?)",
+               (f"{hid}-{num + 1}", hid, base64.b64encode(blob).decode()))
+    db.execute(f"update {table} set num=? where uuid=?", (num + 1, hid))
+    db.commit()
+    db.close()
+
+
+def test_chunks_appended_to_a_history_entry_are_replayed_in_order(template, tmp_path):
+    """A save can append to the newest entry instead of opening a new one
+    (3.2.149 did this for a PCB import).  The chunks are that entry's later
+    saves: all of them count, in order."""
+    out = tmp_path / "a.eprj2"
+    ids = eprj2.write(template, out, BASE, {}, "A")
+    head = '{"type":"EDIT_HEAD"}||{"uuid":"x"}|\n{"type":"DOCHEAD"}||{"docType":"PCB","uuid":"P1"}|\n'
+    _append_chunk(out, head + '{"type":"LINE","ticket":10,"id":"e2"}||{"w":7}|\n'
+                              '{"type":"LINE","ticket":11,"id":"e3"}||{"w":3}', ids["history"])
+    _append_chunk(out, head + '{"type":"LINE","ticket":12,"id":"e3"}||{"w":9}', ids["history"])
+    snap = eprj2.read(out)
+    recs = {(h["type"], h.get("id")): p for h, p in eprj2.split_records(snap["text"])}
+    assert recs[("LINE", "e1")] == '{"w":1}'
+    assert recs[("LINE", "e2")] == '{"w":7}'          # the first chunk
+    assert recs[("LINE", "e3")] == '{"w":9}'          # the second overrides the first
+    assert snap["deltas"] == 2
+
+
+def test_a_missing_chunk_is_refused(template, tmp_path):
+    out = tmp_path / "a.eprj2"
+    ids = eprj2.write(template, out, BASE, {}, "A")
+    _append_chunk(out, '{"type":"EDIT_HEAD"}||{"uuid":"x"}', ids["history"])
+    db = sqlite3.connect(out)
+    db.execute("delete from history_data where uuid=?", (ids["history"] + "-1",))
+    db.commit()
+    db.close()
+    with pytest.raises(ValueError, match="missing"):
+        eprj2.read(out)
+
+
 def test_a_branching_history_is_refused(template, tmp_path):
     out = tmp_path / "a.eprj2"
     eprj2.write(template, out, BASE, {}, "A")

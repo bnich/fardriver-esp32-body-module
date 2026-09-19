@@ -132,8 +132,10 @@ def _replay(texts):
     """Snapshots in chain order -> one stream.  The first is the design; each
     later one is what a save changed.  A record replaces the record with the
     same (document, type, id) and keeps its place; a new one is appended to its
-    document; a new document is appended.  An empty payload is read as a
-    deletion -- INFERRED: no editor-saved deletion has been seen yet."""
+    document; a new document is appended.  An empty payload is a deletion: the
+    editor deletes a BLOB by writing one, though no saved file has shown it yet.
+    NOT handled: a deleted document keeps its records plus a `DELETE_DOC`
+    record with `isDelete: true`, and is returned here as if it were live."""
     lead, order, docs = [], [], {}
     for text in texts:
         head, found = documents(split_records(text))
@@ -160,21 +162,30 @@ def read(path):
 
     A file this tool wrote holds one snapshot.  A file the editor has saved
     into holds a CHAIN: each save appends a history row whose parent is the
-    previous one and whose snapshot holds only what changed.  The chain is
-    replayed in order (`_replay`); a history that branches is refused."""
+    previous one and whose snapshot holds only what changed.  A save may
+    instead append a CHUNK to the newest row: history_data `<uuid>-<n>`, under
+    that row's key with the same IV, and the row's `num` counts them.  Every
+    snapshot and chunk is replayed in order (`_replay`); a history that
+    branches, or a chunk that is missing, is refused."""
     db = _open_ro(path)
     try:
         table = _history_table(db)
-        rows = db.execute(f'select uuid, key, parent from "{table}" order by id').fetchall()
+        rows = db.execute(f'select uuid, key, parent, num from "{table}" '
+                          f'order by id').fetchall()
         texts, prev = [], None
-        for hid, key, parent in rows:
+        for hid, key, parent, num in rows:
             if (parent or None) != prev:
                 raise ValueError(f"{path}: history is not a single chain "
                                  f"({hid} follows {parent!r}, expected {prev!r})")
-            data = db.execute("select dataStr from history_data where uuid=?",
-                              (hid,)).fetchone()[0]
-            plain = _aesgcm(key).decrypt(bytes.fromhex(hid), base64.b64decode(data), None)
-            texts.append(gzip.decompress(plain).decode("utf-8"))
+            for part in [hid] + [f"{hid}-{n}" for n in range(1, num + 1)]:
+                found = db.execute("select dataStr from history_data where uuid=?",
+                                   (part,)).fetchone()
+                if found is None:
+                    raise ValueError(f"{path}: history_data {part} is missing "
+                                     f"(entry {hid} counts {num} chunk(s))")
+                plain = _aesgcm(key).decrypt(bytes.fromhex(hid),
+                                             base64.b64decode(found[0]), None)
+                texts.append(gzip.decompress(plain).decode("utf-8"))
             prev = hid
         structure = json.loads(db.execute(
             "select structure from project_structures order by id desc "
