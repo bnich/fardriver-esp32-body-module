@@ -649,6 +649,15 @@ _U401_PINS = (
 #: Expander #2's spare input-capable bits: on J409, unfitted.  GPA7/GPB7 are
 #: output-only and stay nc.
 _U403_SPARES = tuple(f"GPA{i}" for i in range(1, 7)) + tuple(f"GPB{i}" for i in range(7))
+#: Each spare is class A (plan §4), as the bar inputs are, and the network is
+#: fitted: a header soldered into J409 later is ready to wire.  (bit, J409 pin,
+#: pull-up, series, cap, TVS line); four SMS05T1G quads, the last three lines
+#: of D413 grounded as on the other arrays.
+_SPARE_TVS = ("D410", "D411", "D412", "D413")
+_SPARE_LINES = tuple(
+    (bit, n, f"R{446 + i}", f"R{459 + i}", f"C{423 + i}",
+     f"{_SPARE_TVS[i // 4]}.{('K1', 'K3', 'K4', 'K6')[i % 4]}")
+    for i, (n, bit) in enumerate(enumerate(_U403_SPARES, start=3)))
 
 
 _MCP_SOURCE = (
@@ -711,6 +720,10 @@ _BRAIN_PARTS = (
                 f"bits are spare, brought out to the unfitted header J409. "
                 f"nc INTA: nothing on #2 needs an interrupt; ACC_SENSE is "
                 f"polled. {_MCP_SOURCE}"),
+    *(part for bit, _, pull, series, cap, _ in _SPARE_LINES
+      for part in _class_a_parts(pull, series, cap, f"SPARE_{bit[2:]}")),
+    *(_tvs5(ref, "BRAIN", "J409, expander #2's spare inputs: class A (plan §4)")
+      for ref in _SPARE_TVS),
     Part("U404", "SN65HVD230DR", "SOIC-8", "BRAIN", "IC",
          ("D", "GND", "VCC", "R", "CANL", "CANH", "RS"), 1.75,
          height_confirmed=True, footprint_mm=(5.0, 6.2), nc=("Vref",),
@@ -981,6 +994,9 @@ _NETS_RAILS = (
              "D404.A2 D404.A5 D404.K4 D404.K6 "
              "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.2 "
              "J401.6 J401.7 J402.1 J403.1 J404.4 J408.6 J409.2 J409.16")
+        + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
+        + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
+        + _p("D413.K3 D413.K4 D413.K6")
         + _hvlink("GND") + _pwrup("GND") + _STACK_GND,
         domain="GND", interface="HV-LINK",
         source="The star net, on all four boards and across all three "
@@ -1017,7 +1033,8 @@ _NETS_RAILS = (
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R432.2 R433.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
-           "J408.5 J409.1") + _stack("V3P3") + _p("R317.2 R318.2"),
+           "J408.5 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
+        + _stack("V3P3") + _p("R317.2 R318.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
                "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
@@ -1095,10 +1112,6 @@ _NETS_BRAKE = (
     Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
         domain="3V3", interface="STACK",
         source="The 100 kΩ-isolated copy of BL that firmware reads"),
-    *(Net(f"SPARE_{bit[2:]}", _p(f"U403.{bit} J409.{n}"), domain="3V3",
-          source="Expander #2 spare input on J409. Unfitted: firmware keeps its "
-                 "pull-up on (GPPU) until something is wired here")
-      for n, bit in enumerate(_U403_SPARES, start=3)),
     Net("ACC_SENSE", _p("R343.2 R344.1") + _stack("ACC_SENSE") + _p("U403.GPA0"),
         domain="3V3", interface="STACK",
         source="ACC+ divided to 3.28 V for expander #2. LOW with the key on "
@@ -1332,14 +1345,15 @@ _NETS_BRAIN = (
 
 
 def _class_a_nets(pull: str, series: str, cap: str, net: str, bit: str,
-                  wire: str, where: str) -> tuple[Net, Net]:
+                  wire: str, where: str, expander: str = "U402") -> tuple[Net, Net]:
     """The two nets of one class-A input: harness side, then expander side."""
+    which = {"U402": "#1", "U403": "#2"}[expander]
     return (
         Net(f"{net}_WIRE", _p(f"{pull}.1 {series}.1 {wire}"), domain="3V3",
             source=f"Harness side of {net}: pull-up, series resistor and TVS "
                    f"all at the module end. {where}"),
-        Net(net, _p(f"{series}.2 {cap}.1 U402.{bit}"), domain="3V3",
-            source=f"The conditioned node at expander #1's {bit}"),
+        Net(net, _p(f"{series}.2 {cap}.1 {expander}.{bit}"), domain="3V3",
+            source=f"The conditioned node at expander {which}'s {bit}"),
     )
 
 
@@ -1372,6 +1386,10 @@ _NETS_CLASS_A = (
                "bar contact"),
     Net("START_SENSE", _p("R423.2 C411.1 U402.GPB4"), domain="3V3",
         source="The conditioned start-button node at expander #1's GPB4"),
+    *(net for bit, n, pull, series, cap, tvs in _SPARE_LINES
+      for net in _class_a_nets(pull, series, cap, f"SPARE_{bit[2:]}", bit,
+                               f"J409.{n} {tvs}", "J409, internal: a spare of "
+                               "expander #2, header not fitted", expander="U403")),
 )
 
 _NETS = (_NETS_84V + _NETS_RAILS + _NETS_12V + _NETS_BRAKE + _NETS_STACK
@@ -1615,17 +1633,18 @@ _CONNECTORS = (
         source="⬜ Part unchosen: a 1 × 6 right-angle 2.54 mm pin header is "
                "~3 mm above the board, unconfirmed"),
     Connector("J409", "BRAIN", "Spare inputs, INTERNAL: expander #2's thirteen "
-              "spare bits, 3.3 V logic straight to U403, unprotected", (
+              "spare bits, each class-A conditioned on the board", (
         _cp("1", "V3P3"),
         _cp("2", "GND"),
-        *(_cp(str(n), f"SPARE_{bit[2:]}", f"U403.{bit}")
-          for n, bit in enumerate(_U403_SPARES, start=3)),
+        *(_cp(str(n), f"SPARE_{bit[2:]}_WIRE", f"U403.{bit}, class A")
+          for bit, n, *_ in _SPARE_LINES),
         _cp("16", "GND"),
     ), 8.5, footprint_mm=(20.32, 5.08), leaves_box=False, dnp=True,
         source="2 × 8 vertical 2.54 mm pin header, the footprint only: fit a "
-               "header when a spare is wanted. Whatever is wired here brings its "
-               "own conditioning (series R, filter, clamp; plan §4) and never "
-               "leaves the box without it. LCSC lists it 2.5 mm of body and a "
+               "header when a spare is wanted. Every spare is class A (plan §4), "
+               "fitted: a 1 kΩ pull-up to 3V3 and an SMS05T1G line on the header "
+               "side, 1 kΩ series and 100 nF at the pin. For a dry contact to "
+               "ground or 3.3 V logic; nothing above 5 V. LCSC lists it 2.5 mm of body and a "
                "6 mm pin, so 8.5 mm fitted, unconfirmed: below BRAIN's 9.2 mm "
                "terminals"),
 )
