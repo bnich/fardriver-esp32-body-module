@@ -27,7 +27,7 @@ from .model import Connector, Part
 FOOTPRINT_FROM_MPN = {
     "VY2472M49Y5US6": None,         # drawn FLAT: 7.5 mm leads (C1620119's library land is 10 mm)
     "EKXJ221ELL221MM25S": None,     # drawn LYING, with its body outline
-    "PA25V680M8x12": None,          # drawn LYING, with its body outline
+    "PA35V680M10x15": None,         # drawn LYING, with its body outline
     "01110501Z": None,              # both clips in one drawn footprint, 17.8 mm apart
     "CN150B110-12/CO": None,        # no library device: generated from TDK's drawing
     "EC7BW-110S05": None,           # no library device: generated from Cincon's drawing
@@ -68,6 +68,10 @@ _BY_MPN = {
     # symbol numbers K = 2: pad 1 is the ANODE here, unlike the generic
     # diode rule below -- a reversed clamp would short its lamp output.
     "SMF18A": {"1": "A", "2": "K"},
+    # ST USBLC6-2 (usblc6-2.pdf) p.1: 1 I/O1, 2 GND, 3 I/O2, 4 I/O2, 5 VBUS,
+    # 6 I/O1 -- by role, so a swapped GND and VBUS is a polarity error.
+    "USBLC6-2SC6": {"1": "IO1A", "2": "GND", "3": "IO2A", "4": "IO2B", "5": "VBUS",
+                    "6": "IO1B"},
     # TI SBVS157E p.4, TLV803 DBZ (SOT-23): GND 1, RESET 2, VDD 3
     "TLV803SDBZR": {"1": "GND", "2": "RESET", "3": "VDD"},
     # TI SLOS346O, D (SOIC-8)

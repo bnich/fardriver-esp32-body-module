@@ -42,7 +42,14 @@ def _c(ref, board, value, volts, **kw):
                 v_max=volts, value=value, source="fixture", **kw)
 
 
+#: Each fixture TVS's clamping voltage at its rated pulse, as its datasheet
+#: states it (VR-CLAMP needs one on every TVS).
+CLAMPS = {"SMCJ90A": 146.0, "SMBJ15A": 24.4, "SMS15T1G": 29.0, "PESD5V0S4UD": 9.8}
+
+
 def _d(ref, board, mpn, kind, volts, **kw):
+    if kind == "TVS":
+        kw.setdefault("v_clamp", CLAMPS.get(mpn))
     return Part(ref, mpn, "SMD", board, kind, ("A", "K"), 1.1, v_max=volts,
                 source="fixture", **kw)
 
@@ -53,9 +60,11 @@ def _fet(ref, board, mpn, kind, volts, height=1.2):
 
 
 def _array(ref, board, mpn, volts):
-    """SC-74 quad array: 1/3/4/6 are the cathodes, 2/5 the common anode."""
+    """SC-74 quad array, pins by role as the netlist names them: K1/K3/K4/K6
+    are the cathodes, A2/A5 the common anode."""
     return Part(ref, mpn, "SC-74", board, "TVS",
-                ("1", "2", "3", "4", "5", "6"), 1.1, v_max=volts, source="fixture")
+                ("K1", "A2", "K3", "K4", "A5", "K6"), 1.1, v_max=volts,
+                v_clamp=CLAMPS[mpn], source="fixture")
 
 
 def _ic(ref, mpn, package, board, kind, all_pins, unused, height, **kw):
@@ -77,7 +86,7 @@ DOMAINS = {
     "GND": "GND", "BASEPLATE": "GND",
     "HV_BPLUS": "84V", "HV_SW": "84V", "KSW": "84V", "D13_GATE": "84V",
     "D13_PD": "84V", "HV_C1_P": "84V", "HV_C1_N": "84V",
-    "D13_EN": "12V", "V12": "12V", "HORN_OUT": "12V", "LEVER_L": "12V",
+    "D13_EN": "12V", "V12": "12V", "V5": "5V", "HORN_OUT": "12V", "LEVER_L": "12V",
     "Q1_GATE": "12V", "STOP_OUT": "12V", "HL_LOW": "12V", "DISP_LINE": "12V",
     "V3P3": "3V3", "KEY_SENSE": "3V3", "HORN_CMD": "3V3",
     "IN05_BRAKE_L": "3V3", "EN": "3V3", "SW_WIRE": "3V3", "SW_IN": "3V3",
@@ -95,7 +104,7 @@ DOMAINS = {
 }
 INTERFACES = {
     "GND": "HV-LINK", "HV_C1_P": "HV-LINK", "HV_C1_N": "HV-LINK",
-    "KEY_SENSE": "HV-LINK", "V12": "PWR-UP", "V3P3": "STACK",
+    "KEY_SENSE": "HV-LINK", "V12": "PWR-UP", "V5": "PWR-UP", "V3P3": "STACK",
     "HORN_CMD": "STACK", "IN05_BRAKE_L": "STACK", "CS1": "STACK",
     "LGT_LOW": "STACK",
 }
@@ -109,7 +118,7 @@ GPIOS = {
 def _good() -> Design:
     # Power buses read the same from both ends, a return beside every rail.
     hv_link = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE", "GND", "HV_C1_N", "HV_C1_P")
-    pwr = ("V12", "GND", "KEY_SENSE", "GND", "V12")
+    pwr = ("V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5", "GND", "V12")
     stack = ("HORN_CMD", "GND", "IN05_BRAKE_L", "GND", "V3P3", "GND", "CS1",
              "GND", "LGT_LOW")
     connectors = (
@@ -132,7 +141,8 @@ def _good() -> Design:
         _conn("J302", "DRV", "Stop lamp", ("STOP_OUT", "GND")),
         _conn("J303", "DRV", "Horn", ("V12", "HORN_OUT")),
         _conn("J306", "DRV", "Brake lever", ("LEVER_L", "GND")),
-        _conn("J305", "DRV", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True),
+        _conn("J305", "DRV", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True,
+              dnp=True),
         # BRAIN
         _conn("J406", "BRAIN", "STACK", stack, leaves_box=False, interface="STACK",
               side="bottom"),
@@ -170,6 +180,10 @@ def _good() -> Design:
             ("-Vin", "CNT", "+Vin", "-V", "-S", "TRM", "+S", "+V", "BASEPLATE"),
             {"TRM"}, 5.0),
         _c("C201", "CONV", "220u", 160.0, side="bottom"),
+        # The logic rail's own converter, so BRAIN's regulator is not on the
+        # clamped 12 V rail (no TVS holds 12 V under its 16 V).
+        _ic("U202", "EC7BW-110S05", "MODULE", "CONV", "CONVERTER",
+            ("+Vin", "-Vin", "+Vout", "-Vout"), set(), 3.0),
         _c("C203", "CONV", "4.7n Y2", 1000.0),
         _r("R211", "CONV", "0R"),
         _c("C207", "CONV", "680u", 25.0),
@@ -237,19 +251,22 @@ def _good() -> Design:
     wire("D13_PD", ("R101", "2"), ("Q105", "D"))
     wire("D13_EN", ("R112", "2"), ("Q105", "G"), ("R113", "1"), ("D106", "K"), ("C108", "1"))
     wire("KEY_SENSE", ("R107", "2"), ("R109", "1"), ("C109", "1"), ("U401", "IO1"))
-    wire("HV_C1_P", ("L101", "4"), ("U201", "+Vin"), ("C201", "1"), ("C203", "1"))
-    wire("HV_C1_N", ("L101", "3"), ("U201", "-Vin"), ("U201", "CNT"), ("C201", "2"))
+    wire("HV_C1_P", ("L101", "4"), ("U201", "+Vin"), ("C201", "1"), ("C203", "1"),
+         ("U202", "+Vin"))
+    wire("HV_C1_N", ("L101", "3"), ("U201", "-Vin"), ("U201", "CNT"), ("C201", "2"),
+         ("U202", "-Vin"))
     wire("BASEPLATE", ("U201", "BASEPLATE"), ("C203", "2"), ("R211", "1"))
     wire("V12", ("U201", "+V"), ("U201", "+S"), ("C207", "1"), ("C208", "1"),
          ("D315", "K"), ("R313", "2"), ("Q304", "S"), ("U301", "VS"),
-         ("C303", "1"), ("C304", "1"), ("U405", "IN"), ("U405", "EN"), ("C404", "1"))
+         ("C303", "1"), ("C304", "1"))
+    wire("V5", ("U202", "+Vout"), ("U405", "IN"), ("U405", "EN"), ("C404", "1"))
     wire("HORN_CMD", ("U401", "IO42"), ("R310", "1"))
     wire("HORN_GATE", ("R310", "2"), ("Q301", "G"), ("R307", "1"))
-    wire("HORN_OUT", ("Q301", "D"), ("D310", "1"))
-    wire("LEVER_L", ("D303", "K"), ("D305", "K"), ("D310", "3"))
+    wire("HORN_OUT", ("Q301", "D"), ("D310", "K1"))
+    wire("LEVER_L", ("D303", "K"), ("D305", "K"), ("D310", "K3"))
     wire("Q1_GATE", ("D303", "A"), ("R313", "1"), ("Q304", "G"))
-    wire("STOP_OUT", ("Q304", "D"), ("D310", "4"))
-    wire("HL_LOW", ("U301", "OUT1"), ("D310", "6"))
+    wire("STOP_OUT", ("Q304", "D"), ("D310", "K4"))
+    wire("HL_LOW", ("U301", "OUT1"), ("D310", "K6"))
     wire("IN05_BRAKE_L", ("D305", "A"), ("R317", "1"), ("U401", "IO7"))
     wire("DISP_LINE", ("D406", "K"))
     wire("LGT_LOW", ("U401", "IO38"), ("R330", "1"))
@@ -264,11 +281,11 @@ def _good() -> Design:
     wire("BOOT", ("U401", "IO0"))
     wire("U0TXD", ("U401", "IO43"))
     wire("U0RXD", ("U401", "IO44"))
-    wire("USB_DM", ("U401", "IO19"), ("D401", "1"))
-    wire("USB_DP", ("U401", "IO20"), ("D401", "3"))
-    wire("SW_WIRE", ("R410", "1"), ("D401", "4"))
+    wire("USB_DM", ("U401", "IO19"), ("D401", "K1"))
+    wire("USB_DP", ("U401", "IO20"), ("D401", "K3"))
+    wire("SW_WIRE", ("R410", "1"), ("D401", "K4"))
     wire("SW_IN", ("R410", "2"), ("R411", "2"), ("C410", "1"), ("U401", "IO15"))
-    wire("POD2_WIRE", ("R412", "1"), ("D401", "6"))
+    wire("POD2_WIRE", ("R412", "1"), ("D401", "K6"))
     wire("POD2_IN", ("R412", "2"), ("R413", "2"), ("U402", "GPB3"))
     wire("MCP_RESET", ("U402", "RESET"), ("R414", "2"))
     wire("SDA", ("U401", "IO8"), ("U402", "SDA"), ("R415", "2"))
@@ -277,11 +294,11 @@ def _good() -> Design:
          ("D101", "A"), ("D104", "A"), ("Q105", "S"), ("R113", "2"), ("D106", "A"),
          ("C108", "2"), ("R109", "2"), ("C109", "2"), ("L101", "2"),
          ("U201", "-V"), ("U201", "-S"), ("R211", "2"), ("C207", "2"), ("C208", "2"),
-         ("Q301", "S"), ("R307", "2"), ("D315", "A"), ("D310", "2"), ("D310", "5"),
+         ("Q301", "S"), ("R307", "2"), ("D315", "A"), ("D310", "A2"), ("D310", "A5"),
          ("D406", "A"), ("U301", "GND"), ("U301", "DIAG_EN"), ("U301", "SEL"),
          ("U301", "SEH"), ("R319", "2"), ("R321", "2"), ("C303", "2"), ("C304", "2"),
-         ("U401", "GND"), ("U405", "GND"), ("C404", "2"), ("C402", "2"),
-         ("C403", "2"), ("C405", "2"), ("C401", "2"), ("D401", "2"), ("D401", "5"),
+         ("U401", "GND"), ("U405", "GND"), ("C404", "2"), ("C402", "2"), ("U202", "-Vout"),
+         ("C403", "2"), ("C405", "2"), ("C401", "2"), ("D401", "A2"), ("D401", "A5"),
          ("C410", "2"), ("C301", "2"), ("U402", "VSS"), ("U402", "A0"),
          ("U402", "A1"), ("U402", "A2"))
 
@@ -339,7 +356,7 @@ RULE_IDS = {
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
-    "D10", "SUPPLY", "BUS-ORDER",
+    "D10", "SUPPLY", "BUS-ORDER", "LISTEN", "VR-CLAMP", "VR-POWER", "PULL-DIR",
 }
 
 
@@ -873,7 +890,7 @@ def test_vr_under_fires_on_an_under_rated_capacitor():
 
 
 def test_vr_under_fires_on_a_rated_ic():
-    assert any("U405" in e for e in fired(GOOD.replace_part("U405", v_max=5.5), "VR-UNDER"))
+    assert any("U405" in e for e in fired(GOOD.replace_part("U405", v_max=4.5), "VR-UNDER"))
 
 
 def test_vr_lets_a_25v_cap_sit_across_a_zener_clamped_gate():
@@ -918,7 +935,7 @@ def test_lv_logic_accepts_a_divider():
 
 # ── PROT: fitted, at the connector, and returned to ground ───────────────────
 def test_prot_fires_when_the_tvs_is_removed_from_the_net():
-    assert any("HL_LOW" in e for e in fired(GOOD.without_pin("D310", "6"), "PROT"))
+    assert any("HL_LOW" in e for e in fired(GOOD.without_pin("D310", "K6"), "PROT"))
 
 
 def test_prot_fires_on_a_tvs_with_one_leg_floating():
@@ -928,7 +945,7 @@ def test_prot_fires_on_a_tvs_with_one_leg_floating():
 
 def test_prot_fires_when_every_array_anode_is_lifted():
     """Audit 1b."""
-    bad = GOOD.without_pin("D310", "2").without_pin("D310", "5")
+    bad = GOOD.without_pin("D310", "A2").without_pin("D310", "A5")
     assert {"HL_LOW", "HORN_OUT", "LEVER_L", "STOP_OUT"} <= {
         m.group(1) for e in fired(bad, "PROT") if (m := re.search(r"net '(\w+)'", e))}
 
@@ -948,7 +965,7 @@ def test_prot_fires_on_a_tvs_on_another_board():
 def test_prot_fires_when_the_return_is_an_island_called_ground():
     """Audit F-3: LAMP_COMMON satisfied the old rule with the TVS anodes."""
     bad = GOOD.with_net(Net("LAMP_COMMON", (), domain="GND"))
-    bad = move_pin(move_pin(bad, "D310", "2", "LAMP_COMMON"), "D310", "5", "LAMP_COMMON")
+    bad = move_pin(move_pin(bad, "D310", "A2", "LAMP_COMMON"), "D310", "A5", "LAMP_COMMON")
     assert fired(bad, "PROT")
     assert any("LAMP_COMMON" in e for e in fired(bad, "GND-ISLAND"))
 
@@ -963,9 +980,12 @@ def test_prot_needs_a_rail_clamp_where_the_rail_leaves_the_box():
 
 
 def test_prot_lets_a_parked_connector_keep_its_tvs_dnp_but_not_unwired():
+    """Parked AND with its header unfitted: nothing can plug in, so its clamp
+    may be unfitted too. The label alone excuses nothing (review CK-7)."""
     assert not [e for e in fired(GOOD, "PROT") if "J305" in e]
     assert any("J305" in e for e in fired(GOOD.without_pin("D406", "A"), "PROT"))
     assert any("J305" in e for e in fired(GOOD.replace_connector("J305", parked=False), "PROT"))
+    assert any("J305" in e for e in fired(GOOD.replace_connector("J305", dnp=False), "PROT"))
 
 
 def test_prot_reads_the_connector_table_as_well_as_the_net():

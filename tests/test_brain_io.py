@@ -37,7 +37,7 @@ def test_the_usb_esd_array_rides_3v3_so_d_plus_cannot_back_drive_vbus():
     and holds the unplugged VBUS near 2.7 V: 1.7 V at GPB6, neither high nor
     low.  On V3P3 the diodes clamp to the rail the pins live on."""
     d = _d()
-    assert _net(d, "D409", "5") == "V3P3"
+    assert _net(d, "D409", "VBUS") == "V3P3"
     assert _pins(d, "USB_VBUS") == {("J401", "1"), ("R444", "1")}
 
 

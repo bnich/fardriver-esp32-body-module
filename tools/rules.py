@@ -28,7 +28,8 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER
+  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER  LISTEN  VR-CLAMP
+  VR-POWER  PULL-DIR
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
 must look at but a gate must not fail on (HT-W*, BOX-W*).
@@ -48,7 +49,7 @@ import re
 from collections import Counter, defaultdict, deque
 
 from . import board_params as _bp
-from .model import DOMAIN_VOLTS, Connector, Design, Part
+from .model import DOMAIN_VOLTS, Connector, Design, Part, resistance
 
 try:                                    # silicon facts have ONE home when it exists
     from . import gpio_budget as _gb
@@ -116,12 +117,56 @@ RATED_KINDS = ("C", "D", "ZENER", "TVS", "NFET", "PFET", "R")
 def _is_link(p: Part) -> bool:
     """A 0 R link or a copper net-tie: a conductor, with no voltage across it."""
     return p.kind == "R" and (p.mpn == "NET-TIE" or p.value.strip().upper() in ("0R", "0"))
-#: What a DC path may pass through. A fuse holder is not one: its two clips
-#: meet only through the fuse it holds, and the fuse is the FUSE part.
-_SERIES = ("R", "L", "FUSE")
-_HAZARD_PATH = _SERIES + ("D", "CMCHOKE") + FETS
-_HV_JOIN = ("L", "FUSE", "D", "CMCHOKE") + FETS
-_GROUND_JOIN = _SERIES + ("CMCHOKE",)
+
+
+def _kind(p: Part) -> str:
+    """The kind a walk sees. A 0 R link, a net-tie and any MECH part landed on
+    two nets (a jumper, a standoff bonding two planes) are one thing: LINK, a
+    plain conductor. Everything else is its own kind."""
+    if _is_link(p) or (p.kind == "MECH" and len(p.pins) >= 2):
+        return "LINK"
+    return p.kind
+
+
+#: Diode-like kinds: each conducts forward, anode to cathode, whatever it is
+#: sold as -- a TVS or zener is a diode first.
+_DIODES = ("D", "ZENER", "TVS")
+#: What a DC path may pass through both ways. A fuse holder is not one: its two
+#: clips meet only through the fuse it holds, and the fuse is the FUSE part.
+_SERIES = ("R", "L", "FUSE", "LINK")
+_HAZARD_PATH = _SERIES + _DIODES + ("CMCHOKE",) + FETS
+#: Low-impedance joins: what can carry pack voltage somewhere. Not resistors
+#: (the dividers), but a link is a wire whatever its package.
+_HV_JOIN = ("L", "FUSE", "LINK", "CMCHOKE") + _DIODES + FETS
+#: What makes two ground-typed nets one ground: copper, not a resistor. A
+#: clamp returned through 10 k is not grounded.
+_GROUND_JOIN = ("LINK", "L", "FUSE", "CMCHOKE")
+
+#: Multi-pin protection parts whose pins are named by role, not A/K:
+#: MPN prefix -> (diodes as (anode pin, cathode pin), pins joined inside).
+#: ST USBLC6-2 (usblc6-2.pdf) p.1: steering diodes GND -> I/O -> VBUS and a
+#: zener GND -> VBUS; pins 1/6 are one I/O line (flow-through), 3/4 the other.
+_TVS_TOPOLOGY = {
+    "USBLC6": ((("GND", "IO1A"), ("GND", "IO2A"), ("IO1A", "VBUS"),
+                ("IO2A", "VBUS"), ("GND", "VBUS")),
+               (("IO1A", "IO1B"), ("IO2A", "IO2B"))),
+}
+
+
+def _diodes(p: Part) -> tuple[list[tuple[str, str]], list[tuple[str, str]]] | None:
+    """(forward diodes as (anode, cathode), pins joined inside) of a diode-like
+    part, from its pin ROLES; None when the pins carry no roles."""
+    pins = set(p.pins)
+    if pins == {"A", "K"}:
+        return [("A", "K")], []
+    for prefix, (diodes, joined) in _TVS_TOPOLOGY.items():
+        if p.mpn.upper().startswith(prefix):
+            return list(diodes), list(joined)
+    anodes = [x for x in p.pins if re.fullmatch(r"A\d+", x)]
+    cathodes = [x for x in p.pins if re.fullmatch(r"K\d+", x)]
+    if anodes and cathodes and len(anodes) + len(cathodes) == len(p.pins):
+        return [(a, k) for a in anodes for k in cathodes], []   # an SMS-style array
+    return None
 
 #: Ratings READ FROM DATASHEETS, keyed by MPN prefix. A hand-typed `v_max`
 #: above its line here is a typo or a wish. (prefix, volts, source)
@@ -194,18 +239,27 @@ class _Ix:
 
         self._stiff: dict[str, bool] = {}
         self._pull: dict[str, tuple[float, str, list[str]] | None] = {}
+        self._divided: dict[str, tuple[float, list[str]] | None] = {}
         self.grounded = self._ground_component()
 
     # -- what conducts DC between which pins ----------------------------------
     @staticmethod
     def _pairs(p: Part) -> list[tuple[str, str, bool]]:
         pins = set(p.pins)
-        if p.kind in _SERIES and len(p.pins) == 2:
+        kind = _kind(p)
+        if kind == "LINK":
+            ps = list(p.pins)
+            return [(a, b, False) for i, a in enumerate(ps) for b in ps[i + 1:]]
+        if kind in _SERIES and len(p.pins) == 2:
             return [(p.pins[0], p.pins[1], False)]
-        if p.kind == "D" and len(p.pins) == 2:
-            if pins == {"A", "K"}:
-                return [("A", "K", True)]           # current flows A -> K only
-            return [(p.pins[0], p.pins[1], False)]  # polarity unknown: POL fires
+        if kind in _DIODES:
+            roles = _diodes(p)
+            if roles is None:                       # no roles: POL fires; assume
+                ps = list(p.pins)                   # it conducts every way
+                return [(a, b, False) for i, a in enumerate(ps) for b in ps[i + 1:]]
+            diodes, joined = roles
+            return ([(a, k, True) for a, k in diodes]      # current flows A -> K
+                    + [(a, b, False) for a, b in joined])
         if p.kind == "CMCHOKE":
             if {"1", "2", "3", "4"} <= pins:        # windings 1-4 and 2-3
                 return [("1", "4", False), ("2", "3", False)]
@@ -283,7 +337,7 @@ class _Ix:
             if x != start and through is not None and not through(x):
                 continue
             for other, p, flow, _a, _b in self.adj.get(x, ()):
-                if (p.kind not in kinds or (fitted_only and p.dnp)
+                if (_kind(p) not in kinds or (fitted_only and p.dnp)
                         or flow not in flows or other in seen
                         or (enter is not None and not enter(other))):
                     continue
@@ -313,7 +367,7 @@ class _Ix:
         if self.is_stiff(name) or self.is_loaded(name):
             return None
         reach = self.walk(
-            name, _SERIES + ("D",), fitted_only=False, flows=("both", "in"),
+            name, _SERIES + _DIODES, fitted_only=False, flows=("both", "in"),
             enter=lambda n: not self.is_gnd(n),
             through=lambda n: not self.is_stiff(n) and not self.is_loaded(n))
         best = None
@@ -328,16 +382,95 @@ class _Ix:
                 best = (v, other, via)
         return best
 
+    # -- the resistor network: a divider's real voltage ------------------------
+    def is_source(self, name: str) -> bool:
+        """A net whose voltage something outside the resistor network sets: a
+        supply or return, or a wire from outside the box at its stated level."""
+        return self.is_stiff(name) or bool(self.leaves_box_directly(name))
+
+    def divided(self, name: str) -> tuple[float, list[str]] | None:
+        """(volts, sources) of a node held by fitted resistors between sources:
+        the solved network, not its label. Every other connection is taken as
+        high-impedance -- an MCU pin, an IC input, a pin in its reset state --
+        which is the case in which a tap sits highest. None when no source
+        above ground reaches it through resistors."""
+        if name not in self._divided:
+            self._solve_from(name)
+        return self._divided.get(name)
+
+    def _resistors(self, name: str):
+        """(other net, ohms, refdes) for each fitted resistor on `name`."""
+        for other, p, _f, _a, _b in self.adj.get(name, ()):
+            if p.kind != "R" or p.dnp:
+                continue
+            ohms = 1e-3 if _is_link(p) else resistance(p.value)
+            if ohms is not None:
+                yield other, ohms, p.refdes
+
+    def _solve_from(self, name: str) -> None:
+        if self.is_source(name):
+            self._divided[name] = None
+            return
+        nodes, seen, queue, edges = [], {name}, deque([name]), []
+        while queue:
+            x = queue.popleft()
+            nodes.append(x)
+            for other, ohms, ref in self._resistors(x):
+                edges.append((x, other, ohms, ref))
+                if other not in seen:
+                    seen.add(other)
+                    if not self.is_source(other):
+                        queue.append(other)
+        sources = {n: (self.declared(n) or 0.0) for n in seen if self.is_source(n)}
+        if not any(v > 0 for v in sources.values()):
+            for n in nodes:
+                self._divided[n] = None
+            return
+        idx = {n: i for i, n in enumerate(nodes)}
+        size = len(nodes)
+        g = [[0.0] * (size + 1) for _ in range(size)]
+        for a, b, ohms, _ref in edges:
+            c = 1.0 / ohms
+            i = idx[a]
+            g[i][i] += c
+            if b in idx:
+                g[i][idx[b]] -= c
+            else:
+                g[i][size] += c * sources[b]
+        for i in range(size):                  # an isolated island: tie it down
+            if g[i][i] == 0.0:
+                g[i][i] = 1.0
+        for col in range(size):                # Gauss-Jordan, partial pivoting
+            piv = max(range(col, size), key=lambda r: abs(g[r][col]))
+            g[col], g[piv] = g[piv], g[col]
+            if abs(g[col][col]) < 1e-18:
+                continue
+            for r in range(size):
+                if r != col and g[r][col]:
+                    f = g[r][col] / g[col][col]
+                    for k in range(col, size + 1):
+                        g[r][k] -= f * g[col][k]
+        up = sorted(n for n, v in sources.items() if v > 0)
+        for n, i in idx.items():
+            v = g[i][size] / g[i][i] if g[i][i] else None
+            self._divided[n] = None if v is None else (round(v, 3), up)
+
     def volts(self, name: str) -> tuple[float | None, str]:
         """The voltage a part on this net must survive, and why if it is not
-        simply the label."""
+        simply the label: held up with no path to ground, or a divider whose
+        resistor values put it above its label."""
         dec, pull = self.declared(name), self.pulled_up(name)
-        if pull is not None and (dec is None or pull[0] > dec):
-            label = self.nets[name].domain if name in self.nets else "?"
-            return pull[0], (f" (typed {label}, but held at {pull[1]!r} = "
-                             f"{pull[0]:g} V through {'+'.join(pull[2])} with "
-                             f"no path to ground)")
-        return dec, ""
+        label = self.nets[name].domain if name in self.nets else "?"
+        best, why = dec, ""
+        if pull is not None and (best is None or pull[0] > best):
+            best, why = pull[0], (f" (typed {label}, but held at {pull[1]!r} = "
+                                  f"{pull[0]:g} V through {'+'.join(pull[2])} "
+                                  f"with no path to ground)")
+        div = self.divided(name)
+        if div is not None and (best is None or div[0] > best + 0.05):
+            best, why = div[0], (f" (typed {label}, but its resistors put it at "
+                                 f"{div[0]:g} V from {', '.join(div[1])})")
+        return best, why
 
     # -- ground ---------------------------------------------------------------
     def _ground_component(self) -> set[str]:
@@ -474,7 +607,8 @@ def d10_key_wire_is_only_listened_to(d: Design) -> list[str]:
     for name in KEY_NETS:
         if name not in ix.nets:
             continue
-        for other, path in ix.walk(name, _HV_JOIN, fitted_only=False).items():
+        for other, path in ix.walk(name, _HV_JOIN, fitted_only=False,
+                                   enter=lambda n: not ix.is_gnd(n)).items():
             if other != name:
                 errs.append(
                     f"D10: the key wire {name!r} is joined to {other!r} through "
@@ -758,8 +892,13 @@ def turn_on_path(d: Design) -> list[str]:
         if q.dnp or not {"G", "S"} <= set(q.pins):
             continue
         gate, source = ix.nets_of_pin(q.refdes, "G"), ix.nets_of_pin(q.refdes, "S")
-        if not gate or not source or set(gate) & set(source):
-            continue                                  # D14 reports these
+        if not gate or not source:
+            continue                                  # integrity reports these
+        if set(gate) & set(source):
+            errs.append(f"TURN-ON: {q.refdes} ({q.mpn}) has its gate on its own "
+                        f"source net {sorted(set(gate) & set(source))[0]!r}: "
+                        f"V_GS is always 0, so it can never turn on.")
+            continue
         vs = max((ix.volts(s)[0] or 0.0) for s in source)
         if q.kind == "PFET" and vs >= HIGH_SIDE_VOLTS:
             if not any(_pulls_low(ix, g, set(source)) for g in gate):
@@ -800,7 +939,7 @@ def _pulls_low(ix: _Ix, gate: str, source: set[str]) -> bool:
         for other, p, flow, here, _there in ix.adj.get(net, ()):
             if p.dnp:
                 continue
-            if p.kind in _SERIES:
+            if _kind(p) in _SERIES:
                 queue.append((other, used_fet, via_diode))
             elif p.kind == "D" and flow == "out":
                 queue.append((other, used_fet, True))
@@ -956,7 +1095,9 @@ def protection(d: Design) -> list[str]:
                 if t is None or t.kind != "TVS":
                     continue
                 problems = []
-                if t.dnp and not c.parked:
+                # A parked terminal's clamp may be left off only with its
+                # header: the label alone leaves a live header unguarded.
+                if t.dnp and not (c.parked and c.dnp):
                     problems.append("is DNP")
                 if t.board != c.board:
                     problems.append(f"is on {t.board}, not {c.board}")
@@ -1020,15 +1161,380 @@ def mcp23017_bit7(d: Design) -> list[str]:
 
 # ── POL: a diode whose direction nobody wrote down ───────────────────────────
 def polarity(d: Design) -> list[str]:
+    """Every diode-like part names its pins by role, and each diode inside it
+    points the way a clamp must: cathode on the net at the higher level. A
+    multi-pin array numbered 1-6 cannot be checked at all, and a swapped pair
+    of its pins (the USB array's GND and VBUS) shorts a rail."""
+    ix = _index(d)
     errs = []
     for p in d.parts:
-        if len(p.pins) != 2 or set(p.pins) == {"A", "K"}:
+        if p.kind not in _DIODES:
             continue
         bidirectional = p.kind == "TVS" and p.mpn.upper().rstrip("-0123456789").endswith("CA")
-        if p.kind in ("D", "ZENER") or (p.kind == "TVS" and not bidirectional):
-            errs.append(f"POL: {p.refdes} ({p.kind} {p.mpn}) names its pins "
-                        f"{p.pins}. Name them A and K, or its direction is "
-                        f"undefined and no path through it can be checked.")
+        roles = _diodes(p)
+        if roles is None:
+            if not bidirectional:
+                errs.append(f"POL: {p.refdes} ({p.kind} {p.mpn}) names its pins "
+                            f"{p.pins}. Name them by role (A/K, or the part's own "
+                            f"in rules._TVS_TOPOLOGY), or its direction is "
+                            f"undefined and no path through it can be checked.")
+            continue
+        for a, k in roles[0]:
+            for na in ix.nets_of_pin(p.refdes, a):
+                for nk in ix.nets_of_pin(p.refdes, k):
+                    va, vk = ix.declared(na), ix.declared(nk)
+                    if va is not None and vk is not None and vk < va:
+                        errs.append(
+                            f"POL: {p.refdes} ({p.mpn}) has its {a}->{k} diode "
+                            f"from {na!r} ({va:g} V) to {nk!r} ({vk:g} V): "
+                            f"forward-biased, it shorts {na!r} instead of "
+                            f"clamping {nk!r}.")
+    return errs
+
+
+# ── VR-CLAMP: what a TVS lets through must be survivable behind it ──────────
+#: Microchip DS20001952D p.3: MCP23017 input clamp current, I_IK, +/-20 mA.
+MCP_CLAMP_MA = 20.0
+#: What a transient on a clamped net passes on: copper, and diodes forward.
+_CLAMP_JOIN = ("L", "FUSE", "LINK", "CMCHOKE")
+
+
+def _returns(ix: _Ix) -> set[str]:
+    """Nets at ground potential: ground, and anything joined to it only
+    through copper or a choke winding (a converter's -Vin)."""
+    out = set()
+    for n in ix.d.nets:
+        if n.domain == "GND":
+            out |= set(ix.walk(n.name, _CLAMP_JOIN, fitted_only=True))
+    return out
+
+
+def clamp_ratings(d: Design) -> list[str]:
+    """A TVS conducts at its clamping voltage, not its stand-off: every part it
+    protects must survive THAT (HV-3: the 84 V clamp is 146 V, against 160 V
+    converters and a 200 V FET). Rated to ground and checked here: converters'
+    and ICs' supply pins, FETs across their channel, capacitors to a return.
+    An expander pin behind a series resistor must take the clamp's current
+    into its protection diodes (I_IK)."""
+    ix = _index(d)
+    errs = []
+    returns = _returns(ix)
+    for t in ix.parts.values():
+        if t.kind != "TVS" or t.dnp:
+            continue
+        if t.v_clamp is None:
+            errs.append(f"VR-CLAMP: {t.refdes} ({t.mpn}) states no clamping "
+                        f"voltage, so nothing behind it can be checked.")
+            continue
+        roles = _diodes(t)
+        if roles is None:
+            continue
+        for a, k in roles[0]:
+            if not any(n in returns for n in ix.nets_of_pin(t.refdes, a)):
+                continue
+            for guarded in ix.nets_of_pin(t.refdes, k):
+                if guarded in returns:
+                    continue
+                errs += _clamp_victims(ix, t, guarded, returns)
+    return sorted(set(errs))
+
+
+def _clamped(ix: _Ix, name: str) -> bool:
+    """A net with a fitted clamp of its own, which governs it."""
+    return any(p.kind == "TVS" and not p.dnp for p in
+               (ix.parts.get(ref) for ref, _ in ix.nets[name].pins) if p is not None)
+
+
+def _clamp_victims(ix: _Ix, t: Part, guarded: str, returns: set[str]) -> list[str]:
+    """The pulse spreads over copper and forward diodes, and through a switch
+    that may be on -- but not into a net with a clamp of its own, which then
+    holds it (a lamp output's pulse does not set the 12 V rail's level)."""
+    v = t.v_clamp
+    enter = lambda n: n not in returns and (n == guarded or not _clamped(ix, n))
+    on = ix.walk(guarded, _CLAMP_JOIN + _DIODES + FETS, fitted_only=True,
+                 flows=("both", "out"), enter=enter)
+    off = ix.walk(guarded, _CLAMP_JOIN + _DIODES, fitted_only=True,
+                  flows=("both", "out"), enter=enter)
+    errs = []
+    head = f"VR-CLAMP: {t.refdes} ({t.mpn}) clamps {guarded!r} at {v:g} V"
+    for p in ix.parts.values():
+        if p is t or p.dnp or p.v_max is None:
+            continue
+        nets = {pin: ix.nets_of_pin(p.refdes, pin) for pin in ix.pins_of(p)}
+        hit = lambda pin, region: any(n in region for n in nets.get(pin, ()))
+        if p.kind == "CONVERTER" and hit("+Vin", on):
+            why = "at its +Vin"
+        elif p.kind == "IC" and any(hit(pin, on) for pin in _supply_pins(p)):
+            why = "at its supply pin"
+        elif p.kind in FETS and hit("D", off) != hit("S", off):
+            why = "across its channel, switched off"
+        elif p.kind == "C" and len(p.pins) == 2 and (
+                (hit(p.pins[0], on) and any(n in returns for n in nets[p.pins[1]]))
+                or (hit(p.pins[1], on) and any(n in returns for n in nets[p.pins[0]]))):
+            why = "to a return"
+        else:
+            continue
+        if p.v_max < v:
+            errs.append(f"{head}; {p.refdes} ({p.mpn}) is rated {p.v_max:g} V "
+                        f"{why}. Choose a clamp under the part, or a part over "
+                        f"the clamp.")
+    for q in ix.parts.values():
+        if not q.mpn.upper().startswith("MCP23017"):
+            continue
+        vdd = max((ix.volts(n)[0] or 0.0 for n in ix.nets_of_pin(q.refdes, "VDD")),
+                  default=3.3)
+        for pin in ix.pins_of(q):
+            for n in ix.nets_of_pin(q.refdes, pin):
+                for other, ohms, ref in ix._resistors(n):
+                    if other != guarded or ohms <= 0:
+                        continue
+                    ma = (v - (vdd + MCP_PIN_OVER_VDD)) / ohms * 1e3
+                    if ma > MCP_CLAMP_MA:
+                        errs.append(f"{head}; through {ref} ({ohms:g} Ω) that "
+                                    f"drives {ma:.1f} mA into {q.refdes}.{pin}, "
+                                    f"whose clamp diodes take {MCP_CLAMP_MA:g} mA "
+                                    f"(I_IK).")
+    return errs
+
+
+def _supply_pins(p: Part) -> tuple[str, ...]:
+    table = next((v for k, v in SUPPLY_PINS.items() if p.mpn.startswith(k)), None)
+    return tuple(table) if table else ()
+
+
+# ── VR-POWER: what a resistor dissipates at its worst ──────────────────────
+#: Rated power by package: UNI-ROYAL 0603WA (1/10 W), 0805W8 (1/8 W), 1206W4
+#: (1/4 W), the parts _R_LCSC buys.
+R_POWER_W = {"0402": 0.0625, "0603": 0.1, "0805": 0.125, "1206": 0.25}
+#: The most a logic pin drives into a resistor: Espressif ESP32-S3 datasheet
+#: v2.2 p.65 Table 5-4, I_OH 40 mA at PAD_DRIVER 3 (I_OL 28 mA); Microchip
+#: DS20001952D p.3, 25 mA sourced or sunk by any MCP23017 pin.
+PIN_DRIVE_A = {"ESP32": 0.040, "MCP23017": 0.025}
+
+
+def _pin_drive(ix: _Ix, name: str) -> float | None:
+    """The drive limit of the logic pins on `name`, or None if none."""
+    out = [a for ref, _ in ix.nets[name].pins if ref in ix.parts
+           for key, a in PIN_DRIVE_A.items() if key in ix.parts[ref].mpn.upper()]
+    return max(out) if out else None
+
+
+def _hard(ix: _Ix, name: str) -> bool:
+    """A net something other than a resistor can drive or ground: a supply, a
+    wire, a pin of a chip or module, a FET channel, a diode (a lever through
+    its steering diode). A net held only by resistors, gates, capacitors and
+    clamps follows its resistors."""
+    if ix.is_source(name) or ix.net_conns.get(name):
+        return True
+    for ref, pin in ix.nets[name].pins:
+        p = ix.parts.get(ref)
+        if p is None:
+            continue
+        if p.kind in ("IC", "MODULE", "CONVERTER") or p.kind == "D":
+            return True
+        if p.kind in FETS and pin in ("D", "S"):
+            return True
+    return False
+
+
+def _solve(ix: _Ix, nodes: list[str], edges, fixed: dict[str, float]) -> dict[str, float]:
+    """Node voltages of a resistor network with `fixed` nets held."""
+    free = [n for n in nodes if n not in fixed]
+    idx = {n: i for i, n in enumerate(free)}
+    size = len(free)
+    g = [[0.0] * (size + 1) for _ in range(size)]
+    for a, b, ohms in edges:
+        c = 1.0 / ohms
+        for x, y in ((a, b), (b, a)):
+            if x not in idx:
+                continue
+            i = idx[x]
+            g[i][i] += c
+            if y in idx:
+                g[i][idx[y]] -= c
+            else:
+                g[i][size] += c * fixed[y]
+    for i in range(size):
+        if g[i][i] == 0.0:
+            g[i][i] = 1.0
+    for col in range(size):
+        piv = max(range(col, size), key=lambda r: abs(g[r][col]))
+        g[col], g[piv] = g[piv], g[col]
+        if abs(g[col][col]) < 1e-18:
+            continue
+        for r in range(size):
+            if r != col and g[r][col]:
+                f = g[r][col] / g[col][col]
+                for k in range(col, size + 1):
+                    g[r][k] -= f * g[col][k]
+    out = dict(fixed)
+    out.update({n: g[i][size] / g[i][i] for n, i in idx.items()})
+    return out
+
+
+def _worst_across(ix: _Ix, r: Part) -> float:
+    """The most voltage `r` can see: its network solved with every driven net
+    high, then every driven net low (supplies hold their level either way), and
+    -- when both its ends are driven -- one high and the other low."""
+    a, b = (ix.nets_of_pin(r.refdes, pin)[0] if ix.nets_of_pin(r.refdes, pin) else None
+            for pin in r.pins[:2])
+    if a is None or b is None:
+        return 0.0
+    vmax = lambda n: ix.volts(n)[0] or 0.0
+    floor = lambda n: (ix.declared(n) or 0.0) if ix.is_stiff(n) else 0.0
+    if _hard(ix, a) and _hard(ix, b):
+        return max(abs(vmax(a) - floor(b)), abs(vmax(b) - floor(a)))
+    nodes, seen, queue, edges = [], {a, b}, deque([a, b]), []
+    while queue:
+        x = queue.popleft()
+        nodes.append(x)
+        if _hard(ix, x):
+            continue
+        for other, ohms, _ref in ix._resistors(x):
+            edges.append((x, other, max(ohms, 1e-3)))
+            if other not in seen:
+                seen.add(other)
+                queue.append(other)
+    ohms_r = resistance(r.value) or 1e-3
+    edges.append((a, b, max(ohms_r, 1e-3)))
+    worst = 0.0
+    for high in (True, False):
+        fixed = {n: (vmax(n) if (high or ix.is_stiff(n)) else floor(n))
+                 for n in nodes if _hard(ix, n)}
+        if not fixed:
+            continue
+        v = _solve(ix, nodes, edges, fixed)
+        worst = max(worst, abs(v.get(a, 0.0) - v.get(b, 0.0)))
+    return worst
+
+
+def resistor_power(d: Design) -> list[str]:
+    """V²/R at the worst voltage a resistor can see, against its package."""
+    ix = _index(d)
+    errs = []
+    for r in ix.parts.values():
+        if r.kind != "R" or r.dnp or _is_link(r) or len(r.pins) != 2:
+            continue
+        ohms, rated = resistance(r.value), R_POWER_W.get(r.package)
+        if not ohms or rated is None:
+            continue
+        v = _worst_across(ix, r)
+        watts = v * v / ohms
+        # A logic pin is a current-limited driver, not a supply: what it can
+        # push through a resistor to anything but a rail is its drive limit.
+        ends = [ix.nets_of_pin(r.refdes, pin) for pin in r.pins]
+        if not all(ends):
+            continue                          # integrity reports an unlanded pin
+        a, b = ends[0][0], ends[1][0]
+        for pin_net, far in ((a, b), (b, a)):
+            amps = _pin_drive(ix, pin_net)
+            if amps is not None and not ix.is_stiff(far):
+                watts = min(watts, amps * amps * ohms)
+        if watts > rated:
+            errs.append(f"VR-POWER: {r.refdes} ({r.value}, {r.package}) can see "
+                        f"{v:.3g} V and dissipate {watts:.3g} W; its package is "
+                        f"rated {rated:g} W.")
+    return errs
+
+
+# ── PULL-DIR: a switch that closes to ground needs a pull-UP ─────────────────
+def pull_direction(d: Design) -> list[str]:
+    """A wire that meets a logic input through its series resistor carries a
+    contact to ground (plan §4 class A). Pulled only DOWN, it reads 'closed'
+    whether the contact is open or not."""
+    ix = _index(d)
+    logic = {n for p in ix.parts.values()
+             if "ESP32" in p.mpn.upper() or p.mpn.upper().startswith("MCP23017")
+             for pin in ix.pins_of(p) for n in ix.nets_of_pin(p.refdes, pin)
+             if not ix.is_stiff(n)}
+    errs = []
+    for c in d.connectors:
+        if c.interface:
+            continue
+        for name in sorted({cp.net for cp in c.pins if cp.net}):
+            if name not in ix.nets or ix.is_stiff(name):
+                continue
+            ends = list(ix._resistors(name))
+            if not any(o in logic for o, _ohms, _ref in ends):
+                continue
+            ups = [ref for o, _ohms, ref in ends if ix.is_source(o) and (ix.declared(o) or 0) > 0]
+            downs = [ref for o, _ohms, ref in ends if o in ix.nets and ix.is_gnd(o)]
+            if downs and not ups:
+                errs.append(f"PULL-DIR: {name!r} on {c.refdes} feeds a logic input "
+                            f"but is pulled DOWN by {', '.join(downs)} and up by "
+                            f"nothing: a contact to ground can never be read.")
+    return errs
+
+
+# ── LISTEN: the module only listens to the brake and kill hardware ──────────
+#: The D23 hardware's nets: the levers, the stop lamp's gate, command and
+#: channel input, its output, the motor cut and the run/off kill. No firmware
+#: state may reach them except through a high impedance.
+BRAKE_KILL_NETS = ("LEVER_L", "LEVER_R", "Q1_GATE", "STOP_CMD", "STOP_IN4",
+                   "TAIL_STOP", "BL", "Q2_GATE", "RUN", "ACC_PLUS")
+
+
+def _firmware_reach(ix: _Ix) -> dict[str, tuple[float, list[str]]]:
+    """net -> (least ohms, path) from any MCU or expander pin, through
+    resistors (fitted or not: a footprint can be populated) and links both
+    ways, and through a diode only against its conduction -- a pin that pulls
+    a cathode low pulls its anode's net down with it. Never through a supply."""
+    import heapq
+    starts = {n for p in ix.parts.values()
+              if "ESP32" in p.mpn.upper() or p.mpn.upper().startswith("MCP23017")
+              for pin in ix.pins_of(p) for n in ix.nets_of_pin(p.refdes, pin)
+              if not ix.is_stiff(n)}
+    best: dict[str, tuple[float, list[str]]] = {n: (0.0, []) for n in starts}
+    heap = [(0.0, n) for n in starts]
+    while heap:
+        ohms, x = heapq.heappop(heap)
+        if ohms > best[x][0] or (ix.is_stiff(x) and x not in starts):
+            continue
+        for other, p, flow, _a, _b in ix.adj.get(x, ()):
+            k = _kind(p)
+            if k == "LINK":
+                step = 0.0
+            elif k == "R":
+                step = resistance(p.value)
+                if step is None:
+                    continue
+            elif k in _DIODES and flow == "in":
+                step = 0.0
+            else:
+                continue
+            total = ohms + step
+            if other not in best or total < best[other][0]:
+                best[other] = (total, best[x][1] + [p.refdes])
+                heapq.heappush(heap, (total, other))
+    return best
+
+
+def listen_only(d: Design) -> list[str]:
+    """CLAUDE.md: the brake cutoff and brake light are hardware and the module
+    only listens. Firmware may SENSE a brake or kill net through a high
+    impedance (the IN-11 tap reads RUN through 100 k); it may not drive one
+    through less, and it may not drive, through less, the gate of a FET whose
+    channel lands on one."""
+    ix = _index(d)
+    reach = _firmware_reach(ix)
+    errs = []
+    for name in BRAKE_KILL_NETS:
+        hit = reach.get(name)
+        if hit is not None and hit[0] < HI_Z_INPUT_OHMS:
+            errs.append(f"LISTEN: firmware reaches the brake/kill net {name!r} "
+                        f"through {hit[0]:g} Ω ({_via(hit[1])}); below "
+                        f"{HI_Z_INPUT_OHMS:g} Ω a pin can drive it. The module "
+                        f"only listens to the D23 hardware.")
+    for q in ix.fets():
+        gates = [n for n in ix.nets_of_pin(q.refdes, "G")
+                 if n in reach and reach[n][0] < HI_Z_INPUT_OHMS]
+        channel = [n for pin in ("D", "S") for n in ix.nets_of_pin(q.refdes, pin)
+                   if n in BRAKE_KILL_NETS]
+        if gates and channel:
+            errs.append(f"LISTEN: {q.refdes} ({q.mpn}) switches the brake/kill "
+                        f"net {channel[0]!r} and firmware drives its gate "
+                        f"{gates[0]!r} ({_via(reach[gates[0]][1])}). The module "
+                        f"only listens to the D23 hardware.")
     return errs
 
 
@@ -1079,6 +1585,10 @@ ALL_RULES = (
     polarity,
     heights,
     bus_order,
+    listen_only,
+    clamp_ratings,
+    resistor_power,
+    pull_direction,
 )
 
 

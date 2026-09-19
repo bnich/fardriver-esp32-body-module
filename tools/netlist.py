@@ -99,6 +99,7 @@ _R_LCSC = {
     ("180k", "0805"): ("C17501", "UNI-ROYAL 0805W8F1803T5E", 150.0, "preferred Extended"),
     ("240k", "0603"): ("C4197", "UNI-ROYAL 0603WAF2403T5E", 75.0, "preferred Extended"),
     # The 84 V string: 1206, 200 V. No Basic part exists at these values.
+    ("1k", "1206"): ("C4410", "UNI-ROYAL 1206W4F1001T5E", 200.0, "Basic"),
     ("165k", "1206"): ("C2999515", "FOJAN FRC1206F1653TS", 200.0, "Extended"),
     ("270k", "1206"): ("C17940", "UNI-ROYAL 1206W4F2703T5E", 200.0, "Extended"),
     ("499k", "1206"): ("C55020396", "FOJAN FRQ1206F4993TS", 200.0, "Extended"),
@@ -168,7 +169,7 @@ def _tvs15(refdes: str, board: Board, where: str, dnp: bool = False) -> Part:
     """onsemi SMS15T1G, the 15 V quad array for every 12 V-class wire."""
     return Part(refdes, "SMS15T1G", "SC-74", board, "TVS", TVS_ARRAY_PINS, 1.10,
                 height_confirmed=True, footprint_mm=(3.1, 3.0), v_max=15.0,
-                dnp=dnp, value="V_RWM 15 V · 24.0 V @ 5 A · 29.0 V @ 12 A",
+                v_clamp=29.0, dnp=dnp, value="V_RWM 15 V · 24.0 V @ 5 A · 29.0 V @ 12 A",
                 source=f"{where}. {_DS_SMS}: p.1 pads 1/3/4/6 cathode, 2/5 "
                        f"anode; p.2 V_RWM 15 V, V_BR 16.7-18.5 V, clamp under "
                        f"the AO3400A's 30 V; p.4 SC-74 A max 1.10 mm. Spare "
@@ -183,7 +184,7 @@ def _tvs18(refdes: str, board: Board, where: str) -> Part:
     current-limit current until it failed short.  29.2 V clamp: under the
     AO3400A's 30 V and the TPS4H160B's 40 V."""
     return Part(refdes, "SMF18A", "SOD-123FL", board, "TVS", ("A", "K"), 1.1,
-                footprint_mm=(3.9, 1.9), v_max=18.0,
+                footprint_mm=(3.9, 1.9), v_max=18.0, v_clamp=29.2,
                 value="V_RWM 18 V · V_BR 20.0-22.1 V · V_C 29.2 V",
                 source=f"{where}. SMF18A family table: V_RWM 18 V, V_BR 20.0-"
                        f"22.1 V, V_C 29.2 V at 6.8 A, 200 W 10/1000 µs. ⬜ SOD-123FL "
@@ -194,7 +195,7 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
     """onsemi SMS05T1G, the 5 V quad array for lines that stay <= 5 V."""
     return Part(refdes, "SMS05T1G", "SC-74", board, "TVS",
                 TVS_ARRAY_PINS, 1.10, height_confirmed=True,
-                footprint_mm=(3.1, 3.0), v_max=5.0,
+                footprint_mm=(3.1, 3.0), v_max=5.0, v_clamp=9.8,
                 value="V_RWM 5 V · V_BR 6.0 V min · 9.8 V @ 5 A",
                 source=f"{where}. {_DS_SMS}: the SMS05/SMS15 family sheet -- "
                        f"p.1 pads 1/3/4/6 cathode, 2/5 anode, the SMS15T1G's "
@@ -211,7 +212,7 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
 # ════════════════════════════════════════════════════════════════════════════
 _HVIN_PARTS = (
     Part("D101", "SMCJ90A", "DO-214AB (SMC)", "HVIN", "TVS", ("A", "K"), 2.62,
-         height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0,
+         height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0, v_clamp=146.0,
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
          source=f"B+ to GND at J101. plan §3.2.1, BOM E12 — never SMBJ90A, "
                 f"SMBJ100A or 5KP90A. {_DS_SMCJ} p.5: DO-214AB D max 2.62 mm"),
@@ -385,16 +386,18 @@ _CONV_PARTS = (
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C2_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
-    Part("C207", "PA25V680M8x12", "radial polymer 8 × 12.5 mm, lying down",
-         "CONV", "C", ("+", "-"), 8.5, height_confirmed=True,
-         footprint_mm=(8.5, 16.5), v_max=25.0,
-         value="680uF 25V polymer, 20 mΩ",
+    Part("C207", "PA35V680M10x15", "radial polymer 10 × 15 mm, lying down",
+         "CONV", "C", ("+", "-"), 10.5, height_confirmed=True,
+         footprint_mm=(10.5, 19.1), v_max=35.0,
+         value="680uF 35V polymer, 16 mΩ",
          source=f"U201 +V to -V. {_DS_TDK} p.9 Table 6-1: '12,15V: 25V 680μF "
                 f"(Solid Cap.)', 'For stable operation' (Chemi-Con PSG class). "
-                f"JIERR PA25V680M8x12: solid polymer, 20 mΩ, 4.1 A ripple, "
-                f"-55…105 °C. JIERR PA series (jierr_pa25v680m8x12.pdf) p.2: "
-                f"φD + 0.5 max = 8.5 mm, L + α = 13.5 mm, F 3.5, ø0.6 leads. "
-                f"LYING DOWN, under the 12.7 mm brick"),
+                f"35 V, not 25: D315 clamps V12 at up to 29.2 V, over a 25 V "
+                f"part's rating (rules VR-CLAMP). JIERR PA series "
+                f"(jierr_pa25v680m8x12.pdf) p.7: PA35V680M10X15, 680 µF, 16 mΩ, "
+                f"4.1 A ripple, -55…105 °C; p.2: φD + 0.5 max = 10.5 mm, "
+                f"L + α = 16 mm, F 5.0, ø0.6 leads. LYING DOWN, under the "
+                f"12.7 mm brick"),
     _c("C208", "CONV", "2.2uF", 25.0,
        f"U201 +V to -V. {_DS_TDK} p.8 C6: 2.2 µF ceramic against output spike "
        f"noise", pkg="1206"),
@@ -602,7 +605,7 @@ _DRV_PARTS = (
                 "The AO3400A has no avalanche rating and a magnetic buzzer is "
                 "a coil; harmless if the buzzer is piezo. SMA outline assumed"),
     Part("D315", "SMBJ18A", "DO-214AA (SMB)", "DRV", "TVS", ("A", "K"), 2.5,
-         footprint_mm=(5.6, 3.95), v_max=18.0,
+         footprint_mm=(5.6, 3.95), v_max=18.0, v_clamp=29.2,
          value="V_RWM 18 V · V_BR 20.0-22.1 V · V_C 29.2 V",
          source="The clamp on the V12 rail itself, at the TPS4H160B's VS. "
                 "No raw V12 leaves the box: horn +, fan + and buzzer + ride "
@@ -692,15 +695,19 @@ _DRV_PARTS = (
     _tvs5("D405", "DRV", "At J405: CANH, CANL"),
     _r("R426", "DRV", "1k",
        "LEFT telltale series to display pin 1, fed from the TURN_L lamp feed, "
-       "not a driver channel (plan §6.2.1). BOM B3"),
-    _r("R427", "DRV", "1k", "RIGHT telltale series to display pin 4. BOM B3"),
+       "not a driver channel (plan §6.2.1). 1206: a display wire shorted to "
+       "ground puts the 12 V feed across it, 144 mW (rules VR-POWER). BOM B3",
+       pkg="1206"),
+    _r("R427", "DRV", "1k", "RIGHT telltale series to display pin 4, 1206 as "
+       "R426. BOM B3", pkg="1206"),
     _r("R428", "DRV", "1k",
        "Headlight telltale series to display pin 5, fed from HL_HIGH so a "
-       "flash lights it with no firmware (plan §7); LOW beam does not. BOM B3"),
+       "flash lights it with no firmware (plan §7); LOW beam does not. 1206 "
+       "as R426. BOM B3", pkg="1206"),
     _r("R429", "DRV", "1k",
        "Series in the one-line feed to display pin 9: back-feed protection "
        "while the FarDriver drives 0-15 V into an unpowered display "
-       "(plan §3.3). BOM B3"),
+       "(plan §3.3). 1206 as R426. BOM B3", pkg="1206"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -852,13 +859,14 @@ _BRAIN_PARTS = (
     _tvs5("D408", "BRAIN", "At J401: USB-C CC1 and CC2 only. ⛔ NOT the data "
           "pair: this array is ~300 pF per line, and D409 carries D+/D-"),
     Part("D409", "USBLC6-2SC6", "SOT23-6L", "BRAIN", "TVS",
-         ("1", "2", "3", "4", "5", "6"), 1.45, height_confirmed=True,
-         footprint_mm=(3.0, 3.0), v_max=5.25,
-         value="V_RM 5.25 V · 3.5 pF max per line",
+         ("IO1A", "GND", "IO2A", "IO2B", "VBUS", "IO1B"), 1.45, height_confirmed=True,
+         footprint_mm=(3.0, 3.0), v_max=5.25, v_clamp=17.0,
+         value="V_RM 5.25 V · 17 V @ 5 A · 3.5 pF max per line",
          source="USB D+/D- ESD at J401. ST USBLC6-2 (usblc6-2.pdf, Doc ID 11265 "
                 "Rev 5): pins "
-                "1 and 6 are I/O1 (flow-through), 3 and 4 are I/O2, 2 is GND, "
-                "5 is the top of the steering diodes, named VBUS. Pin 5 is on "
+                "1 and 6 are I/O1 (flow-through: IO1A, IO1B), 3 and 4 are I/O2 "
+                "(IO2A, IO2B), 2 is GND, 5 is the top of the steering diodes, "
+                "named VBUS; pins by role so rules.POL checks every diode. Pin 5 is on "
                 "V3P3, not the USB VBUS: GPIO20 comes out of reset with D+ "
                 "pulled up, which through I/O1 → pin 5 would hold an unplugged "
                 "VBUS near 2.7 V and GPB6 at 1.7 V, neither high nor low. p.4 "
@@ -1124,7 +1132,7 @@ _NETS_RAILS = (
              "C410.2 C411.2 C421.2 C422.2 "
              "D401.A2 D401.A5 D402.A2 D402.A5 D402.K6 D403.A2 D403.A5 "
              "D404.A2 D404.A5 D404.K6 U406.GND C436.2 C437.2 "
-             "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.2 "
+             "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.GND "
              "J401.6 J401.7 J402.1 J403.1 J404.4 J404.7 J408.6 J409.2 J409.16")
         + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
         + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
@@ -1164,7 +1172,7 @@ _NETS_RAILS = (
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
-           "R472.2 D409.5 U406.VDD C436.1 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
+           "R472.2 D409.VBUS U406.VDD C436.1 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
         + _stack("V3P3") + _p("R317.2 R318.2 R346.2 R349.2 R351.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
@@ -1490,11 +1498,11 @@ _NETS_BRAIN = (
                "'3.3-12 V' (plan §7.1)"),
     Net("USB_DM_MCU", _p("U401.IO19 R474.1"), domain="3V3", gpio="GPIO19",
         source="Native USB D-: console, flashing and the OTA fallback"),
-    Net("USB_DM", _p("R474.2 J401.4 D409.3 D409.4"), domain="3V3",
+    Net("USB_DM", _p("R474.2 J401.4 D409.IO2A D409.IO2B"), domain="3V3",
         source="USB D- at the connector, beyond its 22 Ω"),
     Net("USB_DP_MCU", _p("U401.IO20 R473.1"), domain="3V3", gpio="GPIO20",
         source="Native USB D+"),
-    Net("USB_DP", _p("R473.2 J401.3 D409.1 D409.6"), domain="3V3",
+    Net("USB_DP", _p("R473.2 J401.3 D409.IO1A D409.IO1B"), domain="3V3",
         source="USB D+ at the connector, beyond its 22 Ω"),
     Net("USB_CC1", _p("J401.2 R440.1 D408.K4"), domain="3V3",
         source="USB-C CC1, Rd to GND"),
@@ -1912,8 +1920,8 @@ _LOOSE_BY_MPN = {
                            "bent over and bonded LYING on CONV's underside"),
     "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", 1,
                        "X1/Y2, kinked 7.5 mm leads on reel: bent FLAT"),
-    "PA25V680M8x12": ("C46550437", "JIERR PA25V680M8x12", 1,
-                      "680 µF 25 V polymer, 20 mΩ: bent over LYING"),
+    "PA35V680M10x15": ("C46550429", "JIERR PA35V680M10x15", 1,
+                       "680 µF 35 V polymer, 16 mΩ: bent over LYING"),
     "0001.2504": ("C1665055", "Schurter 0001.2504", 1, "clipped into FH201"),
     "01110501Z": ("C151075", "Littelfuse 01110501Z", 2,
                   "two clips, soldered into FH201's footprint"),
@@ -2000,6 +2008,32 @@ def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
     if stale:
         raise ValueError(f"_FAB_CONN entries for no connector: {sorted(stale)}")
     return tuple(out)
+
+
+def lcsc_catalogue() -> dict[str, str]:
+    """Every LCSC code the design orders, with the maker part number its table
+    says it is. An LCSC record for the code must name that part: a changed
+    code that points at a different part (the 65 °C ESP32, the BSS127S-7)
+    otherwise passes every rule, which read the netlist MPN (review CK-5)."""
+    out = {}
+    for lcsc, maker, *_ in (*_R_LCSC.values(), *_C_LCSC.values(),
+                            *_FAB_BY_MPN.values(), *_LOOSE_BY_MPN.values()):
+        out[lcsc] = maker
+    for fab in _FAB_CONN.values():
+        if fab[0] != "hand":
+            out[fab[0]] = fab[1]
+    return out
+
+
+def terminal_catalogue() -> dict[str, str]:
+    """Each harness terminal's header and plug codes, with the pattern their
+    maker part numbers follow: the header (RM) and plug (KM) of the family at
+    that pitch and size."""
+    out = {}
+    for (pitch, n), (header, plug) in _TERMINALS.items():
+        for code, half in ((header, "RM"), (plug, "KM")):
+            out[code] = rf"EDG{half}-{pitch:g}-0?{n}P"
+    return out
 
 
 def current() -> Design:

@@ -9,8 +9,6 @@ fitted item, and -- where this machine can reach EasyEDA's library -- they must
 agree with the library symbol's own pin numbers and names.
 """
 import json
-import os
-from pathlib import Path
 
 import pytest
 
@@ -69,36 +67,30 @@ def test_the_tlv767_matches_its_source(d):
 
 
 # --- the independent check: EasyEDA's library symbol --------------------------------
-def _library():
-    try:
-        import sys
-        sys.path.insert(0, str(Path.home() / "tools/lcsc-search"))
-        from lcsc_search import Service
-    except ImportError:
-        pytest.skip("~/tools/lcsc-search is not on this machine")
-    if os.environ.get("PADMAP_OFFLINE"):
-        pytest.skip("PADMAP_OFFLINE set")
-    return Service()
+# From tests/fixtures/lcsc.json (tools/lcsc_fixture.py), so the check runs
+# offline and cannot skip: offline it once did, and a reversed brake-lamp FET
+# passed (review CK-9). tests/test_lcsc_records.py holds the fixture to the
+# live library.
+def _library_pins():
+    from tools import lcsc_fixture
+    return {code: rec["symbol_pins"] for code, rec in lcsc_fixture.load().items()}
 
 
 def test_every_map_agrees_with_the_library_symbol(d):
     """For each LCSC part, the library symbol's NUMBER -> NAME must agree with
     our table wherever the library names a pin (an unnamed or purely numeric
     library pin carries no information to check)."""
-    svc = _library()
+    lib_pins = _library_pins()
     checked = 0
     # Unfitted parts too: their footprint is on the board, waiting to be fitted.
     for x in list(d.parts) + list(d.connectors):
         code = padmap.footprint_source(x)
         if not code:
             continue
-        dev = svc.footprint(code)
-        if dev is None or not dev.get("symbol_uuid"):
+        assert code in lib_pins, f"{x.refdes}: {code} is not in the fixture"
+        lib = lib_pins[code]
+        if not lib:
             continue
-        doc = svc.document(dev["symbol_uuid"])
-        if doc is None:
-            continue
-        lib = padmap.library_pins(doc["data"])
         m = padmap.pad_map(x)
         for num, name in lib:
             if num not in m or m[num] is None:
@@ -107,3 +99,32 @@ def test_every_map_agrees_with_the_library_symbol(d):
                 f"{x.refdes} ({code}) pad {num}: our {m[num]!r}, library {name!r}")
         checked += 1
     assert checked > 30
+
+
+#: Pad maps the library cannot check -- its symbol numbers the pins 1..n and
+#: names none of them -- typed from the datasheet and pinned here, pad -> pin.
+PINNED = {
+    # onsemi SMS05T1/D rev 10 p.1: pads 1/3/4/6 cathodes, 2/5 the common anode.
+    "SMS05T1G": {"1": "K1", "2": "A2", "3": "K3", "4": "K4", "5": "A5", "6": "K6"},
+    "SMS15T1G": {"1": "K1", "2": "A2", "3": "K3", "4": "K4", "5": "A5", "6": "K6"},
+    # ST USBLC6-2 p.1: 1 I/O1, 2 GND, 3 I/O2, 4 I/O2, 5 VBUS, 6 I/O1.
+    "USBLC6-2SC6": {"1": "IO1A", "2": "GND", "3": "IO2A", "4": "IO2B", "5": "VBUS",
+                    "6": "IO1B"},
+}
+
+
+def test_a_map_the_library_cannot_check_is_pinned_from_its_datasheet(d):
+    """A numeric-only library symbol agrees with ANY map (review CK-6: a
+    wrong SMS05 map clamps every line to ground and passed). Every part whose
+    map renames pads the library does not name is pinned here instead."""
+    lib_pins = _library_pins()
+    for x in d.parts:
+        code = padmap.footprint_source(x)
+        lib = lib_pins.get(code) if code else None
+        if not lib or any(not str(name).strip().rstrip("#").isdigit() for _, name in lib):
+            continue
+        m = padmap.pad_map(x)
+        if all(m.get(num) == num for num, _ in lib):
+            continue                             # numbered pins mapped to themselves
+        assert x.mpn in PINNED, f"{x.refdes} ({x.mpn}): a map no library checks"
+        assert m == PINNED[x.mpn], x.refdes

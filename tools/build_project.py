@@ -52,7 +52,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools import eprj2, footprint_lib, integrity, netlist, rules  # noqa: E402
+from tools import eprj2, footprint_lib, integrity, layout_rules, netlist, rules  # noqa: E402
 from tools.board_params import STACK_ORDER  # noqa: E402
 from tools.eprj3 import reader, schematic  # noqa: E402
 from tools.eprj3.project import DEFAULT_EPOCH_MS, Project  # noqa: E402
@@ -232,6 +232,10 @@ def main(argv=None):
     root, zip_path = write(project, args.out)
     print(summary(project, sheets, root, zip_path))
     print(eprj2_line(*write_eprj2(root, args.template)))
+    # The HV clearance the PCB documents cannot carry: set it up before routing.
+    rules_path = Path(args.out) / "layout-rules.txt"
+    rules_path.write_text(layout_rules.text(design) + "\n", encoding="utf-8")
+    print(f"  layout rules to set up in the editor before routing: {rules_path}")
     return 0
 
 

@@ -59,6 +59,9 @@ class Part:
     #: working voltage for a resistor (a 0 R link or net-tie carries none).
     #: REQUIRED for kinds C, D, ZENER, TVS, NFET, PFET, R (rules.py enforces).
     v_max: float | None = None
+    #: A TVS's clamping voltage at its rated peak pulse current, from its
+    #: datasheet: what the parts behind it must survive. REQUIRED for a TVS.
+    v_clamp: float | None = None
     side: Side = "top"
     value: str = ""
     dnp: bool = False

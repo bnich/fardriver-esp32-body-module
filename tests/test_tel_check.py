@@ -71,3 +71,14 @@ def test_a_missing_net_and_a_part_that_should_be_off_the_pcb_are_reported():
     r = tel_check.compare(design((Net("SPARE", (("U1", "x"),), "SIGNAL"),)), "CONV",
                           tel_check.parse(TEL))
     assert not r.ok and any("SPARE" in p for p in r.problems)
+
+
+def test_a_wrong_footprint_is_reported_even_when_every_net_matches():
+    """Pads carry pin names, so a wrong land pattern with the right names
+    passes the nets (review CK-11). C1's footprint is compared too."""
+    d = design().replace_part("C1", lcsc="C49678")
+    fixture = {"C49678": {"footprint": "c0805"}}
+    assert tel_check.compare(d, "CONV", tel_check.parse(TEL), fixture).ok
+    wrong = TEL.replace("c0805 ! c0805 ! '100nF 50V' ; C1", "r0402 ! r0402 ! '100nF 50V' ; C1")
+    r = tel_check.compare(d, "CONV", tel_check.parse(wrong), fixture)
+    assert any("C1 has footprint r0402, the generator bound c0805" in p for p in r.problems)

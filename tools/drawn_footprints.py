@@ -147,12 +147,12 @@ def chemicon_kxj_18x25_lying():
                  outline=(_box(-18.5 / 2, LEAD_BEND_MM, 18.5 / 2, LEAD_BEND_MM + 26.5),))
 
 
-def jierr_pa_8x12_lying():
-    """PA25V680M8x12, JIERR PA series p.2, LYING DOWN: φ8 × 12.5, F 3.5 ±
-    0.5, leads ø0.6 ± 0.05, φD + 0.5 max = 8.5, L + α = 13.5 max."""
-    return Drawn("JIERR_PA_D8X12_5_LS3_5_LYING",
-                 (_pin("+", -1.75, 0.0, 0.6 + 0.05, first=True), _pin("-", 1.75, 0.0, 0.6 + 0.05)),
-                 outline=(_box(-8.5 / 2, LEAD_BEND_MM, 8.5 / 2, LEAD_BEND_MM + 13.5),))
+def jierr_pa_10x15_lying():
+    """PA35V680M10x15, JIERR PA series p.2, LYING DOWN: φ10 × 15, F 5.0 ±
+    0.5, leads ø0.6 ± 0.05, φD + 0.5 max = 10.5, L + α = 16 max."""
+    return Drawn("JIERR_PA_D10X15_LS5_0_LYING",
+                 (_pin("+", -2.5, 0.0, 0.6 + 0.05, first=True), _pin("-", 2.5, 0.0, 0.6 + 0.05)),
+                 outline=(_box(-10.5 / 2, LEAD_BEND_MM, 10.5 / 2, LEAD_BEND_MM + 16.0),))
 
 
 #: Littelfuse 01110501Z (111 501), as LCSC C151075's library land: two pins
@@ -190,7 +190,7 @@ BY_MPN = {
     "CN150B110-12/CO": tdk_cn150b110(),
     "VY2472M49Y5US6": vishay_vy2_flat(),
     "EKXJ221ELL221MM25S": chemicon_kxj_18x25_lying(),
-    "PA25V680M8x12": jierr_pa_8x12_lying(),
+    "PA35V680M10x15": jierr_pa_10x15_lying(),
     "01110501Z": fuse_clip_pair(),
     "EC7BW-110S05": cincon_ec7bw_110(),
     "7448022010": wurth_7448022010(),

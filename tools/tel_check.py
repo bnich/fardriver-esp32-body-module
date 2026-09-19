@@ -78,7 +78,31 @@ def parse(text):
     return Tel(packages, nets)
 
 
-def compare(design, board, tel):
+def expected_footprints(design, board, fixture=None):
+    """refdes -> the footprint title the generator binds, as Allegro-safe as
+    the export writes it: generated here, or the LCSC library's (from
+    tests/fixtures/lcsc.json). None where it cannot be known offline."""
+    from . import footprint_lib, lcsc_fixture, padmap
+    if fixture is None:
+        try:
+            fixture = lcsc_fixture.load()
+        except FileNotFoundError:
+            fixture = {}
+    out = {}
+    refs = board_refs(design, board)
+    for x in (*design.parts, *design.connectors):
+        if x.refdes not in refs:
+            continue
+        code = padmap.footprint_source(x)
+        if code is None:
+            gen = footprint_lib.generated(x)
+            out[x.refdes] = footprint_lib.allegro_safe(gen[0]) if gen else None
+        else:
+            out[x.refdes] = (fixture.get(code) or {}).get("footprint")
+    return out
+
+
+def compare(design, board, tel, fixture=None):
     refs = board_refs(design, board)
     off = sorted(p.refdes for p in design.parts
                  if p.refdes in refs and not converted_to_pcb(p))
@@ -104,6 +128,12 @@ def compare(design, board, tel):
                  for ref in sorted(refs - set(off) - set(tel.packages))]
     problems += [f"{ref} is in $PACKAGES but not on {board}"
                  for ref in sorted(set(tel.packages) - refs)]
+    # Pads carry pin names, so a wrong land pattern with the right pad names
+    # would pass the nets: the footprint itself is compared too.
+    for ref, want_fp in sorted(expected_footprints(design, board, fixture).items()):
+        got_fp = tel.packages.get(ref)
+        if got_fp is not None and want_fp is not None and got_fp != want_fp:
+            problems.append(f"{ref} has footprint {got_fp}, the generator bound {want_fp}")
     return Result(problems, off, len(tel.nets), sum(map(len, tel.nets.values())))
 
 

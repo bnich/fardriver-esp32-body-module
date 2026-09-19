@@ -541,7 +541,7 @@ def test_every_wire_that_leaves_the_box_has_a_tvs_on_its_own_board(d, w):
 #: A rail-to-rail array's own rail pin, which its datasheet ties to the supply
 #: its lines live on.  ST USBLC6-2 §2.2: pin 5 to 'VCC'; V_BR 6 V min against a
 #: 3.3 V rail, which no converter's OVP window reaches.
-_ARRAY_RAIL_PIN = {"USBLC6-2SC6": ("5", "V3P3")}
+_ARRAY_RAIL_PIN = {"USBLC6-2SC6": ("VBUS", "V3P3")}
 
 
 def test_no_quad_array_touches_a_raw_rail_and_v12_has_its_own_clamp(d, w):

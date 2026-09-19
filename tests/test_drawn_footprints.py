@@ -255,8 +255,8 @@ def _outline_bounds(fp):
     ("VY2472M49Y5US6", 7.5, 0.65, (12.5, 12.5)),
     # Chemi-Con KXJ p.1, φ18: F 7.5, φd 0.8; φD' 18.5 × L' 26.5 lying down.
     ("EKXJ221ELL221MM25S", 7.5, 0.8, (18.5, 26.5)),
-    # JIERR PA p.2, 8 × 12.5: F 3.5, φd 0.6 ± 0.05; φD + 0.5 = 8.5 × L + α = 13.5.
-    ("PA25V680M8x12", 3.5, 0.65, (8.5, 13.5)),
+    # JIERR PA p.2, 10 × 15: F 5.0, φd 0.6 ± 0.05; φD + 0.5 = 10.5 × L + α = 16.
+    ("PA35V680M10x15", 5.0, 0.65, (10.5, 16.0)),
 ])
 def test_a_part_lying_beside_its_holes_has_its_leads_pitch_and_its_body_drawn(mpn, pitch, lead, body):
     fp = drawn.BY_MPN[mpn]
