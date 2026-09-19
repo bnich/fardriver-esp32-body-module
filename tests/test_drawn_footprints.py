@@ -126,7 +126,7 @@ def test_the_fuse_footprint_sits_on_its_clip_rows():
     """EasyEDA's Allegro netlist export refuses a part without a footprint even
     when it is not converted to PCB.  F201 is never on the board -- its clips
     are -- so its pads mark where the caps sit: on the clip rows, 17.8 mm
-    apart (FH201A's source)."""
+    apart (FH201's source)."""
     a, b = sorted(drawn.BY_MPN["0001.2504"].pads, key=lambda p: p.x_mm)
     assert (a.num, b.num) == ("1", "2")
     assert b.x_mm - a.x_mm == pytest.approx(17.8) and a.y_mm == b.y_mm == 0
@@ -150,7 +150,7 @@ def _devices(board):
 
 def test_only_the_fuse_is_left_off_the_pcb():
     """Import Changes honours `Convert to PCB`: the fuse's pads must not land on
-    top of FH201A/B's."""
+    top of FH201's."""
     off = [d["title"] for d in _devices("CONV")
            if "Global Net Name" not in d["attributes"]      # net flags are not parts
            and d["attributes"].get("Convert to PCB") != "yes"]

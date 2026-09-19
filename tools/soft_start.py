@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """D13 soft start -- what the gate network around Q101 actually does.
 
-Q101 (`IXTP26P20P`, P-channel, high side) connects the pack to the module's
+Q101 (`IXTA26P20P`, P-channel, high side) connects the pack to the module's
 440 µF of bulk capacitance. The inrush energy has to go somewhere and the soft
 start deliberately puts it in the MOSFET, so the MOSFET lives or dies on its
 safe operating area (SOA), and the ramp time is what buys the margin.
@@ -49,7 +49,7 @@ import re
 import sys
 from dataclasses import dataclass, fields, replace
 
-# ── Q101 IXTP26P20P -- IXYS DS99913D (01/13) ───────────────────────────────
+# ── Q101 IXTA26P20P -- IXYS DS99913D (01/13): the IXTP's die in TO-263 ─────
 VTH_MIN, VTH_MAX = 2.0, 4.0      # |V_GS(th)| at 250 µA, p.1
 VTH_NOM = 3.0                    # midpoint; the sheet gives no typical
 GFS_MIN_S, GFS_TYP_S = 10.0, 17.0   # at I_D = 13 A, p.2
@@ -604,7 +604,7 @@ def _netlisted() -> tuple[Circuit | None, str]:
 
 
 def main(argv=None, c: Circuit | None = None) -> int:
-    print("D13 SOFT START -- Q101 IXTP26P20P into "
+    print("D13 SOFT START -- Q101 IXTA26P20P into "
           f"{C_LOAD*1e6:.0f} µF + {I_LOAD_MAX} A (constant power above {V_LVC:.0f} V)")
     en = SPEC_ENABLE
     if c is None:

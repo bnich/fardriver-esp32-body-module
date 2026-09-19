@@ -24,7 +24,7 @@ def _fitted(d):
 
 
 #: The inter-board connectors wait on the owner's choice of family
-#: (docs/esp32-needed-from-owner.md item 6). When it is made, empty this set.
+#: (still open). When it is made, empty this set.
 AWAITING_OWNER = {"J104", "J201", "J202", "J311", "J307", "J407", "J308", "J406"}
 
 

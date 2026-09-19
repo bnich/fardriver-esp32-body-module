@@ -201,9 +201,8 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
                        f"p.1 pads 1/3/4/6 cathode, 2/5 anode, the SMS15T1G's "
                        f"own pinout; p.4 SC-74 A max 1.10 mm. I_R up to 20 uA "
                        f"and ~300 pF per line: harmless on the pod inputs, "
-                       f"within the CC spec, ~0.2 V on RUN's 10 k pull-up, too "
-                       f"heavy for CAN (J405 is parked). Replaces the Nexperia "
-                       f"PESD5V0S4UD (BOM C2), which LCSC has none of. Spare "
+                       f"within the CC spec, 20 mV on RUN's 1 kΩ pull-up, too "
+                       f"heavy for CAN (J405 is parked). BOM C2. Spare "
                        f"cathodes tie to GND")
 
 
@@ -239,7 +238,8 @@ _HVIN_PARTS = (
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=15.0, value="15V",
          source="Q101 gate clamp inside the ±20 V V_GS rating: anode = gate, "
                 "cathode = source. Never conducts in normal running (-13.1 V). "
-                "BOM E13 '+ zener'. ⬜ MPN and package unchosen"),
+                "BOM E13 '+ zener'. The 2 % B grade: a C grade can clamp at "
+                "13.8 V. ⬜ SOD-123 height not read off a drawing"),
     Part("C105", "CGA9N1C0G2J683JT0Y0S", "2220 C0G", "HVIN",
          "C", ("1", "2"), 2.3, footprint_mm=(5.7, 5.0), v_max=630.0,
          value="68nF C0G 630V",
@@ -248,7 +248,10 @@ _HVIN_PARTS = (
                 "4.3 V plateau, t = 84 V × 68 nF / I (plan §3.2.5). It holds "
                 "the full pack with the switch off and 146 V at D101's clamp, "
                 "hence ≥250 V; C0G or film because X7R loses half its value at "
-                "that bias, exactly where SOA stress peaks. ⬜ part unchosen"),
+                "that bias, exactly where SOA stress peaks. ⚠️ LAYOUT: a 2220 "
+                "cracks under board flex, and shorted it holds Q101 on with the "
+                "key off -- keep it away from the mounting holes and the board "
+                "edges (firmware also flags 'powered with KEY_SENSE low')"),
     _c("C107", "HVIN", "4.7uF 50V X7R", 50.0,
        "Q101 gate to SOURCE. Divides the dV/dt that C105 couples into the gate "
        "when the XT90-S is plugged in with the key OFF: 84 V × 68n/(68n+4.7µ) "
@@ -284,7 +287,8 @@ _HVIN_PARTS = (
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=10.0, value="10V",
          source="Q105 gate clamp, D13_EN to GND, inside the BSS127's ±20 V "
                 "V_GS. The node runs at 7.6 V, so it conducts only on a "
-                "transient. ⬜ MPN and package unchosen"),
+                "transient. The 2 % B grade. ⬜ SOD-123 height not read off a "
+                "drawing"),
     _c("C108", "HVIN", "100nF", 50.0,
        "D13_EN to GND: key-contact bounce filter, τ ≈ 9 ms with R112A/B ‖ R113"),
     _r("R107", "HVIN", "165k",
@@ -331,7 +335,9 @@ _CONV_PARTS = (
                 f"p.18 CNT is negative logic, 'H Level or Open → OFF'; 'When "
                 f"ON/OFF control function is not used, CNT terminal should be "
                 f"shorted to -Vin terminal'. p.17 'short +S terminal to +V "
-                f"terminal and -S terminal to -V terminal'. nc TRM: p.6 "
+                f"terminal and -S terminal to -V terminal' -- ⚠️ LAYOUT: strap "
+                f"them AT the brick's pins, never through J202 or another board, "
+                f"so a connector cannot open the sense loop. nc TRM: p.6 "
                 f"Fig.6-1 draws it open and p.10 §7-2 adjusts only 'by "
                 f"external resistor'. {_DS_TDK_CAT} p.3: 58.3 × 37.2 × 12.7 mm. "
                 f"{_DS_TDK_OUT} p.1 note F: pins 5 ± 0.5 below the case, ø1.0 "
@@ -429,7 +435,7 @@ _CONV_PARTS = (
                 "clip with fuse stop, 10 A; catalogue body 7.1 mm tall, 4.8 × "
                 "3.8 mm, rows 17.8 mm apart for 5 × 20. ⬜ seated height to "
                 "confirm on a real part"),
-    Part("F201", "0001.2504", "5 × 20 ceramic, in clips FH201A/B", "CONV",
+    Part("F201", "0001.2504", "5 × 20 ceramic, in the holder FH201", "CONV",
          "FUSE", ("1", "2"), 8.0, footprint_mm=(5.2, 20.0), v_max=300.0,
          value="1A T-lag 300VDC",
          source=f"DC-DC #2's input fuse (Cincon: 1 A time-delay). ⛔ Order by "
@@ -550,8 +556,11 @@ _DRV_PARTS = (
        "runs D313 → D305 → straight into the S3's input clamp"),
     _r("R342", "DRV", "1k", "IN-06 series resistor, as R341"),
     _r("R339", "DRV", "10k",
-       "CS1 to GND on the ADC side of R323: the bottom of the divider. Scale is "
-       "1.67 V/A at the pin (0.71 A reads 1.19 V; the 0.05 A tail lamp 83 mV)"),
+       "CS1 to GND on the ADC side of R323: the bottom of the divider. The CS "
+       "node is R321 ∥ (R323 + R339) = 952 Ω: 3.17 V/A there, 1.59 V/A at the "
+       "pin (0.71 A reads 1.13 V; the 0.05 A tail lamp 79 mV). ⚠️ 79 mV is "
+       "inside ATTEN3's ±50 mV error: firmware reads CS2's open-load at ATTEN0 "
+       "(0-850 mV, ±5 mV; Espressif ESP32-S3 datasheet v2.2 p.66 Table 5-6)"),
     _r("R340", "DRV", "10k", "CS2 to GND on the ADC side of R324, as R339"),
     _c("C301", "DRV", "100nF", 50.0,
        f"CS1 to GND on the ADC side of R323. {_DS_HDG} p.21: 0.1 µF at an ADC "
@@ -660,7 +669,11 @@ _DRV_PARTS = (
     _r("R318", "DRV", "10k", f"'R3R': IN-06 pull-up to V3P3. {_BRK} §3, BOM G3"),
     _r("R336", "DRV", "100k",
        "BL → BL_SENSE: the 100 kΩ-isolated copy firmware reads. The real BL "
-       "never leaves DRV, so a dead or absent BRAIN cannot load or open it"),
+       "never leaves DRV, so no BRAIN fault can open it. A fitted but "
+       "unpowered BRAIN (or an expander pin set as an output) clamps BL_SENSE "
+       "near 0.5 V, putting 100 kΩ from BL to ground: that pulls toward a CUT, "
+       "the safe direction, and matters only against a FarDriver pull-up of "
+       "47 kΩ or more (⬜ unmeasured)"),
     # ── IN-15: 12 V rail sense (plan §4 class D) ────────────────────────────
     _r("R337", "DRV", "47k",
        "IN-15 divider top, from V12. 47 k / 10 k: 12 V → 2.11 V, and TDK's "
@@ -765,7 +778,7 @@ _BRAIN_PARTS = (
     Part("U401", "ESP32-S3-WROOM-1U-N8", "WROOM-1 / WROOM-1U SMD module",
          "BRAIN", "MODULE", _U401_PINS, 3.35, height_confirmed=True,
          footprint_mm=(18.0, 25.5), nc=("IO3", "IO45", "IO46"),
-         value="U.FL antenna: the enclosure is metal (BD-19). The footprint also takes the -1-N8",
+         value="U.FL antenna: the enclosure is metal. The footprint also takes the -1-N8",
          source=f"BOM A4 / D18: 8 MB quad flash, no PSRAM, -40…+85 °C; never "
                 f"R8/R16V (65 °C). {_DS_WROOM} p.11-12 Table 3-1, 41 pads: "
                 f"GND = pads 1 and 40, EPAD = 41, 3V3 = 2, EN = 3 ('Do not "
@@ -854,8 +867,8 @@ _BRAIN_PARTS = (
     _tvs5("D404", "BRAIN", "At J404: the two FarDriver serial wires (K1, K3) "
           "and the throttle's boost button (K4)"),
     _tvs15("D407", "BRAIN",
-           "At J404: BOOST_OUT, whose controller-side pull-up is unmeasured "
-           "('3.3-12 V', plan §7.1), so it takes the 15 V array"),
+           "At J404: BOOST_OUT, whose controller-side pull-up must meter "
+           "≤ 15 V before the wire is connected (plan §7.1): the 15 V array"),
     _tvs5("D408", "BRAIN", "At J401: USB-C CC1 and CC2 only. ⛔ NOT the data "
           "pair: this array is ~300 pF per line, and D409 carries D+/D-"),
     Part("D409", "USBLC6-2SC6", "SOT23-6L", "BRAIN", "TVS",
@@ -877,7 +890,8 @@ _BRAIN_PARTS = (
     _sot23("Q401", "AO3400A", "BRAIN", "NFET", 30.0,
            "Boost open-drain output to the controller's CruisePin. ⛔ METER THE "
            "WIRE FIRST: the same 30-pin harness carries pink 60VC at 72-84 V; "
-           ">25 V means a PC817 opto instead of this 30 V FET. BOM D3"),
+           "above 15 V (D407's stand-off) the module needs a PC817 opto "
+           "instead of this FET. BOM D3"),
     _r("R424", "BRAIN", "100R", "Boost gate series (plan §6.2.3). BOM D9"),
     _r("R425", "BRAIN", "10k",
        "Boost HARD external pull-down (plan §3.1.1). D14: the gate biases OFF "
@@ -1494,8 +1508,8 @@ _NETS_BRAIN = (
                "boot's high-Z window (D14)"),
     Net("BOOST_OUT", _p("Q401.D J404.5 D407.K1"), domain="12V",
         source="Open-drain to the controller's CruisePin (PIN17). 12 V class "
-               "until the wire is metered: its pull-up is stated only as "
-               "'3.3-12 V' (plan §7.1)"),
+               "until the wire is metered; its pull-up must meter ≤ 15 V "
+               "(plan §7.1)"),
     Net("USB_DM_MCU", _p("U401.IO19 R474.1"), domain="3V3", gpio="GPIO19",
         source="Native USB D-: console, flashing and the OTA fallback"),
     Net("USB_DM", _p("R474.2 J401.4 D409.IO2A D409.IO2B"), domain="3V3",
@@ -1741,7 +1755,9 @@ _CONNECTORS = (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
                            "stays capped"),
             _cp("2", "GND", "BL's only neighbour: a strand bridging them "
-                            "grounds BL, which CUTS the motor -- fail-safe"),
+                            "grounds BL, which CUTS the motor -- fail-safe. Land "
+                            "it at the controller's B− stud (brake-circuit §9), "
+                            "not a signal ground: it parallels J101's returns"),
             _cp("3", "ACC_PLUS", "the throttle's 5.1 V, IN — R314's pull-up "
                                  "source"),
         ), pitch=5.08, note="In the 5.08 mm family with J306 alone, the only "
@@ -1776,8 +1792,9 @@ _CONNECTORS = (
         _cp("6", "GND"),
         _cp("7", "GND", "shell"),
     ), 3.3, footprint_mm=(9.0, 7.5), leaves_box=False, pitch_mm=0.5,
-        source="⬜ Receptacle unchosen: 3.3 mm is the usual 16-pin top-mount "
-               "USB-C envelope, unconfirmed. Contacts are listed by function"),
+        source="G-Switch GT-USB-7010ASV (the part in _FAB_CONN). ⬜ Its 3.3 mm "
+               "is the usual 16-pin top-mount envelope, not read off its "
+               "drawing. Contacts are listed by function"),
     _tb("J402", "BRAIN", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
             _cp("1", "GND", "thick green ← the pod's ground bundle (6 wires)"),
@@ -1806,9 +1823,10 @@ _CONNECTORS = (
             _cp("4", "RUN", "red — run/off toggle; copper straight to STACK "
                             "(BD-7)"),
             _cp("5", "START", "green — start button, a spare sensed input"),
-            _cp("6", "", "empty: six ways, so no other plug is this size. "
-                         "The tail's 5-way plug in here would hold RUN to "
-                         "ground through a lamp and silently defeat the kill"),
+            _cp("6", "", "empty: six ways, a size no other terminal has, so a "
+                         "swap with the tail's 5-way plug (which would hold "
+                         "RUN to ground through a lamp) always leaves a plug "
+                         "in the hand"),
         )),
     _tb("J404", "BRAIN", "FarDriver serial + boost (5 conductors), and the "
         "throttle's boost button (2)", (
@@ -1842,8 +1860,8 @@ _CONNECTORS = (
                      "here would back-feed the LDO from it"),
         _cp("6", "GND"),
     ), 3.0, footprint_mm=(15.24, 2.54), leaves_box=False,
-        source="⬜ Part unchosen: a 1 × 6 right-angle 2.54 mm pin header is "
-               "~3 mm above the board, unconfirmed"),
+        source="A 1 × 6 right-angle 2.54 mm pin header (the part in "
+               "_FAB_CONN). ⬜ ~3 mm above the board, not read off its drawing"),
     Connector("J409", "BRAIN", "Spare inputs, INTERNAL: expander #2's thirteen "
               "spare bits, each class-A conditioned on the board", (
         _cp("1", "V3P3"),
@@ -1857,8 +1875,9 @@ _CONNECTORS = (
                "fitted: a 1 kΩ pull-up to 3V3 and an SMS05T1G line on the header "
                "side, 1 kΩ series and 100 nF at the pin. For a dry contact to "
                "ground or 3.3 V logic; nothing above 5 V. LCSC lists it 2.5 mm of body and a "
-               "6 mm pin, so 8.5 mm fitted, unconfirmed: below BRAIN's 9.2 mm "
-               "terminals"),
+               "6 mm pin, so 8.5 mm fitted, unconfirmed -- and the tallest body "
+               "on BRAIN, above its 7.25 mm terminals, so fitted it sets the gap "
+               "to the lid"),
 )
 
 
@@ -1976,7 +1995,7 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
 
 #: Connectors, by refdes: (LCSC, maker part, note), or "hand" and why. The
 #: inter-board connectors are absent on purpose: their family is the owner's
-#: open decision (docs/esp32-needed-from-owner.md item 6).
+#: open decision.
 _FAB_CONN = {
     "J401": ("C2988369", "G-Switch GT-USB-7010ASV", "USB-C 2.0, 16-pin top mount, "
                                                     "-40…+85 °C"),

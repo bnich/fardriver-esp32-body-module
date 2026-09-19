@@ -2,9 +2,10 @@
 
 **Created 2026-09-10 · budget ~2 hours across three sittings · owner runs this, at the bike**
 
-Companion to `revv1-m16-can-bench-test.md`, which is its template. This session closes the **input**
-side of the ESP32 module — the measurements `revv1-esp32-module-plan.md` §5 still lists as ⬜ and that
-every remaining design step waits on.
+Companion to `can18-investigation.md` (repository `chaojie-display-protocol`, not yet published),
+which is its template. This session closes the **input** side of the ESP32 module — the measurements
+`plan.md` §5 still lists as ⬜ and that every remaining design step waits on. `plan.md` and `bom.md`
+sit beside this file; `brake-circuit.md` is in the build repository (`Revv1-FS-72v-Conversion/docs/`).
 
 ---
 
@@ -15,8 +16,8 @@ path is linear:
 
 > **① sourcing → ② order → ③ THIS SESSION → ④ firmware → ⑤ boards**
 
-The module parts are on order (`revv1-module-bom.md`). These measurements need **the bike**, not the
-parts — run them while the order ships.
+The module parts were received 2026-09-18 (`bom.md`). These measurements need **the bike**, not the
+parts.
 
 ⚠️ **These are not survey measurements — each one gates a decision, and M3 gates the brake circuit,
 which has to be *built*:**
@@ -24,8 +25,8 @@ which has to be *built*:**
 | # | What it decides | What is blocked until it lands |
 |---|---|---|
 | **A2** | The new bar-mount switch sets: contact pairs, momentary vs latching, and how the 3-position lighting slider is wired | IN-01…04 and IN-08…11; the **D21** slider decode depends on OFF/A/B vs OFF/A/A+B |
-| **M2** | Which wires in the handlebar loom (connector "1T3 10") are the **brake-lever** wires | The brake circuit's lever inputs (`revv1-brake-circuit.md` §2). Nothing in the loom is cut until they are known; the lever pairs are the only part of it that is re-used |
-| **M3** | Brake lever type: two-wire switch (NO or NC) or three-wire sensor (output type), one pair per lever | ⚠️ **The brake circuit build** (`revv1-brake-circuit.md` §4, step 1 in §6) — nothing is wired to the levers until it lands. Also **IN-05/06** |
+| **M2** | Which wires in the handlebar loom (connector "1T3 10") are the **brake-lever** wires | The brake circuit's lever inputs (`brake-circuit.md` §2). Nothing in the loom is cut until they are known; the lever pairs are the only part of it that is re-used |
+| **M3** | Brake lever type: two-wire switch (NO or NC) or three-wire sensor (output type), one pair per lever | ⚠️ **The brake circuit build** (`brake-circuit.md` §4, step 1 in §6) — nothing is wired to the levers until it lands. Also **IN-05/06** |
 | **M8** | Red button is a true momentary dry contact | **IN-07** and therefore **D4**, the whole boost scheme |
 | **M9** | Which serial line is the controller's **transmit** — the label is ambiguous | ⚠️ **IN-13/IN-14.** Tapping the wrong one gives a listener that hears nothing. Also settles whether the Bluetooth is a dongle or integrated |
 | **M10** | KEY node voltage, and where the module's fused B+ tap physically lands | **IN-12** and the D13 power tap — plan §3.2.5 |
@@ -272,7 +273,7 @@ the board is bought, not after.
 
 ## 6. SITTING B — the brake levers (nothing live)
 
-> Nothing is live — ohmmeter only. The levers feed the **brake circuit** (`revv1-brake-circuit.md`),
+> Nothing is live — ohmmeter only. The levers feed the **brake circuit** (`brake-circuit.md`),
 > which cuts the motor, lights the brake lamp and signals the module. Nothing is wired to the levers
 > until B1 and B2 are recorded.
 
@@ -301,7 +302,7 @@ what you see, not what you expect.
 **Record:** total wire count ______ · lever wires identified: ______ · **NO or NC** ______ ·
 **one pair per lever, or a shared common** ______
 
-### ✔ B2 — M3: the lever type (`revv1-brake-circuit.md` §4)
+### ✔ B2 — M3: the lever type (`brake-circuit.md` §4)
 
 The brake circuit works as drawn for a **normally-open dry contact** or a **sinking open-collector
 sensor output**. Only a few milliamps flow through the lever, so a reed or microswitch rating is not a
@@ -323,7 +324,7 @@ concern.
 | Left | | | | | |
 | Right | | | | | |
 
-→ **Results feed the brake circuit build** (step 1, `revv1-brake-circuit.md` §6) **and IN-05/06.**
+→ **Results feed the brake circuit build** (step 1, `brake-circuit.md` §6) **and IN-05/06.**
 
 ---
 
@@ -371,9 +372,11 @@ dongle transmit = ______ or **N/A, integrated** → IN-14
 
 ### ⚠️ C1.5 — METER THE BOOST WIRE (10 seconds, gates a connection)
 
-⛔ **Do this before any FET is connected to the FarDriver's boost input.** §7.1 asserts a
-*"3.3–12 V pull-up inside the controller"* — **that figure is unsourced**, and the chosen wire
-(`CruisePin` **PIN17**) has never been metered. The module's boost FET is an **`AO3400A`, 30 V abs max**.
+⛔ **Do this before any FET is connected to the FarDriver's boost input.** The controller-side pull-up
+voltage is **unmeasured**, and the chosen wire (`CruisePin` **PIN17**) has never been metered (plan
+§7.1). The module's boost FET is an **`AO3400A`, 30 V abs max**, and its boost output carries an
+**`SMS15T1G`** TVS array (V<sub>RWM</sub> 15 V, V<sub>BR</sub> 16.7 V min): any pull-up above 15 V
+leaves that array conducting, so **15 V is the ceiling for the FET path.**
 
 ⛔ **The same 30-pin harness carries pink `60VC` — a B+ OUTPUT at 72–84 V.** Landing on that instead
 destroys a 30 V FET instantly, and a higher-rated one too. **This is a measurement, not a part choice.**
@@ -382,7 +385,7 @@ With the controller powered (sitting C, 64 V), meter referenced to **serial GND*
 
 | Wire | Idle V | Verdict |
 |---|---|---|
-| `CruisePin` PIN17 (boost candidate) | ______ | ✅ ≤ 15 V → the `AO3400A` is fine · ⚠️ 15–25 V → usable but thin · ⛔ > 25 V → **use the PC817 output instead** (plan §6's alternative for the boost line) |
+| `CruisePin` PIN17 (boost candidate) | ______ | ✅ ≤ 15 V → the `AO3400A` is fine · ⛔ > 15 V → **use the PC817 output instead** (plan §6's alternative for the boost line) |
 | *(if PIN17 is unsuitable)* `ReversePin` PIN8 | ______ | Frees up when issue #6 closes |
 
 ✔ **Then the functional check §7.1 already asks for:** ground the wire → **the app shows gear `Bst`.**
@@ -411,7 +414,7 @@ divider ratio**, and that is already fixed by design: **330 k / 10 k, 84 V → 2
 |---|---|---|---|---|
 | **A2** | Switch sets: wire count, contacts per position, momentary/latching, slider wiring (`OFF/A/B` or `OFF/A/A+B`) | | | IN-01…04, IN-08…11, D21 decode, board C |
 | **M2** | Handlebar loom ("1T3 10"): lever wires identified, NO/NC, one pair per lever or shared | | | brake circuit inputs, IN-05/06 |
-| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | | | ⚠️ **brake circuit build** (`revv1-brake-circuit.md` §4, §6), IN-05/06 |
+| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | | | ⚠️ **brake circuit build** (`brake-circuit.md` §4, §6), IN-05/06 |
 | **M8** | Red button: released/pressed Ω, momentary confirmed, clean dry contact | | | IN-07, D4 |
 | **M9** | Controller TX line identified; bitrate; dongle vs integrated | | | IN-13/14 |
 | C1.5 | Boost wire (PIN17) idle voltage | | | boost FET vs PC817 |
@@ -427,7 +430,7 @@ divider ratio**, and that is already fixed by design: **330 k / 10 k, 84 V → 2
 - **M2 → checklist Phase 5 and work order §3.** Mark which wires in "1T3 10" are the lever pairs; the
   rest of the loom is unused. ⚠️ **If the lever switches are normally-CLOSED**, say so loudly — it
   inverts the brake circuit and the firmware.
-- **M3 → `revv1-brake-circuit.md` §4** (record the type there), then **build step 1** (§6) and run the
+- **M3 → `brake-circuit.md` §4** (record the type there), then **build step 1** (§6) and run the
   **§7.1–§7.2 tests — issue #8's gate before riding**. Also checklist PHASE 5B and work order §5.3.
 - **M8 → plan D4.** If it is not a clean momentary dry contact, the boost mode scheme changes.
 - **M9 → plan §3.1.3.** Assign IN-13 to the measured transmit line. ⭐ **If the Bluetooth is integrated,

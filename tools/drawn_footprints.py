@@ -177,11 +177,12 @@ def fuse_clip_pair():
 
 
 def fuse_in_clips():
-    """F201 is never on the board: it sits in the clips FH201A/B, which are,
-    and its device says `Convert to PCB: no` so Import Changes leaves it off.
+    """F201 is never on the board: it sits in the holder FH201's two clips,
+    which are, and its device says `Convert to PCB: no` so Import Changes
+    leaves it off.
     EasyEDA's Allegro netlist export still refuses a part without a footprint,
     so this marks where the fuse's caps sit: on the clip rows, 17.8 mm apart
-    (Littelfuse 01110501Z, FH201A's source)."""
+    (Littelfuse 01110501Z, `fuse_clip_pair`)."""
     return Drawn("FUSE-5X20_IN_CLIPS_NOT_ON_PCB", (Pad("1", -8.9, 0.0, 1.0, 1.0),
                                                    Pad("2", 8.9, 0.0, 1.0, 1.0)))
 

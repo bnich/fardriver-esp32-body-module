@@ -12,8 +12,10 @@ Writes `<out>/revv1-module/`, an `.eprj3` folder project with one board per
   * its PCB: the outline, the four mounting holes and the design rules from
     `eprj3/pcb.py`.
 
-and `<out>/revv1-module.zip` of that folder, because whether EasyEDA Pro opens
-a folder or imports a zip is undocumented.
+and `<out>/revv1-module.eprj2`, the single-file project EasyEDA Pro 3.2.149
+opens (it does not open `.eprj3`), plus `<out>/revv1-module.zip` of the folder
+and `<out>/layout-rules.txt`: the HV net class to set up in the editor before
+routing (`layout_rules.py`).
 
 ⛔ GATED, three times, and nothing is written unless all three are empty:
   1. `integrity.check` -- is the netlist a circuit at all;
@@ -30,17 +32,16 @@ is `project.DEFAULT_EPOCH_MS`, and the zip carries fixed dates.  Two runs are
 byte-identical, which is the only cheap way to tell a regenerated project from
 a changed one.
 
-⚠️ VERIFIED AND INFERRED.  The files are verified against the format: every
-record round-trips the grammar byte-exactly, and the tests re-derive every
-board's nets from the emitted geometry and naming records and compare them,
-net by net and pin by pin, with `netlist.current()`.  What is NOT verified is
-that EasyEDA Pro accepts them -- in particular that a net flag or a `NET` name
-on a stub wire joins two pins into one net.  The spec infers that from the
-application's code; no example file demonstrates it.  Open the gauge project
-(`tools/gauge.py`) first: it tests each naming mechanism alone and says which
-`schematic.NAMING` to use.
+Every record round-trips the grammar byte-exactly, and the tests re-derive
+every board's nets from the emitted geometry and naming records and compare
+them, net by net and pin by pin, with `netlist.current()`.  EasyEDA Pro joins
+the nets as generated: a board's netlist exported from the editor is proven
+against the netlist with `tools/tel_check.py`, nets and footprints.  A proof
+holds only for the netlist it was taken from.
 
-Footprints are NOT bound.  The owner links LCSC devices in EasyEDA Pro.
+Every placed item is bound to a footprint: EasyEDA's library footprint for its
+LCSC part (through ~/tools/lcsc-search), or one generated here
+(`footprint_lib.generated`).  The build names any item still without one.
 """
 import argparse
 import shutil

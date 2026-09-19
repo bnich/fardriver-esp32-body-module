@@ -266,7 +266,7 @@ def test_q101_gate_drive_stays_inside_the_part_at_every_pack_voltage(w):
         v_gs = pack * r_gs / (r_gs + r_pd)
         assert 8.0 <= v_gs <= 20.0, (
             f"V_GS = -{v_gs:.1f} V at {pack} V: outside full enhancement "
-            f"(>= 8 V) .. the IXTP26P20P's +/-20 V gate rating")
+            f"(>= 8 V) .. the IXTA26P20P's +/-20 V gate rating")
     clamp = [z for z in w.between(gate, source, {"ZENER"})]
     assert clamp and clamp[0].v_max < 20.0, "no zener holds V_GS under 20 V"
     assert w.net(clamp[0].refdes, "K") == source, "gate zener is backwards"

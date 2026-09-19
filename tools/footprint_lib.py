@@ -3,8 +3,7 @@
 The footprints come from EasyEDA's LCSC library through ~/tools/lcsc-search,
 which caches every answer: after one online build, builds run offline.  The
 library serves footprints only as V2; `eprj3/v2footprint.py` converts them,
-and `fit()` renames each pad to the netlist pin it carries (tools/padmap.py)
-and removes the pads the design omits.
+and `fit()` renames each pad to the netlist pin it carries (tools/padmap.py).
 
 No library data is kept in this repository: a build without lcsc-search, or
 with REVV1_NO_LIBRARY set (the test suite does), binds no library footprint
@@ -82,7 +81,7 @@ def generated(thing):
     - The parts with no library device, drawn from their datasheets
       (`drawn_footprints`).
     - The inter-board connectors: their family is the owner's open decision
-      (docs/esp32-needed-from-owner.md item 6), but every family on the list
+      (still open), but every family on the list
       sits on the 2.54 mm grid -- the family sets the mated height, not the
       holes -- so the land pattern does not wait for it."""
     from . import drawn_footprints
