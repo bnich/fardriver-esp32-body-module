@@ -65,6 +65,8 @@ _BY_MPN = {
     # symbol numbers K = 2: pad 1 is the ANODE here, unlike the generic
     # diode rule below -- a reversed clamp would short its lamp output.
     "SMF18A": {"1": "A", "2": "K"},
+    # TI SBVS157E p.4, TLV803 DBZ (SOT-23): GND 1, RESET 2, VDD 3
+    "TLV803SDBZR": {"1": "GND", "2": "RESET", "3": "VDD"},
     # TI SLOS346O, D (SOIC-8)
     "SN65HVD230DR": {"1": "D", "2": "GND", "3": "VCC", "4": "R", "5": "Vref",
                      "6": "CANL", "7": "CANH", "8": "RS"},

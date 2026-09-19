@@ -536,9 +536,19 @@ def test_every_wire_that_leaves_the_box_has_a_tvs_on_its_own_board(d, w):
             assert tvs, f"{c.refdes}.{cp.pin} ({cp.net}) leaves {c.board} unprotected"
 
 
+#: A rail-to-rail array's own rail pin, which its datasheet ties to the supply
+#: its lines live on.  ST USBLC6-2 §2.2: pin 5 to 'VCC'; V_BR 6 V min against a
+#: 3.3 V rail, which no converter's OVP window reaches.
+_ARRAY_RAIL_PIN = {"USBLC6-2SC6": ("5", "V3P3")}
+
+
 def test_no_quad_array_touches_a_raw_rail_and_v12_has_its_own_clamp(d, w):
     for a in _arrays(d):
-        assert not w.nets_of(a) & {"V12", "V5", "V3P3"}, (
+        rail = _ARRAY_RAIL_PIN.get(a.mpn)
+        if rail:
+            assert w.net(a.refdes, rail[0]) == rail[1], a.refdes
+        lines = {w.net(a.refdes, p) for p in a.pins if not rail or p != rail[0]}
+        assert not lines & {"V12", "V5", "V3P3"}, (
             f"{a.refdes}: the TDK's OVP window overlaps the array's V_BR")
     single = [t for t in w.between("V12", "GND", {"TVS"}) if len(t.pins) == 2]
     assert len(single) == 1 and single[0].board == "DRV"
@@ -686,7 +696,11 @@ def test_the_module_has_its_reset_rc_and_a_recovery_path(d, w):
                and {en, w.net("U401", "IO0")} <= {cp.net for cp in c.pins}]
     assert service, "no internal header brings out EN and IO0 for recovery"
     nets = {cp.net for cp in service[0].pins}
-    assert {w.net("U401", "IO43"), w.net("U401", "IO44"), "V3P3", "GND"} <= nets
+    tx = w.net("U401", "IO43")
+    assert tx not in nets and any(w.between(tx, n, {"R"}) for n in nets), (
+        "U0TXD reaches the header through its HDG series resistor")
+    assert {w.net("U401", "IO44"), "GND"} <= nets
+    assert "V3P3" not in nets, "the adapter powers itself: no rail on the header"
 
 
 def test_the_pin_map_obeys_the_silicon(d, w):

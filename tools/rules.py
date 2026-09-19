@@ -493,6 +493,7 @@ SUPPLY_PINS = {
     "MCP23017": {"VDD": {"3V3"}},                       # 1.8-5.5 V, but its I/O meets 3.3 V pins
     "TPS4H160": {"VS": {"12V"}},                        # 4-40 V: the 12 V rail ONLY, never 84 V
     "TLV767": {"IN": {"5V", "12V"}},                    # 2.5-16 V in (12 V is legal; its heat is board_fit's problem)
+    "TLV803S": {"VDD": {"3V3"}},                        # its 2.93 V threshold watches the 3.3 V rail
     "CN150B110": {"+Vin": {"84V"}},
     "EC7BW": {"+Vin": {"84V"}},
 }

@@ -87,7 +87,8 @@ def test_every_map_agrees_with_the_library_symbol(d):
     library pin carries no information to check)."""
     svc = _library()
     checked = 0
-    for x in _fitted(d):
+    # Unfitted parts too: their footprint is on the board, waiting to be fitted.
+    for x in list(d.parts) + list(d.connectors):
         code = padmap.footprint_source(x)
         if not code:
             continue

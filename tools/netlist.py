@@ -78,10 +78,12 @@ _C_PKG = {"0805": ((2.0, 1.25), 1.25), "1206": ((3.2, 1.6), 1.8)}
 # no entry has no rating, and VR-RATED fails the design until one is chosen.
 #   (value, package) -> (LCSC, maker part, working V, JLC class)
 _R_LCSC = {
+    ("22R", "0805"): ("C17561", "UNI-ROYAL 0805W8F220JT5E", 150.0, "Basic"),
     ("100R", "0805"): ("C17408", "UNI-ROYAL 0805W8F1000T5E", 150.0, "Basic"),
     ("120R", "0805"): ("C17437", "UNI-ROYAL 0805W8F1200T5E", 150.0, "Basic"),
     ("1k", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
     ("1k00 1%", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
+    ("470R", "0805"): ("C17710", "UNI-ROYAL 0805W8F4700T5E", 150.0, "Basic"),
     ("2k0 1%", "0805"): ("C17604", "UNI-ROYAL 0805W8F2001T5E", 150.0, "Basic"),
     ("2k2", "0805"): ("C17520", "UNI-ROYAL 0805W8F2201T5E", 150.0, "Basic"),
     ("4k7", "0805"): ("C17673", "UNI-ROYAL 0805W8F4701T5E", 150.0, "Basic"),
@@ -128,13 +130,13 @@ def _r(refdes: str, board: Board, value: str, source: str,
 
 
 def _c(refdes: str, board: Board, value: str, v_max: float, source: str,
-       pkg: str = "0805") -> Part:
+       pkg: str = "0805", dnp: bool = False) -> Part:
     """A ceramic chip capacitor, bought by value. `v_max` is the voltage it
     must be rated for; the chosen part's rating (from _C_LCSC) replaces it."""
     fp, h = _C_PKG[pkg]
     lcsc, maker, volts, cls = _C_LCSC.get((value, v_max, pkg), ("", "", v_max, ""))
     return Part(refdes, f"C-{value}", pkg, board, "C", ("1", "2"), h,
-                footprint_mm=fp, v_max=volts, lcsc=lcsc,
+                footprint_mm=fp, v_max=volts, lcsc=lcsc, dnp=dnp,
                 assembly="jlc" if lcsc else "",
                 value=f"{value} {volts:g}V",
                 source=source + (_lcsc_note(lcsc, maker, volts, cls) if lcsc else ""))
@@ -714,16 +716,15 @@ _SPARE_LINES = tuple(
 
 
 _MCP_SOURCE = (
-    f"{_DS_MCP} p.11 Table 2-1 (SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
+    f"{_DS_MCP} p.11 Table 2-1 (one column for SSOP, SOIC and SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
     f"SCK 12 · SDA 13 · NC 14 · A0-A2 15-17 · RESET 18 · INTB 19 · INTA 20 · "
     f"GPA0-7 21-28. A0-A2 and RESET 'Must be externally biased'. ⛔ GPA7 and "
     f"GPB7 are 'Output only (MCP23017)' and carry nothing. nc NC11/NC14: 'NC "
     f"(MCP23017)'. nc INTB: p.20 'When MIRROR = 1, the INTn pins are "
-    f"functionally OR'ed', so INTA alone reports both ports. nc spare GPx: "
-    f"'Can be enabled for … internal weak pull-up resistor' — firmware sets "
-    f"GPPU on every spare input bit and drives GPA7/GPB7 as outputs (p.18). "
-    f"p.33: SPDIP top-to-seating-plane 0.200 in = 5.08 mm max, soldered "
-    f"direct with no socket. 400 kHz at 3.3 V. BOM C3")
+    f"functionally OR'ed', so INTA alone reports both ports. Firmware drives "
+    f"GPA7/GPB7 as outputs (p.18), so neither floats; every input bit has an "
+    f"external pull. p.35 (drawing C04-073): SSOP-28 A 2.00 mm max, D 10.50, "
+    f"E 8.20. 400 kHz at 3.3 V. BOM C3")
 
 
 def _class_a_parts(pull: str, series: str, cap: str, net: str) -> tuple[Part, ...]:
@@ -759,14 +760,14 @@ _BRAIN_PARTS = (
          ("GPA0", "GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6",
           "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5", "GPB6",
           "VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "INTA"),
-         2.0, footprint_mm=(10.5, 8.2),
+         2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
          nc=("GPA7", "GPB7", "INTB", "NC11", "NC14"),
          value="I²C address 0x20 (A2..A0 = 000)",
          source=f"Expander #1: every bar input. {_MCP_SOURCE}"),
     Part("U403", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
          ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0")
          + _U403_SPARES,
-         2.0, footprint_mm=(10.5, 8.2),
+         2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
          nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
          value="I²C address 0x21 (A2..A0 = 001)",
          source=f"Expander #2: GPA0 senses ACC+; the other 13 input-capable "
@@ -795,6 +796,21 @@ _BRAIN_PARTS = (
                 f"pin … Do not float'. EN ties to IN ('can be connected to the "
                 f"input pin'). PAD to GND. nc NC: Figure 5-4 names pads 3 and "
                 f"7 NC and Table 5-1 gives them no function. p.41: 1.1 mm max"),
+    Part("U406", "TLV803SDBZR", "SOT-23", "BRAIN", "IC", ("GND", "RESET", "VDD"),
+         1.12, height_confirmed=True, footprint_mm=(2.9, 2.6), v_max=6.0, dnp=True,
+         value="2.93 V threshold, 200 ms, open drain",
+         source="EN supervisor, NOT FITTED: the footprint is there if a slow "
+                "or bouncing 3V3 ramp ever shows up. Espressif HDG, 'Chip "
+                "Power-up and Reset Timing': CHIP_PU must rise after the 3.3 V "
+                "rails settle; the 10 kΩ / 1 µF RC (R438, C412) does that for "
+                "the TLV767's fast start, and fitted this holds EN low until "
+                "3V3 is over 2.93 V and 200 ms more. TI SBVS157E (tlv803.pdf) p.4: "
+                "TLV803 DBZ GND 1 · RESET 2 · VDD 3; RESET open drain, 'Use a 10-kΩ "
+                "to 1-MΩ pullup' = R438. VIT- 2.87-2.99 V (p.6). p.22: DBZ "
+                "1.12 mm max"),
+    _c("C436", "BRAIN", "100nF", 50.0,
+       "U406 VDD decoupling, not fitted with it. TI SBVS157E p.4: 'place a "
+       "0.1-µF ceramic capacitor close to this pin'", dnp=True),
     _r("R401", "BRAIN", "120R",
        "CAN termination at the module end. 68 Ω joined with the panel's own "
        "132.4 Ω is the CAN pre-flight gate. BOM B2"),
@@ -812,22 +828,31 @@ _BRAIN_PARTS = (
     _tvs5("D401", "BRAIN", "At J402: IN04A, IN04B, IN03, IN01"),
     _tvs5("D402", "BRAIN", "At J402: IN09, IN02, IN10"),
     _tvs5("D403", "BRAIN",
-          "At J403: IN08A, IN08B, RUN, START. RUN's 5.1 V sits 0.1 V over "
-          "V_RWM and 1.3 V under V_BR min"),
-    _tvs5("D404", "BRAIN", "At J404: the two FarDriver serial wires"),
+          "At J403: IN08A, IN08B, RUN, START. RUN idles at 5.03 V (5.3 V "
+          "with ACC+ at its 5.4 V top): at V_RWM and at least 0.7 V under "
+          "V_BR min 6.0 V. I_R ≤ 20 µA costs 20 mV across R314's 1 kΩ"),
+    _tvs5("D404", "BRAIN", "At J404: the two FarDriver serial wires (K1, K3) "
+          "and the throttle's boost button (K4)"),
     _tvs15("D407", "BRAIN",
            "At J404: BOOST_OUT, whose controller-side pull-up is unmeasured "
            "('3.3-12 V', plan §7.1), so it takes the 15 V array"),
     _tvs5("D408", "BRAIN", "At J401: USB-C CC1 and CC2 only. ⛔ NOT the data "
-          "pair: this array is 165-220 pF per line, and D409 carries D+/D-"),
+          "pair: this array is ~300 pF per line, and D409 carries D+/D-"),
     Part("D409", "USBLC6-2SC6", "SOT23-6L", "BRAIN", "TVS",
-         ("1", "2", "3", "4", "5", "6"), 1.45,
+         ("1", "2", "3", "4", "5", "6"), 1.45, height_confirmed=True,
          footprint_mm=(3.0, 3.0), v_max=5.25,
          value="V_RM 5.25 V · 3.5 pF max per line",
-         source="USB D+/D- ESD at J401. ST USBLC6-2SC6: pins 1 and 6 are I/O1 "
-                "(flow-through), 3 and 4 are I/O2, 2 is GND, 5 is VBUS. A "
-                "general-purpose array is tens of times too capacitive for a "
-                "USB pair; this one is 3.5 pF max. SOT23-6 height assumed"),
+         source="USB D+/D- ESD at J401. ST USBLC6-2 (usblc6-2.pdf, Doc ID 11265 "
+                "Rev 5): pins "
+                "1 and 6 are I/O1 (flow-through), 3 and 4 are I/O2, 2 is GND, "
+                "5 is the top of the steering diodes, named VBUS. Pin 5 is on "
+                "V3P3, not the USB VBUS: GPIO20 comes out of reset with D+ "
+                "pulled up, which through I/O1 → pin 5 would hold an unplugged "
+                "VBUS near 2.7 V and GPB6 at 1.7 V, neither high nor low. p.4 "
+                "§2.2 ties pin 5 to 'VCC'; V_BR 6 V min (p.2) sits well over "
+                "3.3 V. A general-purpose array is tens of times too capacitive "
+                "for a USB pair; this one is 3.5 pF max. p.12 Table 4: SOT23-6L "
+                "A 1.45 mm max"),
     _sot23("Q401", "AO3400A", "BRAIN", "NFET", 30.0,
            "Boost open-drain output to the controller's CruisePin. ⛔ METER THE "
            "WIRE FIRST: the same 30-pin harness carries pink 60VC at 72-84 V; "
@@ -867,9 +892,25 @@ _BRAIN_PARTS = (
        "USB-C CC1 → GND: Rd 5.1 kΩ marks the port a device (USB Type-C)"),
     _r("R441", "BRAIN", "5k1", "USB-C CC2 → GND: Rd 5.1 kΩ, as R440"),
     _r("R442", "BRAIN", "10k",
-       f"U404 RS → GND. {_DS_HVD} p.5: '10kΩ to 100kΩ pull down to GND = "
-       f"slope control mode' — 10 kΩ is the fastest slope, ample at "
-       f"250 kbit/s and quieter than high-speed mode"),
+       f"U404 RS → GND, NOT FITTED while CAN is parked (D19). {_DS_HVD} p.5: "
+       f"'10kΩ to 100kΩ pull down to GND = slope control mode' — 10 kΩ is "
+       f"the fastest slope, ample at 250 kbit/s. To un-park: fit R442, "
+       f"remove R472", dnp=True),
+    _r("R472", "BRAIN", "10k",
+       f"U404 RS → V3P3: standby while CAN is parked (D19). {_DS_HVD} p.6: "
+       f"V(Rs) ≥ 0.75 VCC is standby — driver off, receiver listening, 370 µA "
+       f"typ (p.7) where slope mode drew 10-17 mA. The transceiver cannot "
+       f"drive the bus"),
+    _r("R473", "BRAIN", "22R",
+       f"USB D+ series, at U401. {_DS_HDG}, USB: 'reserve series resistors "
+       f"(initial value can be 22/33 Ω) … close to the chip'. Its optional "
+       f"capacitors to ground are left off: a full-speed pair this short "
+       f"needs none"),
+    _r("R474", "BRAIN", "22R", "USB D- series, at U401, as R473"),
+    _r("R475", "BRAIN", "470R",
+       f"U0TXD series, at U401. {_DS_HDG}, UART: 'a 499 Ω series resistor to "
+       f"the U0TXD line to suppress harmonics'. 470 Ω is the nearest JLC "
+       f"Basic value"),
     _r("R443", "BRAIN", "1k",
        "UART1 RX series (plan §4 class E): the FarDriver's TX level is "
        "unmeasured (⬜ M9), so the harness wire never meets GPIO18 directly"),
@@ -1043,9 +1084,9 @@ _NETS_RAILS = (
              "C401.2 C402.2 C403.2 C404.2 C405.2 C406.2 C407.2 C408.2 C409.2 "
              "C410.2 C411.2 C421.2 C422.2 "
              "D401.A2 D401.A5 D402.A2 D402.A5 D402.K6 D403.A2 D403.A5 "
-             "D404.A2 D404.A5 D404.K4 D404.K6 "
+             "D404.A2 D404.A5 D404.K6 U406.GND C436.2 "
              "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.2 "
-             "J401.6 J401.7 J402.1 J403.1 J404.4 J408.6 J409.2 J409.16")
+             "J401.6 J401.7 J402.1 J403.1 J404.4 J404.7 J408.6 J409.2 J409.16")
         + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
         + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
         + _p("D413.K3 D413.K4 D413.K6")
@@ -1083,7 +1124,7 @@ _NETS_RAILS = (
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
-           "J408.5 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
+           "R472.2 D409.5 U406.VDD C436.1 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
         + _stack("V3P3") + _p("R317.2 R318.2 R346.2 R349.2 R351.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
@@ -1347,16 +1388,19 @@ _NETS_BRAIN = (
                "while C2 keeps the logic alive (plan §3.2.2). Divider on HVIN, "
                "pin on BRAIN: crosses HV-LINK and PWR-UP. Key state only — "
                "never a battery gauge"),
-    Net("EN", _p("U401.EN R438.1 C412.1 J408.1"), domain="3V3",
-        source="Module enable: 10 kΩ / 1 µF reset RC, and out to the service "
-               "header for a manual reset"),
+    Net("EN", _p("U401.EN R438.1 C412.1 J408.1 U406.RESET"), domain="3V3",
+        source="Module enable: 10 kΩ / 1 µF reset RC, the unfitted "
+               "supervisor's open drain, and out to the service header for a "
+               "manual reset"),
     Net("BOOT_IO0", _p("U401.IO0 R439.1 J408.2"), domain="3V3", gpio="GPIO0",
         source="Boot-mode strap, pulled up. ⛔ It reaches the INTERNAL service "
                "header only — no wire that leaves the box lands on a "
                "strapping pin (plan §3.1.2)"),
-    Net("U0TXD", _p("U401.IO43 J408.3"), domain="3V3", gpio="GPIO43",
+    Net("U0TXD", _p("U401.IO43 R475.1"), domain="3V3", gpio="GPIO43",
         source="ROM boot log and download-mode TX, to the service header "
                "only. ⛔ Never a load driver: it chatters at every reset"),
+    Net("U0TXD_HDR", _p("R475.2 J408.3"), domain="3V3",
+        source="U0TXD beyond its 470 Ω, at the service header"),
     Net("UART2_RX", _p("U401.IO44 J408.4"), domain="3V3", gpio="GPIO44",
         source="GPIO44 = U0RXD: download-mode RX on the service header, and "
                "the pin held for IN-14, the dongle-TX listen-only tap. ⬜ M9 "
@@ -1376,8 +1420,9 @@ _NETS_BRAIN = (
                "feed"),
     Net("TWAI_RX", _p("U404.R U401.IO21"), domain="3V3", gpio="GPIO21",
         source="From the transceiver's R"),
-    Net("CAN_RS", _p("U404.RS R442.1"), domain="3V3",
-        source="Mode pin, to GND through R442: slope-control mode"),
+    Net("CAN_RS", _p("U404.RS R442.1 R472.1"), domain="3V3",
+        source="Mode pin, held high by R472: standby, the driver off, while "
+               "CAN is parked (D19). R442 to GND is slope control, unfitted"),
     Net("UART1_TX", _p("U401.IO17 R436.1"), domain="3V3", gpio="GPIO17",
         source="Class E: tri-stated whenever the module is not sending"),
     Net("UART1_TX_WIRE", _p("R436.2 J404.2 D404.K3"), domain="3V3",
@@ -1399,15 +1444,19 @@ _NETS_BRAIN = (
         source="Open-drain to the controller's CruisePin (PIN17). 12 V class "
                "until the wire is metered: its pull-up is stated only as "
                "'3.3-12 V' (plan §7.1)"),
-    Net("USB_DM", _p("J401.4 U401.IO19 D409.3 D409.4"), domain="3V3", gpio="GPIO19",
+    Net("USB_DM_MCU", _p("U401.IO19 R474.1"), domain="3V3", gpio="GPIO19",
         source="Native USB D-: console, flashing and the OTA fallback"),
-    Net("USB_DP", _p("J401.3 U401.IO20 D409.1 D409.6"), domain="3V3", gpio="GPIO20",
+    Net("USB_DM", _p("R474.2 J401.4 D409.3 D409.4"), domain="3V3",
+        source="USB D- at the connector, beyond its 22 Ω"),
+    Net("USB_DP_MCU", _p("U401.IO20 R473.1"), domain="3V3", gpio="GPIO20",
         source="Native USB D+"),
+    Net("USB_DP", _p("R473.2 J401.3 D409.1 D409.6"), domain="3V3",
+        source="USB D+ at the connector, beyond its 22 Ω"),
     Net("USB_CC1", _p("J401.2 R440.1 D408.K4"), domain="3V3",
         source="USB-C CC1, Rd to GND"),
     Net("USB_CC2", _p("J401.5 R441.1 D408.K6"), domain="3V3",
         source="USB-C CC2, Rd to GND"),
-    Net("USB_VBUS", _p("J401.1 R444.1 D409.5"), domain="5V",
+    Net("USB_VBUS", _p("J401.1 R444.1"), domain="5V",
         source="USB VBUS, sensed only: it reaches a 100 kΩ resistor and "
                "nothing else"),
     Net("USB_VBUS_SENSE", _p("R444.2 R445.1 U402.GPB6"), domain="3V3",
@@ -1443,10 +1492,11 @@ _NETS_CLASS_A = (
                    "J402.7 D402.K1", "Left pod 'red-gold'"),
     *_class_a_nets("R408", "R419", "C407", "IN10_HAZARD", "GPA6",
                    "J402.9 D402.K4", "Left pod 'green-black' (hazard trio)"),
-    *_class_a_nets("R409", "R420", "C408", "IN07_BOOST_BTN", "GPB3", "",
-                   "⬜ M8: the throttle's red button is a 2-pin dry-contact "
-                   "lead with no connector allocated, so this node reaches no "
-                   "harness yet. GPB3, never GPA7: that bit is output-only"),
+    *_class_a_nets("R409", "R420", "C408", "IN07_BOOST_BTN", "GPB3",
+                   "J404.6 D404.K4",
+                   "The throttle's red button, a 2-pin dry-contact lead: J404.6, "
+                   "its return on J404.7. ⬜ M8 confirms the lead. GPB3, never "
+                   "GPA7: that bit is output-only"),
     *_class_a_nets("R410", "R421", "C409", "IN08A_RUNNING", "GPB0",
                    "J403.2 D403.K1", "Right pod 'black', slider 2 and 3"),
     *_class_a_nets("R411", "R422", "C410", "IN08B_HEADLIGHT", "GPB1",
@@ -1483,7 +1533,7 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
 _TERMINALS = {
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
     (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
-    (3.81, 9): ("C489995", "C384932"),
+    (3.81, 7): ("C489994", "C489981"), (3.81, 9): ("C489995", "C384932"),
     (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
 }
 #: Per family, from its drawings: header height and depth, the length N x pitch +
@@ -1678,7 +1728,8 @@ _CONNECTORS = (
                             "(BD-7)"),
             _cp("5", "START", "green — start button, a spare sensed input"),
         )),
-    _tb("J404", "BRAIN", "FarDriver serial + boost, 5 conductors", (
+    _tb("J404", "BRAIN", "FarDriver serial + boost (5 conductors), and the "
+        "throttle's boost button (2)", (
         _cp("1", "UART1_RX_WIRE", "brown/blue, labelled 'TXD' — ⬜ M9, measure"),
         _cp("2", "UART1_TX_WIRE", "red/black, labelled 'RXD' — ⬜ M9"),
         _cp("3", "", "brown/green = BW5V, 5 V OUT of the controller; unused. "
@@ -1686,6 +1737,10 @@ _CONNECTORS = (
         _cp("4", "GND", "black — serial ground, the reference for every "
                         "measurement"),
         _cp("5", "BOOST_OUT", "CruisePin PIN17, colour unknown. ⛔ METER FIRST"),
+        _cp("6", "IN07_BOOST_BTN_WIRE", "the throttle's red button (IN-07), "
+                                         "one leg of its 2-pin lead"),
+        _cp("7", "GND", "the button's other leg: its own return, never "
+                        "shared with the serial ground on 4"),
     )),
     Connector("J406", "BRAIN", "STACK, BRAIN side: 2 × 25, alternating grounds",
               _stack_pins(), 2.54, footprint_mm=(63.5, 5.08),
@@ -1697,9 +1752,10 @@ _CONNECTORS = (
               "dismantling the stack (hold IO0 low, pulse EN, flash over UART0)", (
         _cp("1", "EN"),
         _cp("2", "BOOT_IO0"),
-        _cp("3", "U0TXD", "GPIO43"),
+        _cp("3", "U0TXD_HDR", "GPIO43 through R475"),
         _cp("4", "UART2_RX", "U0RXD, GPIO44"),
-        _cp("5", "V3P3"),
+        _cp("5", "", "no supply: the adapter powers itself, and a 3V3 pin "
+                     "here would back-feed the LDO from it"),
         _cp("6", "GND"),
     ), 3.0, footprint_mm=(15.24, 2.54), leaves_box=False,
         source="⬜ Part unchosen: a 1 × 6 right-angle 2.54 mm pin header is "
@@ -1758,6 +1814,8 @@ _FAB_BY_MPN = {
     "MCP23017T-E/SS": ("C558584", "Microchip MCP23017T-E/SS", "Extended",
                        "DS20001952D Table 2-1: SSOP, SOIC and SPDIP share pins 1-28"),
     "SN65HVD230DR": ("C12084", "TI SN65HVD230DR", "preferred Extended", "the part itself"),
+    "TLV803SDBZR": ("C132016", "TI TLV803SDBZR", "Extended",
+                    "the part itself, unfitted; no Basic supervisor exists"),
     "TLV76733DGNR": ("C2873382", "TI TLV76733DGNR", "Extended",
                      "the part itself; stock is thin (34). Pin-compatible fallback "
                      "TLV76701DGNR C3752401 needs an FB divider"),
