@@ -515,12 +515,21 @@ def test_every_tvs_array_returns_to_ground_beside_a_connector_it_protects(d, w):
         assert mates, f"{a.refdes} is on {a.board}, away from any connector it serves"
 
 
+def _resistive_input(d, w, net):
+    """Every on-board part the wire reaches is a fitted resistor of ≥ 100 kΩ:
+    it can push only microamps in, and a clamp would add a part that fails
+    short (KSW: that blows the key fuse)."""
+    parts = w.parts_on(net)
+    return bool(parts) and all(p.kind == "R" and not p.dnp and ohms(p) >= 100e3
+                               for p in parts)
+
+
 def test_every_wire_that_leaves_the_box_has_a_tvs_on_its_own_board(d, w):
     for c in d.connectors:
         if not c.leaves_box:
             continue
         for cp in c.pins:
-            if cp.net in ("", "GND"):
+            if cp.net in ("", "GND") or _resistive_input(d, w, cp.net):
                 continue
             tvs = [t for t in w.parts_on(cp.net, {"TVS"}, board=c.board)
                    if c.parked or not t.dnp]
@@ -908,8 +917,8 @@ DEFECTS = [
      lambda d: swap_pins(d, "D301", "A", "K"),
      test_a_lever_cuts_the_motor_and_lights_the_lamp_through_drv_parts_alone,
      {"lever": "LEVER_L"}),
-    ("the IN-11 divider that reads 2.89 V",
-     lambda d: d.replace_part("R431", value="180k"),
+    ("the IN-11 divider that reads 2.52 V",
+     lambda d: d.replace_part("R431", value="100k"),
      test_the_run_node_reads_as_a_valid_high_everywhere_it_is_read, {}),
     ("CAN on pads the module does not have",
      lambda d: d.replace_net("TWAI_TX", pins=(("U401", "IO33"), ("U404", "D"))),
@@ -1001,7 +1010,7 @@ def test_each_choke_carries_supply_and_return_through_opposite_windings(d, ref, 
     ("R101A", "270k", "half of the 540 k pull-down that sets the ~51 ms ramp"),
     ("R101B", "270k", "half of the 540 k pull-down"),
     ("R113", "100k", "level-shifter divider bottom: 3.9 V at 43 V vs V_th ≤ 2.6 V"),
-    ("R314", "10k", "'R4', the kill's pull-up from ACC+"),
+    ("R314", "1k", "'R4', the kill's pull-up from ACC+ and the toggle's 5.1 mA wetting"),
     ("R316", "100k", "'R6', Q2 gate to ground"),
     ("R317", "10k", "'R3L': 10 k keeps the low level ~0.55 V through a 1N4148"),
     ("R425", "10k", "boost: the HARD external pull-down (D14)"),

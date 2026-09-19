@@ -210,11 +210,6 @@ _HVIN_PARTS = (
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
          source=f"B+ to GND at J101. plan §3.2.1, BOM E12 — never SMBJ90A, "
                 f"SMBJ100A or 5KP90A. {_DS_SMCJ} p.5: DO-214AB D max 2.62 mm"),
-    Part("D104", "SMCJ90A", "DO-214AB (SMC)", "HVIN", "TVS", ("A", "K"), 2.62,
-         height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0,
-         value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
-         source=f"KSW to GND at J102: the key-switch wire is an 84 V conductor "
-                f"leaving the box. BOM E12. {_DS_SMCJ} p.5: D max 2.62 mm"),
     Part("Q101", "IXTA26P20P-TRL", "TO-263AA (D2PAK)", "HVIN", "PFET",
          ("G", "D", "S"), 4.83, height_confirmed=True,
          footprint_mm=(10.41, 15.88), v_max=200.0,
@@ -557,6 +552,13 @@ _DRV_PARTS = (
     _tps_series("R333", "DIAG_EN, bussed to both devices"),
     _tps_series("R334", "SEL, bussed to both devices"),
     _tps_series("R335", "SEH, bussed to both devices"),
+    _r("R349", "DRV", "10k",
+       f"FAULT1 pull-up to V3P3 at U301's pin: FAULT is open-drain, "
+       f"{_DS_TPS} p.29 'R(pu) = 10 kΩ'. On the DEVICE side of R350, so the "
+       f"series resistor carries no DC and a fault still reads ~0 V at the MCU"),
+    _tps_series("R350", "FAULT1, U301 → GPIO39"),
+    _r("R351", "DRV", "10k", "FAULT2 pull-up to V3P3 at U302's pin, as R349"),
+    _tps_series("R352", "FAULT2, U302 → GPIO12"),
     # ── low-side channels (plan §6.2.3) ─────────────────────────────────────
     _sot23("Q301", "AO3400A", "DRV", "NFET", 30.0,
            "Horn low-side. 48 mΩ max at V_GS 2.5 V. BOM D3"),
@@ -619,9 +621,13 @@ _DRV_PARTS = (
            f"'Q2', the run/off kill inverter: D = BL, S = GND. Node high "
            f"(toggle OFF, or the bar wire open) ⇒ BL held low ⇒ motor cut. "
            f"{_BRK} §2.1, BOM D3"),
-    _r("R314", "DRV", "10k",
+    _r("R314", "DRV", "1k",
        f"'R4': pulls the RUN node up FROM ACC+ (the throttle's 5.1 V, in on "
-       f"J309). On DRV so an open pod, STACK or BRAIN contact leaves the node "
+       f"J309), and is the run/off toggle's WETTING current: 5.1 mA, plan §4's "
+       f"1 kΩ for every bought switch (tin/silver contacts want 1-10 mA; 10 kΩ "
+       f"gave 0.5 mA, and a ~1.5 kΩ contact film would then have cut the motor). "
+       f"Q2 now needs the contact under 146 Ω to stay in RUN. "
+       f"On DRV so an open pod, STACK or BRAIN contact leaves the node "
        f"pulled up = OFF = motor cut: those opens fail SAFE. ⚠️ An open ACC+ "
        f"does NOT: with no pull-up the node never rises and the kill goes dead "
        f"silently -- which is what ACC_SENSE (R343/R344) exists to report. "
@@ -832,17 +838,14 @@ _BRAIN_PARTS = (
        "through the ~200 ms of high-Z at boot. BOM D9"),
     _r("R430", "BRAIN", "100k",
        "IN-11 divider top, from the RUN node. SENSE ONLY: it never drives the "
-       "cut. RUN is pulled to ACC+ 5.1 V by R314 10 k and loaded by Q2's gate "
-       "network (R315 100 Ω + R316 100 k) in parallel with this 340 k divider: "
-       "5.1 V × 77.3 k / 87.3 k = 4.52 V at the node"),
-    _r("R431", "BRAIN", "240k",
-       "IN-11 divider bottom: 4.52 V × 240 / 340 = 3.19 V at U402.GPB2 — "
-       "0.55 V over the MCP23017's V_IH (0.8 × V_DD = 2.64 V) and 0.11 V "
-       "under V_DD. 0603: the 240k LCSC stocks is an 0603", pkg="0603"),
-    _r("R432", "BRAIN", "10k",
-       f"FAULT1 pull-up to V3P3: FAULT is open-drain. {_DS_TPS} p.29: "
-       f"'R(pu) = 10 kΩ'"),
-    _r("R433", "BRAIN", "10k", "FAULT2 pull-up to V3P3, as R432"),
+       "cut. RUN is pulled to ACC+ 5.1 V by R314 1 k and loaded by Q2's gate "
+       "network (R315 100 Ω + R316 100 k) in parallel with this 280 k divider: "
+       "5.1 V × 73.7 k / 74.7 k = 5.03 V at the node"),
+    _r("R431", "BRAIN", "180k",
+       "IN-11 divider bottom: 5.03 V × 180 / 280 = 3.24 V at U402.GPB2 — "
+       "0.60 V over the MCP23017's V_IH (0.8 × V_DD = 2.64 V); ACC+ at 5.4 V "
+       "gives 3.42 V, under V_DD + 0.3"),
+
     _r("R434", "BRAIN", "2k2",
        "I²C SDA pull-up. I²C at 3.3 V / 400 kHz allows 967 Ω-3.5 kΩ at "
        "100 pF; D16 wants the STRONG end beside 80 A of chopped phase current"),
@@ -954,11 +957,15 @@ _NETS_84V = (
         domain="84V",
         source="B+ from the tap downstream of the XT90-S; fused UPSTREAM IN THE "
                "HARNESS by the KLKD002 (plan §3.2.5), never on the board"),
-    Net("KSW", _p("J102.1 D104.K R112A.1 R107.1"), domain="84V",
+    Net("KSW", _p("J102.1 R112A.1 R107.1"), domain="84V",
         source="The key switch's OUTPUT: 84 V with the key on. The switch, its "
                "2 A fuse and the FarDriver KEY wire are harness (plan §3.2.5); "
                "the module only taps it, for D13's gate drive and for IN-12, "
-               "and never sources or switches KEY (D10)"),
+               "and never sources or switches KEY (D10). ⛔ NO clamp here: the "
+               "wire reaches only two 400 V strings of ≥ 330 kΩ, whose far ends "
+               "D106 and C109 hold; a TVS would add the one part that fails "
+               "SHORT and blows the key fuse -- cutting the controller's KEY "
+               "mid-ride, the one thing D10 says the module never does"),
     Net("HV_SW", _p("Q101.D C105.2 L101.1 L102.1"), domain="84V",
         source="D13's output, ahead of both chokes"),
     Net("D13_GATE", _p("Q101.G R110.1 D102.A C105.1 C107.1 R101A.1"),
@@ -1009,7 +1016,7 @@ _NETS_84V = (
 _NETS_RAILS = (
     Net("GND",
         # HVIN
-        _p("J101.2 J101.3 J102.2 D101.A D104.A Q105.S R113.2 D106.A C108.2 "
+        _p("J101.2 J101.3 J102.2 D101.A Q105.S R113.2 D106.A C108.2 "
            "R109.2 C109.2 L101.2 L102.2")
         # CONV
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
@@ -1020,7 +1027,7 @@ _NETS_RAILS = (
              "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 R344.2 "
              "Q301.S Q302.S Q303.S R307.2 R308.2 R309.2 D315.A "
              "Q305.S R316.2 "
-             "J301.1 J302.1 J303.2 J303.4 J306.2 J306.4 J309.3 J310.2 J405.3 "
+             "J301.1 J302.1 J303.2 J303.4 J306.2 J306.4 J309.2 J310.2 J405.3 "
              "D308.A D309.A D310.A D311.A D312.A D319.A D320.A D321.A D322.A "
              "D323.A D324.A D325.A D326.A "
              "D313.A2 D313.A5 D313.K4 D313.K6 "
@@ -1075,9 +1082,9 @@ _NETS_RAILS = (
         _p("U405.OUT U405.SNS C416.1 C417.1 U401.3V3 C413.1 C414.1 "
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
-           "R411.2 R412.2 R432.2 R433.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
+           "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
            "J408.5 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _stack("V3P3") + _p("R317.2 R318.2 R346.2"),
+        + _stack("V3P3") + _p("R317.2 R318.2 R346.2 R349.2 R351.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
                "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
@@ -1170,7 +1177,7 @@ _NETS_BRAKE = (
         source="ACC+ divided to 3.28 V for expander #2. LOW with the key on "
                "means the run/off kill has no pull-up and cannot cut the "
                "motor -- firmware must raise it; hardware cannot know"),
-    Net("ACC_PLUS", _p("J309.2 R314.1 R343.1 D316.K3"), domain="5V",
+    Net("ACC_PLUS", _p("J309.3 R314.1 R343.1 D316.K3"), domain="5V",
         source=f"The throttle's 5.1 V supply, in from the FarDriver harness. "
                f"It feeds R314 alone, so the kill works with the module's own "
                f"rails dead ({_BRK} §2.1)"),
@@ -1179,7 +1186,12 @@ _NETS_BRAKE = (
         domain="5V", interface="STACK",
         source=f"Right pod RED: closed to ground in RUN, open in OFF. Bare "
                f"copper from J403 across STACK to DRV (BD-7), tapped on BRAIN "
-               f"for IN-11. 4.52 V when open ({_BRK} §2.1)"),
+               f"for IN-11. 5.03 V when open ({_BRK} §2.1). D403's SMS05T1G "
+               f"line is rated V_RWM 5.0 V: at 5.03 V it sits 1 V under its "
+               f"6.0 V breakdown, and its leakage is sourced through R314's 1 k. "
+               f"⚠️ A RUN short to GND (a failed-short D403, a STACK bridge, a "
+               f"pod chafe) reads as RUN and defeats this SECONDARY kill "
+               f"silently: the key switch remains the primary one"),
     Net("Q2_GATE", _p("R315.2 Q305.G R316.1"), domain="5V",
         source="The run/off kill inverter's gate; R316 biases it OFF"),
     Net("IN05_NODE", _p("D305.A R317.1 R341.1"), domain="3V3",
@@ -1197,7 +1209,7 @@ _NETS_BRAKE = (
         domain="3V3", interface="STACK", gpio="GPIO16",
         source="As IN05_BRAKE_L, for the right lever"),
     Net("IN11_SENSE", _p("R430.2 R431.1 U402.GPB2"), domain="3V3",
-        source="RUN through 100 k / 240 k: 3.19 V with the toggle OFF. Sense "
+        source="RUN through 100 k / 180 k: 3.24 V with the toggle OFF. Sense "
                "only — it never drives the cut"),
 )
 
@@ -1263,11 +1275,15 @@ _NETS_STACK = (
     Net("CS2", _p("R324.2 R340.1 C302.1") + _stack("CS2") + _p("U401.IO5"),
         domain="3V3", interface="STACK", gpio="GPIO5",
         source="U302's current sense behind R324. ⚠️ ADC1 only"),
-    Net("FAULT1", _p("U301.FAULT") + _stack("FAULT1") + _p("R432.1 U401.IO39"),
+    Net("FAULT1_DEV", _p("U301.FAULT R349.1 R350.1"), domain="3V3",
+        source="U301's open-drain FAULT, pulled up at the pin by R349"),
+    Net("FAULT1", _p("R350.2") + _stack("FAULT1") + _p("U401.IO39"),
         domain="3V3", interface="STACK", gpio="GPIO39",
-        source="U301's open-drain global fault, pulled up on BRAIN. Digital "
-               "only. GPIO39's reset pull-up only joins R432's"),
-    Net("FAULT2", _p("U302.FAULT") + _stack("FAULT2") + _p("R433.1 U401.IO12"),
+        source="U301's global fault behind R350. Digital only. GPIO39's reset "
+               "pull-up only adds to R349's"),
+    Net("FAULT2_DEV", _p("U302.FAULT R351.1 R352.1"), domain="3V3",
+        source="U302's open-drain FAULT, pulled up at the pin by R351"),
+    Net("FAULT2", _p("R352.2") + _stack("FAULT2") + _p("U401.IO12"),
         domain="3V3", interface="STACK", gpio="GPIO12", source="As FAULT1"),
     Net("HORN_CMD", _p("U401.IO42") + _stack("HORN_CMD") + _p("R310.1"),
         domain="3V3", interface="STACK", gpio="GPIO42",
@@ -1596,9 +1612,10 @@ _CONNECTORS = (
         "BL never passes through BRAIN", (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
                            "stays capped"),
-            _cp("2", "ACC_PLUS", "the throttle's 5.1 V, IN — R314's pull-up "
+            _cp("2", "GND", "BL's only neighbour: a strand bridging them "
+                            "grounds BL, which CUTS the motor -- fail-safe"),
+            _cp("3", "ACC_PLUS", "the throttle's 5.1 V, IN — R314's pull-up "
                                  "source"),
-            _cp("3", "GND"),
         )),
     _tb("J310", "DRV", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
         "with the display (D19)", (

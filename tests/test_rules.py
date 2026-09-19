@@ -1187,3 +1187,14 @@ def test_an_input_on_a_pin_pulled_up_at_reset_is_fine():
     real = netlist.current()
     moved = on_gpio(real, "FAULT1", 39) if real.net("FAULT1").gpio != "GPIO39" else real
     assert not fired(moved, "GPIO-RESET-PULL")
+
+
+def test_only_a_truly_high_impedance_input_goes_unclamped():
+    """KSW reaches only ≥ 330 kΩ strings and carries no TVS (a clamp there is
+    the one part that fails short and blows the key fuse).  The exemption
+    must not cover a wire that reaches anything of lower impedance."""
+    from tools import netlist
+    real = netlist.current()
+    assert not fired(real, "PROT")
+    low = real.replace_part("R107", value="10k")
+    assert any("KSW" in e for e in fired(low, "PROT"))

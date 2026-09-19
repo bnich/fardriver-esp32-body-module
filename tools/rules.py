@@ -898,6 +898,8 @@ def protection(d: Design) -> list[str]:
                 continue
             if net.domain == "GND":
                 continue
+            if _resistive_input(ix, net):
+                continue
             why_not = []
             ok = False
             for ref, pin in net.pins:
@@ -924,6 +926,21 @@ def protection(d: Design) -> list[str]:
                     f"({c.name}, {c.board}) with no working clamp: "
                     f"{'; '.join(why_not) or 'no TVS on the net at all'}.")
     return errs
+
+
+#: A wire whose every on-board part is a fitted resistor at least this large
+#: needs no clamp: it can push only microamps into the board, and a TVS on it
+#: would add the one part that can fail SHORT -- on KSW that blows the key fuse
+#: and cuts the controller's KEY (review HV-2 / FM-5).
+HI_Z_INPUT_OHMS = 100e3
+
+
+def _resistive_input(ix: _Ix, net) -> bool:
+    from .model import resistance
+    parts = [ix.parts.get(ref) for ref, _ in net.pins if ref not in ix.conns]
+    return bool(parts) and all(
+        p is not None and p.kind == "R" and not p.dnp
+        and (resistance(p.value) or 0) >= HI_Z_INPUT_OHMS for p in parts)
 
 
 # ── GND-ISLAND: a ground that is not joined to ground ────────────────────────

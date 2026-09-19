@@ -210,3 +210,14 @@ class Design:
         return replace(self, nets=tuple(replace(n, pins=tuple(
             (r, q) for r, q in n.pins if (r, q) != (refdes, pin)))
             for n in self.nets))
+
+
+def resistance(value: str) -> float | None:
+    """'4k7' -> 4700, '100R' -> 100, '1k00 1%' -> 1000, '0R' -> 0; None if the
+    value states no resistance."""
+    import re
+    m = re.match(r"^(\d+)([kRM])(\d*)", value or "")
+    if not m:
+        return None
+    whole, unit, frac = m.groups()
+    return float(f"{whole}.{frac or 0}") * {"R": 1, "k": 1e3, "M": 1e6}[unit]
