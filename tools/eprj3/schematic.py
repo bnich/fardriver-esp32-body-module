@@ -435,14 +435,17 @@ def part_name(part):
 
 
 def connector_name(connector):
-    """A short displayed name: the connector description's first clause."""
+    """A short displayed name: the connector description's first clause, and
+    "(DNP)" when it is not fitted."""
     text = connector.name
     for stop in (": ", ". "):
         cut = text.find(stop)
         if cut > 0:
             text = text[:cut]
+    suffix = " (DNP)" if connector.dnp else ""
+    room = 32 - len(suffix)
     text = text.strip()
-    return text if len(text) <= 32 else text[:31] + "…"
+    return (text if len(text) <= room else text[:room - 1] + "…") + suffix
 
 
 def board_refs(design, board):
@@ -535,6 +538,8 @@ def _part_attrs(item, x, y, unique_id, *, part=None, connector=None):
         attrs.append(("Description",
                       f"{connector.pitch_mm:g} mm pitch · {connector.name}",
                       None, None, None))
+        if connector.dnp:
+            attrs.append(("DNP", "yes", None, None, None))
     attrs += [("Reuse Block", None, None, None, None),
               ("Group ID", None, None, None, None),
               ("Channel ID", None, None, None, None)]

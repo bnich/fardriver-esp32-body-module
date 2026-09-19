@@ -115,6 +115,9 @@ class Connector:
     #: The LCSC part of the loose mating half the owner wires and plugs in (a
     #: screw plug), or "" when there is none.  Ordered with the boards, not placed.
     plug: str = ""
+    #: Footprint laid out, part not fitted: JLC skips it, and the owner fits it
+    #: when it is wanted.
+    dnp: bool = False
 
 
 @dataclass(frozen=True)

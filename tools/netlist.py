@@ -646,6 +646,11 @@ _U401_PINS = (
     "IO42", "IO43", "IO44", "IO47", "IO48",
 )
 
+#: Expander #2's spare input-capable bits: on J409, unfitted.  GPA7/GPB7 are
+#: output-only and stay nc.
+_U403_SPARES = tuple(f"GPA{i}" for i in range(1, 7)) + tuple(f"GPB{i}" for i in range(7))
+
+
 _MCP_SOURCE = (
     f"{_DS_MCP} p.11 Table 2-1 (SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
     f"SCK 12 · SDA 13 · NC 14 · A0-A2 15-17 · RESET 18 · INTB 19 · INTA 20 · "
@@ -697,14 +702,15 @@ _BRAIN_PARTS = (
          value="I²C address 0x20 (A2..A0 = 000)",
          source=f"Expander #1: every bar input. {_MCP_SOURCE}"),
     Part("U403", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
-         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0"),
+         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0")
+         + _U403_SPARES,
          2.0, footprint_mm=(10.5, 8.2),
-         nc=("GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6", "GPA7",
-             "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5", "GPB6", "GPB7",
-             "INTA", "INTB", "NC11", "NC14"),
+         nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
          value="I²C address 0x21 (A2..A0 = 001)",
          source=f"Expander #2: GPA0 senses ACC+; the other 13 input-capable "
-                f"bits are spare. {_MCP_SOURCE}"),
+                f"bits are spare, brought out to the unfitted header J409. "
+                f"nc INTA: nothing on #2 needs an interrupt; ACC_SENSE is "
+                f"polled. {_MCP_SOURCE}"),
     Part("U404", "SN65HVD230DR", "SOIC-8", "BRAIN", "IC",
          ("D", "GND", "VCC", "R", "CANL", "CANH", "RS"), 1.75,
          height_confirmed=True, footprint_mm=(5.0, 6.2), nc=("Vref",),
@@ -974,7 +980,7 @@ _NETS_RAILS = (
              "D401.A2 D401.A5 D402.A2 D402.A5 D402.K6 D403.A2 D403.A5 "
              "D404.A2 D404.A5 D404.K4 D404.K6 "
              "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 D408.A2 D408.A5 D408.K1 D408.K3 D409.2 "
-             "J401.6 J401.7 J402.1 J403.1 J404.4 J408.6")
+             "J401.6 J401.7 J402.1 J403.1 J404.4 J408.6 J409.2 J409.16")
         + _hvlink("GND") + _pwrup("GND") + _STACK_GND,
         domain="GND", interface="HV-LINK",
         source="The star net, on all four boards and across all three "
@@ -1011,7 +1017,7 @@ _NETS_RAILS = (
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R432.2 R433.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
-           "J408.5") + _stack("V3P3") + _p("R317.2 R318.2"),
+           "J408.5 J409.1") + _stack("V3P3") + _p("R317.2 R318.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
                "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
@@ -1089,6 +1095,10 @@ _NETS_BRAKE = (
     Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
         domain="3V3", interface="STACK",
         source="The 100 kΩ-isolated copy of BL that firmware reads"),
+    *(Net(f"SPARE_{bit[2:]}", _p(f"U403.{bit} J409.{n}"), domain="3V3",
+          source="Expander #2 spare input on J409. Unfitted: firmware keeps its "
+                 "pull-up on (GPPU) until something is wired here")
+      for n, bit in enumerate(_U403_SPARES, start=3)),
     Net("ACC_SENSE", _p("R343.2 R344.1") + _stack("ACC_SENSE") + _p("U403.GPA0"),
         domain="3V3", interface="STACK",
         source="ACC+ divided to 3.28 V for expander #2. LOW with the key on "
@@ -1604,6 +1614,20 @@ _CONNECTORS = (
     ), 3.0, footprint_mm=(15.24, 2.54), leaves_box=False,
         source="⬜ Part unchosen: a 1 × 6 right-angle 2.54 mm pin header is "
                "~3 mm above the board, unconfirmed"),
+    Connector("J409", "BRAIN", "Spare inputs, INTERNAL: expander #2's thirteen "
+              "spare bits, 3.3 V logic straight to U403, unprotected", (
+        _cp("1", "V3P3"),
+        _cp("2", "GND"),
+        *(_cp(str(n), f"SPARE_{bit[2:]}", f"U403.{bit}")
+          for n, bit in enumerate(_U403_SPARES, start=3)),
+        _cp("16", "GND"),
+    ), 8.5, footprint_mm=(20.32, 5.08), leaves_box=False, dnp=True,
+        source="2 × 8 vertical 2.54 mm pin header, the footprint only: fit a "
+               "header when a spare is wanted. Whatever is wired here brings its "
+               "own conditioning (series R, filter, clamp; plan §4) and never "
+               "leaves the box without it. LCSC lists it 2.5 mm of body and a "
+               "6 mm pin, so 8.5 mm fitted, unconfirmed: below BRAIN's 9.2 mm "
+               "terminals"),
 )
 
 
@@ -1701,6 +1725,8 @@ _FAB_CONN = {
     "J401": ("C2988369", "G-Switch GT-USB-7010ASV", "USB-C 2.0, 16-pin top mount, "
                                                     "-40…+85 °C"),
     "J408": ("C32713265", "hanxia HX PZ2.54-1x6P WZ", "1 × 6 right-angle, gold"),
+    "J409": ("C492425", "XFCN PZ254V-12-16P", "2 × 8 vertical; not fitted, the "
+                                             "footprint and the part to fit"),
 }
 
 

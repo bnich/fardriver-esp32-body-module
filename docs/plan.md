@@ -1652,8 +1652,8 @@ the `-1U`.
 - ✅ **D16 is FULL NATIVE on the custom board (owner, 2026-09-18).** The S3 drives the six used
   `TPS4H160B` inputs and `DIAG_EN` / `SEL` / `SEH` directly, over the STACK connector (§9.2) — **the
   I2C bus is out of the lighting path entirely.** Both `MCP23017`s are still fitted: #1 carries the bar
-  inputs, where a bus glitch is a missed press; #2 is sixteen spare bits (GPA7/GPB7 output-only,
-  §3.1.3).
+  inputs, where a bus glitch is a missed press; #2 senses ACC+ on GPA0 and brings its other 13 input-capable
+  bits to an unfitted 2 × 8 header, J409 (GPA7/GPB7 are output-only, §3.1.3).
 - ⚠️ **Spare pins are scarce.** Full native moves eight signals off expander #2 and onto the S3, into a
   pool only two pins larger than the prototype's. The BRAIN pin assignment, and the count of what is
   left, live in `tools/netlist.py` and are checked by `tools/rules.py` — this plan carries the rules,
