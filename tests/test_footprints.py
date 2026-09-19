@@ -142,9 +142,9 @@ def test_parts_bought_as_one_part_share_a_device_and_others_do_not():
     from tools.eprj3.schematic import emit_board
     design = nl.current()
     project = Project("t")
-    project.add_board("DRV")
+    project.add_board("OUTPUTS")
     sheet = project.boards[0].schematic.sheets[0]
-    emit_board(design, "DRV", sheet)
+    emit_board(design, "OUTPUTS", sheet)
     docs = documents("|\n".join(sheet.library_records))
     devices = [d[1][1] for d in docs["DEVICE"]]
     by_supplier = {}
@@ -154,7 +154,7 @@ def test_parts_bought_as_one_part_share_a_device_and_others_do_not():
             assert dev["attributes"].get("Supplier") == "LCSC"
             assert part_no not in by_supplier, f"{part_no} has two devices"
             by_supplier[part_no] = dev
-    drv_lcsc = {p.lcsc for p in design.parts if p.board == "DRV" and p.lcsc and not p.dnp}
+    drv_lcsc = {p.lcsc for p in design.parts if p.board == "OUTPUTS" and p.lcsc and not p.dnp}
     assert drv_lcsc and drv_lcsc <= set(by_supplier), drv_lcsc - set(by_supplier)
     # the resistors' devices all point at ONE symbol
     r_symbols = {d["attributes"]["Symbol"] for d in devices if d["title"].startswith("R-")}
@@ -167,9 +167,9 @@ def test_each_placed_part_names_the_device_of_its_own_lcsc_part():
     from tools.eprj3.schematic import emit_board
     design = nl.current()
     project = Project("t")
-    project.add_board("DRV")
+    project.add_board("OUTPUTS")
     sheet = project.boards[0].schematic.sheets[0]
-    emit_board(design, "DRV", sheet)
+    emit_board(design, "OUTPUTS", sheet)
     docs = documents("|\n".join(sheet.library_records))
     lcsc_of_device = {d[0][1]["uuid"]: d[1][1]["attributes"].get("Supplier Part", "")
                       for d in docs["DEVICE"]}

@@ -169,7 +169,7 @@ def test_two_runs_are_byte_identical(built, tmp_path):
 
 def test_a_rebuild_replaces_stale_files(tmp_path):
     assert build_project.main(["--out", str(tmp_path)]) == 0
-    stale = tmp_path / NAME / "sch" / "HVIN" / "P9.esch2"
+    stale = tmp_path / NAME / "sch" / "POWER" / "P9.esch2"
     stale.write_text("left over", encoding="utf-8")
     assert build_project.main(["--out", str(tmp_path)]) == 0
     assert not stale.exists()
@@ -229,7 +229,7 @@ def test_the_build_refuses_sheets_that_do_not_carry_the_netlist(tmp_path, monkey
 
     def corrupt(design, board, sheet, **kw):
         out = real(design, board, sheet, **kw)
-        if board == "DRV":
+        if board == "OUTPUTS":
             sheet.page_records = _rename_one_ground_flag(sheet.page_records)
         return out
 
@@ -237,5 +237,5 @@ def test_the_build_refuses_sheets_that_do_not_carry_the_netlist(tmp_path, monkey
     code = bp.main(["--out", str(tmp_path)])
     err = capsys.readouterr().err
     assert code == 1
-    assert "read-back" in err and "DRV" in err
+    assert "read-back" in err and "OUTPUTS" in err
     assert not any(tmp_path.iterdir()), "nothing may be written when read-back fails"

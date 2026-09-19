@@ -28,12 +28,12 @@ def _conn(ref, board, name, nets, **kw):
 STACK = ("SIG", "GND", "V3P3")
 OK = Design(
     parts=(
-        Part("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "BRAIN", "MODULE",
+        Part("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "LOGIC", "MODULE",
              ("3V3", "GND", "IO5"), 3.1, nc=("IO6",)),
-        _r("R1", "BRAIN"),                       # pull-up
-        _r("R2", "DRV"),                         # series, lever side
-        Part("C1", "C-100n", "0805", "BRAIN", "C", ("1", "2"), 0.9, v_max=16.0),
-        Part("D1", "SMBJ15A", "SMB", "DRV", "TVS", ("A", "K"), 2.5, v_max=15.0,
+        _r("R1", "LOGIC"),                       # pull-up
+        _r("R2", "OUTPUTS"),                         # series, lever side
+        Part("C1", "C-100n", "0805", "LOGIC", "C", ("1", "2"), 0.9, v_max=16.0),
+        Part("D1", "SMBJ15A", "SMB", "OUTPUTS", "TVS", ("A", "K"), 2.5, v_max=15.0,
              dnp=True),
     ),
     nets=(
@@ -46,10 +46,10 @@ OK = Design(
         Net("LEVER", (("R2", "2"), ("J306", "1"), ("D1", "K")), domain="12V"),
     ),
     connectors=(
-        _conn("J406", "BRAIN", "STACK", STACK, leaves_box=False, interface="STACK",
+        _conn("J406", "LOGIC", "STACK", STACK, leaves_box=False, interface="STACK",
               side="bottom"),
-        _conn("J308", "DRV", "STACK", STACK, leaves_box=False, interface="STACK"),
-        _conn("J306", "DRV", "Lever", ("LEVER", "GND", "")),
+        _conn("J308", "OUTPUTS", "STACK", STACK, leaves_box=False, interface="STACK"),
+        _conn("J306", "OUTPUTS", "Lever", ("LEVER", "GND", "")),
     ),
 )
 
@@ -68,12 +68,12 @@ def test_the_clean_design_is_clean():
 
 # ── identity ─────────────────────────────────────────────────────────────────
 def test_duplicate_part_refdes():
-    errs = problems(OK.with_part(_r("R1", "DRV")), "identity")
+    errs = problems(OK.with_part(_r("R1", "OUTPUTS")), "identity")
     assert errs and "R1" in errs[0] and "2 times" in errs[0]
 
 
 def test_a_connector_may_not_share_a_refdes_with_a_part():
-    bad = replace(OK, connectors=OK.connectors + (_conn("R2", "DRV", "clash", ()),))
+    bad = replace(OK, connectors=OK.connectors + (_conn("R2", "OUTPUTS", "clash", ()),))
     assert any("R2" in e for e in problems(bad, "identity"))
 
 
@@ -118,7 +118,7 @@ def test_an_undeclared_pin():
 
 
 def test_a_part_with_no_pins():
-    bad = OK.with_part(Part("X1", "MYSTERY", "?", "DRV", "MECH", (), 1.0))
+    bad = OK.with_part(Part("X1", "MYSTERY", "?", "OUTPUTS", "MECH", (), 1.0))
     assert any("X1" in e and "declares no pins" in e for e in problems(bad, "pins"))
 
 
@@ -176,29 +176,29 @@ def test_net_and_table_disagree_about_which_net_is_on_a_contact():
 def test_cross_board_net_with_no_contact_on_one_board():
     bad = OK.without_pin("J308", "1")
     errs = problems(bad, "interface")
-    assert any("'SIG'" in e and "no inter-board contact on DRV" in e for e in errs)
+    assert any("'SIG'" in e and "no inter-board contact on OUTPUTS" in e for e in errs)
 
 
 def test_cross_board_net_with_no_contact_at_all():
     bad = OK.without_pin("J308", "1").without_pin("J406", "1")
     errs = " ".join(problems(bad, "interface"))
-    assert "contact on BRAIN" in errs and "contact on DRV" in errs
+    assert "contact on LOGIC" in errs and "contact on OUTPUTS" in errs
 
 
 def test_a_connector_of_the_wrong_interface_bridges_nothing():
-    """HV-LINK joins HVIN and CONV; labelled onto a DRV header it carries no
-    net across DRV<->BRAIN."""
-    bad = OK.replace_connector("J308", interface="HV-LINK")
+    """PWR-OUT joins POWER and OUTPUTS; labelled onto a LOGIC header it carries
+    no net across OUTPUTS<->LOGIC."""
+    bad = OK.replace_connector("J406", interface="PWR-OUT")
     errs = problems(bad, "interface")
-    assert any("'SIG'" in e and "DRV" in e for e in errs)
+    assert any("'SIG'" in e and "LOGIC" in e for e in errs)
 
 
 # ── an interface is two halves that mate ─────────────────────────────────────
 def test_a_crossing_with_a_half_missing():
-    """PWR-UP once ran CONV -> DRV -> BRAIN with no part between CONV and DRV."""
+    """PWR-OUT once ran POWER -> OUTPUTS -> LOGIC with no part between POWER and OUTPUTS."""
     bad = replace(OK, connectors=tuple(c for c in OK.connectors if c.refdes != "J406"))
     errs = " ".join(problems(bad, "interface"))
-    assert "STACK needs one half on DRV and one on BRAIN" in errs
+    assert "STACK needs one half on OUTPUTS and one on LOGIC" in errs
 
 
 def test_a_half_whose_contact_disagrees_with_its_mate():
@@ -210,14 +210,14 @@ def test_a_half_whose_contact_disagrees_with_its_mate():
 
 
 def test_a_third_half_on_a_board_the_interface_does_not_join():
-    extra = _conn("J999", "HVIN", "STACK", STACK, leaves_box=False, interface="STACK")
+    extra = _conn("J999", "POWER", "STACK", STACK, leaves_box=False, interface="STACK")
     bad = replace(OK, connectors=OK.connectors + (extra,))
     assert any("J999 sits elsewhere" in e for e in problems(bad, "interface"))
 
 
 def test_the_upper_half_must_hang_under_its_board():
     bad = OK.replace_connector("J406", side="top")
-    assert any("J406 hang under BRAIN" in e for e in problems(bad, "interface"))
+    assert any("J406 hang under LOGIC" in e for e in problems(bad, "interface"))
 
 
 def test_an_interface_nobody_defined():

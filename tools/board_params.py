@@ -1,4 +1,4 @@
-"""Physical envelope for the four-board stack -- THE single home for it.
+"""Physical envelope for the three-board stack -- THE single home for it.
 
 Two kinds of thing live here and they are kept apart on purpose:
 
@@ -53,7 +53,7 @@ AVAIL_H = CAVITY_H - FLOOR - LID        # internal height the stack may use
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
-STACK_ORDER = ("HVIN", "CONV", "DRV", "BRAIN")
+STACK_ORDER = ("POWER", "OUTPUTS", "LOGIC")
 
 PCB_T = 1.6
 #: Air between the tallest thing in a gap and whatever faces it, so that
@@ -64,28 +64,29 @@ CLEARANCE = 1.0
 #: (IPC-A-610 allows 1.5 mm): the default for a part with long leads, which
 #: the build trims. A part whose pins are too short or stiff to trim states
 #: its drawing's `lead_mm`, and its tail is that less the PCB. Left out, tails
-#: touch the plate or the part below.
+#: touch the floor liner or the part below.
 TAIL = 1.5
 #: Least space under the bottom board. The derivation never goes below
 #: liner + tails + clearance; this is the enclosure's boss height. PROVISIONAL.
 FLOOR_STANDOFF_MIN = 3.0
-#: An insulating sheet on the metal floor under HVIN, whose underside carries
-#: 84 V pins (J101, the chokes). The box is bonded to ground, so without it
-#: one bent tail, a stray strand or a flexed board is a pack short. A 0.43 mm
-#: polypropylene sheet (Formex GK-17 class) is the kind meant. PROVISIONAL:
-#: chosen with the enclosure.
+#: An insulating sheet on the metal floor under POWER, whose underside carries
+#: 84 V copper -- both converters' input pins, and the trimmed tails of J101 and
+#: the chokes. The box is bonded to ground, so without it one bent tail, a stray
+#: strand or a flexed board is a pack short. A 0.43 mm polypropylene sheet
+#: (Formex GK-17 class) is the kind meant. ⚠️ It is CUT AWAY under `FLOOR_SEAT`,
+#: where the baseplate has to reach the floor. PROVISIONAL: chosen with the
+#: enclosure.
 FLOOR_LINER_T = 0.5
-#: BD-9: the alloy plate in the gap above `PLATE_ABOVE` -- heatsink for the
-#: brick it bolts down onto, and the barrier between the 84 V and logic halves.
-PLATE_ABOVE = "CONV"
-PLATE_T = 3.0
-PLATE_SEATS_ON = "U201"
-#: The plate bolts to U201's M3 baseplate threads with countersunk ISO 10642
-#: M3 screws, whose heads (k = 1.86 mm max) sink into the plate's countersinks.
-#: A pan or button head (1.65-2.4 mm) would stand proud into the gap under DRV,
-#: where DRV's pins already hang.
-PLATE_SCREW_HEAD = 1.86
-PLATE_HARDWARE_ABOVE = max(0.0, PLATE_SCREW_HEAD - PLATE_T)
+#: The part that seats the bottom board on the floor: the 12 V brick is
+#: conduction-cooled, and its baseplate bolts to the box floor through a thermal
+#: pad, which is the heatsink (owner, 2026-09-19 -- there is no alloy plate in
+#: the stack). Its seat sets how high the bottom board sits, so nothing else on
+#: that face may hang deeper than it does; `stack_height` fails the design when
+#: something does.
+FLOOR_SEAT = "U201"
+#: Thermal interface material between that baseplate and the floor. PROVISIONAL:
+#: chosen with the enclosure.
+THERMAL_PAD_T = 0.5
 
 # --- harness plugs at the walls (MX-3) ---------------------------------------
 #: A harness wire leaves straight out of the back of its screw plug and has to
@@ -150,12 +151,24 @@ class Gap:
     above: str                 # a board, or LID
     top_mm: float              # tallest thing standing on `below`
     top_ref: str
-    hang_mm: float             # deepest thing under `above`: a part, or solder tails
+    #: Deepest thing under `above`: a part, or solder tails. On the FLOOR gap
+    #: the floor seat is left out of it and counted in `seat_mm` instead, so the
+    #: two terms of that gap can be read apart.
+    hang_mm: float
     hang_ref: str
-    plate_mm: float            # BD-9 plate in this gap, else 0
-    need_mm: float             # what the parts and the plate require
+    #: FLOOR gap only: the thermal pad plus `FLOOR_SEAT`'s own height, which is
+    #: how high its baseplate holds the board off the floor. 0 in every other
+    #: gap, and 0 when the seat part is not mounted on that face.
+    seat_mm: float
+    seat_ref: str
+    need_mm: float             # what the parts require
     pairs: tuple[Pair, ...]    # inter-board connectors crossing this gap
     gap_mm: float              # the spacing the stack is built with
+
+    @property
+    def seat_sets_gap(self) -> bool:
+        """The floor seat, not the parts that hang beside it, sets this gap."""
+        return bool(self.seat_mm) and self.seat_mm >= self.need_mm - 1e-9
 
     @property
     def chosen(self) -> tuple[Pair, ...]:
@@ -182,6 +195,8 @@ class Gap:
         refs = [r for p in pairs for r in (p.lower, p.upper)]
         if not self.chosen and self.need_mm >= self.gap_mm - 1e-9:
             refs += [self.top_ref, self.hang_ref]
+            if self.seat_sets_gap:
+                refs.append(self.seat_ref)
         return tuple(refs)
 
 
@@ -264,7 +279,11 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
       need  = the larger of
                 tallest top-side thing below + CLEARANCE + solder tails above
                 deepest bottom-side part above + CLEARANCE
-              with BD-9's plate, where there is one, stacked in between.
+
+              On the FLOOR gap it is instead the larger of
+                THERMAL_PAD_T + FLOOR_SEAT's height  (the baseplate on the floor)
+                FLOOR_LINER_T + the deepest OTHER underside item + CLEARANCE
+              never below FLOOR_STANDOFF_MIN. `seat_sets_gap` says which won.
 
       mated = the two halves of an inter-board connector, body on body
               (`height_mm` of the lower half + `height_mm` of the upper). That
@@ -311,16 +330,23 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
         if hang_mm == 0.0:
             hang_ref = "-"
 
-        plate_mm = PLATE_T if below == PLATE_ABOVE and above in order else 0.0
+        seat_mm, seat_ref = 0.0, "-"
         if below == FLOOR_NAME:
-            need = max(FLOOR_STANDOFF_MIN, FLOOR_LINER_T + hang_mm + CLEARANCE)
+            # The seat bolts to the floor; everything else on that face clears
+            # the liner. They are separate terms, and the taller one wins.
+            seat_h = [h for h, r in hangs if r == FLOOR_SEAT]
+            if seat_h:
+                seat_mm, seat_ref = THERMAL_PAD_T + max(seat_h), FLOOR_SEAT
+                beside = [(h, r) for h, r in hangs if r != FLOOR_SEAT]
+                if tails:
+                    beside.append((tails, tails_ref))
+                hang_mm, hang_ref = _tallest(beside)
+                if hang_mm == 0.0:
+                    hang_ref = "-"
+            need = max(FLOOR_STANDOFF_MIN, seat_mm,
+                       FLOOR_LINER_T + hang_mm + CLEARANCE)
         elif above == LID_NAME:
             need = top_mm + CLEARANCE
-        elif plate_mm:
-            seat = [h for h, r in tops if r == PLATE_SEATS_ON]
-            others = [h + CLEARANCE for h, r in tops if r != PLATE_SEATS_ON]
-            under_plate = max(seat + others, default=0.0)
-            need = under_plate + plate_mm + PLATE_HARDWARE_ABOVE + CLEARANCE + hang_mm
         else:
             need = max(top_mm + CLEARANCE + tails, part_mm + CLEARANCE)
 
@@ -334,7 +360,7 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
         gap_mm = max(chosen) if chosen else max(
             [need] + [p.mated_mm for p in pairs])
         gaps.append(Gap(below, above, top_mm, top_ref, hang_mm, hang_ref,
-                        plate_mm, need, pairs, gap_mm))
+                        seat_mm, seat_ref, need, pairs, gap_mm))
     return tuple(gaps)
 
 
@@ -390,23 +416,31 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                     f"(unconfirmed) and the gap is {g.gap_mm:.1f} mm -- the pair has "
                     f"to be a type that mates at the gap, and once it is chosen its "
                     f"drawing sets the gap")
-        seat = by_ref.get(PLATE_SEATS_ON)
-        if g.plate_mm and seat is not None and not _bad_height(seat.height_mm):
-            # Inter-board connectors are exempt: they pass through a slot.
-            paired = {c.refdes for c in d.connectors if c.interface}
-            for x in items:
-                if (x.board == g.below and x.refdes not in paired
-                        and x.refdes != PLATE_SEATS_ON
-                        and getattr(x, "side", "top") == "top"
-                        and not _bad_height(x.height_mm)
-                        and x.height_mm + CLEARANCE > seat.height_mm + 1e-9):
+        # The baseplate reaches the floor only while nothing beside it hangs
+        # deeper. Anything that does lifts the brick off its heatsink, so the
+        # gap silently growing to fit it is exactly the failure to catch.
+        seat = by_ref.get(FLOOR_SEAT)
+        if g.seat_mm and seat is not None and not _bad_height(seat.height_mm):
+            # Parts AND the tails of what is soldered on top: both stand on the
+            # liner, and either one deeper than the seat lifts the baseplate.
+            beside = [(x.height_mm, x.refdes) for x in items
+                      if x.board == g.above and x.refdes != FLOOR_SEAT
+                      and getattr(x, "side", "top") == "bottom"
+                      and not _bad_height(x.height_mm)]
+            tail_mm_, tail_ref = _tails(d, g.above, "top")
+            if tail_mm_:
+                beside.append((tail_mm_, tail_ref))
+            for mm, ref in sorted(beside, reverse=True):
+                if FLOOR_LINER_T + mm + CLEARANCE > g.seat_mm + 1e-9:
                     problems.append(
-                        f"gap {where}: the plate cannot seat on {PLATE_SEATS_ON} "
-                        f"({seat.height_mm:.1f} mm) -- {x.refdes} stands "
-                        f"{x.height_mm:.1f} mm and needs {CLEARANCE:.1f} mm under it")
+                        f"gap {where}: {FLOOR_SEAT} ({seat.height_mm:.1f} mm) cannot "
+                        f"bolt to the floor through its {THERMAL_PAD_T:.1f} mm pad "
+                        f"-- {ref} hangs {mm:.1f} mm beside it and needs the "
+                        f"{FLOOR_LINER_T:.1f} mm liner and {CLEARANCE:.1f} mm "
+                        f"under it")
         # BD-14: what hangs from above and what stands below must not overlap
         # in plan wherever together they are taller than the gap.
-        if g.below in order and g.above in order and not g.plate_mm:
+        if g.below in order and g.above in order:
             for p in d.parts:
                 if p.board != g.above or p.side != "bottom" or _bad_height(p.height_mm):
                     continue
@@ -435,8 +469,6 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
 
     unconfirmed = unconfirmed_heights(d, order)
     setters = {r for g in gaps for r in g.set_by}
-    if any(g.plate_mm for g in gaps):
-        setters.add(PLATE_SEATS_ON)
     load_bearing = tuple(r for r, *_ in unconfirmed if r in setters)
     return Stack(gaps, total, avail_mm, tuple(problems), tuple(notes),
                  unconfirmed, load_bearing, tuple(envelope_verdicts))

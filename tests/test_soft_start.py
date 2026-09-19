@@ -194,16 +194,16 @@ def test_solve_r_pd_refuses_a_ramp_no_resistor_can_give():
 
 # --- the circuit is read off the netlist, not typed twice ---------------------------
 def d13_fragment(r101=("270k", "270k"), q105_source="GND"):
-    """HVIN's D13 block, as a Design."""
+    """POWER's D13 block, as a Design."""
     from tools.model import Design, Net, Part
 
     def two(ref, kind, value, pins=("1", "2")):
-        return Part(ref, f"X-{value}", "0805", "HVIN", kind, pins, 1.0, value=value,
+        return Part(ref, f"X-{value}", "0805", "POWER", kind, pins, 1.0, value=value,
                     v_max=250.0)
     parts = (
-        Part("Q101", "IXTP26P20P", "TO-220", "HVIN", "PFET", ("G", "D", "S"), 4.5,
+        Part("Q101", "IXTP26P20P", "TO-220", "POWER", "PFET", ("G", "D", "S"), 4.5,
              v_max=200.0),
-        Part("Q105", "BSS127", "SOT-23", "HVIN", "NFET", ("G", "D", "S"), 1.2,
+        Part("Q105", "BSS127", "SOT-23", "POWER", "NFET", ("G", "D", "S"), 1.2,
              v_max=600.0),
         two("R110", "R", "100k"), two("R101A", "R", r101[0]), two("R101B", "R", r101[1]),
         two("C105", "C", "68nF C0G/film ≥250 V"), two("C107", "C", "4.7uF 25V"),
@@ -258,14 +258,14 @@ def test_a_gate_with_no_bias_resistor_is_refused():
 ])
 def test_value_strings_as_the_netlist_writes_them(kind, text, expected):
     from tools.model import Part
-    part = Part("X1", "X", "0805", "HVIN", kind, ("1", "2"), 1.0, value=text)
+    part = Part("X1", "X", "0805", "POWER", kind, ("1", "2"), 1.0, value=text)
     assert ss._value(part) == pytest.approx(expected)
 
 
 def test_an_unreadable_value_is_an_error_not_a_zero():
     from tools.model import Part
     with pytest.raises(ValueError, match="R9"):
-        ss._value(Part("R9", "X", "0805", "HVIN", "R", ("1", "2"), 1.0, value="TBD"))
+        ss._value(Part("R9", "X", "0805", "POWER", "R", ("1", "2"), 1.0, value="TBD"))
 
 
 def test_the_real_netlists_gate_network_passes(capsys):

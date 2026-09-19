@@ -28,7 +28,7 @@ def _fitted(d):
 
 #: The inter-board connectors wait on the owner's choice of family
 #: (still open). When it is made, empty this set.
-AWAITING_OWNER = {"J104", "J201", "J202", "J311", "J307", "J407", "J308", "J406"}
+AWAITING_OWNER = {"J202", "J311", "J307", "J407", "J308", "J406"}
 
 
 def test_every_fitted_item_has_a_way_onto_the_board(d):

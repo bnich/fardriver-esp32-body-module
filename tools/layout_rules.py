@@ -16,7 +16,7 @@ keep-out region before routing.
 """
 import sys
 
-from . import drawn_footprints, netlist, rules
+from . import board_params as bp, drawn_footprints, netlist, rules
 
 #: IPC-2221B Table 6-1, B2 (external, uncoated, sea level), 151-300 V: the
 #: band the 160 V do-not-exceed falls in (84 V is 0.6 mm; the transient sets it).
@@ -56,14 +56,14 @@ def keepouts(d) -> list[str]:
 
 def text(d=None) -> str:
     d = d or netlist.current()
-    out = [f"Before routing HVIN and CONV, in the editor: PCB -> Design -> Net "
+    out = [f"Before routing POWER, in the editor: PCB -> Design -> Net "
            f"Class, a class named {HV_CLASS} holding the nets below; then Design "
            f"Rules -> Safe Spacing, a rule of {HV_CLEARANCE_MM} mm applied to "
            f"{HV_CLASS}. The generated boards carry only the board-wide 0.2 mm.",
            "",
            f"Net class {HV_CLASS}: {HV_CLEARANCE_MM} mm to every other net "
            f"(IPC-2221B B2, 151-300 V: the 160 V do-not-exceed)."]
-    for board in ("HVIN", "CONV", "DRV", "BRAIN"):
+    for board in bp.STACK_ORDER:
         nets = hv_nets(d, board)
         out.append(f"  {board}: " + (", ".join(nets) if nets else "none"))
     lands = keepouts(d)

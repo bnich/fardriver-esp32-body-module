@@ -1,12 +1,12 @@
-"""THE DESIGN: every part, net and connector of the four-board set.
+"""THE DESIGN: every part, net and connector of the three-board set.
 
 Shape lives in `model.py`; this file is content only. `integrity.py` is the
 structural gate: every declared pin of every part lands on exactly one net.
 
 Conventions
-  REFDES    board-scoped hundreds: HVIN 1xx · CONV 2xx · DRV 3xx · BRAIN 4xx.
+  REFDES    board-scoped hundreds: POWER 1xx and 2xx · OUTPUTS 3xx · LOGIC 4xx.
             The display block (J405, D405, D406, R426-R429) carries 4xx numbers
-            and sits on DRV. The documents' informal names (`D13`, `Q1`, `R4`,
+            and sits on OUTPUTS. The documents' informal names (`D13`, `Q1`, `R4`,
             `C1`) are quoted in `source` so they stay greppable.
   PINS      functional names from the datasheet; where several pads share one
             name (`VS`, `GND`, `OUT1`) the pad numbers are in `source`.
@@ -20,8 +20,8 @@ Conventions
             ahead of its series resistor.
   DOMAIN    the voltage CLASS of the node. `v_max` is the rating ACROSS a part,
             so a 25 V capacitor between two 84 V-class nodes can be correct.
-  INTERFACE names the lowest crossing (HV-LINK < PWR-UP < STACK) when a net
-            crosses more than one.
+  INTERFACE names the lowest crossing (PWR-OUT, below PWR-LOGIC and STACK)
+            when a net crosses more than one.
   HEIGHTS   `height_confirmed=True` only where `source` cites the manufacturer
             PDF and the page the figure was read from.
   CONNECTOR pin numbers are a generator-side index. For the pods the binding
@@ -31,8 +31,8 @@ from dataclasses import replace
 
 from .model import Board, ConnPin, Connector, Design, Net, Part
 
-#: The four boards, bottom to top: voltage falls with height (BD-1, BD-2).
-BOARDS: tuple[Board, ...] = ("HVIN", "CONV", "DRV", "BRAIN")
+#: The three boards, bottom to top: voltage falls with height (BD-1, BD-2).
+BOARDS: tuple[Board, ...] = ("POWER", "OUTPUTS", "LOGIC")
 
 #: Pin names of both quad TVS arrays (SC-74 / SOT457, identical pinout).
 #: Letter = function, digit = pad number: pads 1/3/4/6 cathodes, 2/5 anodes.
@@ -153,8 +153,8 @@ def _sot23(refdes: str, mpn: str, board: Board, kind: str, v_max: float,
 
 
 def _1n4148(refdes: str, name: str, role: str) -> Part:
-    """One of the six D23 steering diodes, all on DRV."""
-    return Part(refdes, "1N4148W", "SOD-123", "DRV", "D", ("A", "K"), 1.35,
+    """One of the six D23 steering diodes, all on OUTPUTS."""
+    return Part(refdes, "1N4148W", "SOD-123", "OUTPUTS", "D", ("A", "K"), 1.35,
                 footprint_mm=(3.7, 1.6), v_max=75.0,
                 source=f"{_BRK} §2/§3 '{name}' — {role}. Cathode on the lever "
                        f"node. SILICON, never Schottky: a Schottky's hot "
@@ -205,15 +205,15 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — HVIN (L1): 84 V entry, protection, the D13 module power switch.
+# PARTS — POWER (L1): 84 V entry, protection, the D13 module power switch.
 # ════════════════════════════════════════════════════════════════════════════
 _HVIN_PARTS = (
-    Part("D101", "SMCJ90A", "DO-214AB (SMC)", "HVIN", "TVS", ("A", "K"), 2.62,
+    Part("D101", "SMCJ90A", "DO-214AB (SMC)", "POWER", "TVS", ("A", "K"), 2.62,
          height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0, v_clamp=146.0,
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
          source=f"B+ to GND at J101. plan §3.2.1, BOM E12 — never SMBJ90A, "
                 f"SMBJ100A or 5KP90A. {_DS_SMCJ} p.5: DO-214AB D max 2.62 mm"),
-    Part("Q101", "IXTA26P20P-TRL", "TO-263AA (D2PAK)", "HVIN", "PFET",
+    Part("Q101", "IXTA26P20P-TRL", "TO-263AA (D2PAK)", "POWER", "PFET",
          ("G", "D", "S"), 4.83, height_confirmed=True,
          footprint_mm=(10.41, 15.88), v_max=200.0,
          value="P-ch -200 V, V_GS ±20 V, V_GS(th) -2…-4 V",
@@ -228,17 +228,17 @@ _HVIN_PARTS = (
                 f"fallback: the IXTP26P20P, hand-soldered. ⚠️ The tab is the "
                 f"drain (HV_SW, 84 V): board copper at 84 V -- keep "
                 f"clearance to every other net, and no metal under it"),
-    _r("R110", "HVIN", "100k",
+    _r("R110", "POWER", "100k",
        "Q101 gate to SOURCE — the D14 bias-OFF: V_GS = 0 with the key off. "
        "With R101A/B (540 kΩ) it sets V_GS = -13.1 V at 84 V, -9.4 V at 60 V, "
        "-6.7 V at 43 V. BOM D9"),
-    Part("D102", "BZT52B15", "SOD-123", "HVIN", "ZENER",
+    Part("D102", "BZT52B15", "SOD-123", "POWER", "ZENER",
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=15.0, value="15V",
          source="Q101 gate clamp inside the ±20 V V_GS rating: anode = gate, "
                 "cathode = source. Never conducts in normal running (-13.1 V). "
                 "BOM E13 '+ zener'. The 2 % B grade: a C grade can clamp at "
                 "13.8 V. ⬜ SOD-123 height not read off a drawing"),
-    Part("C105", "CGA9N1C0G2J683JT0Y0S", "2220 C0G", "HVIN",
+    Part("C105", "CGA9N1C0G2J683JT0Y0S", "2220 C0G", "POWER",
          "C", ("1", "2"), 2.3, footprint_mm=(5.7, 5.0), v_max=630.0,
          value="68nF C0G 630V",
          source="Q101 gate to DRAIN: the Miller cap that sets the output slew, "
@@ -250,58 +250,58 @@ _HVIN_PARTS = (
                 "cracks under board flex, and shorted it holds Q101 on with the "
                 "key off -- keep it away from the mounting holes and the board "
                 "edges (firmware also flags 'powered with KEY_SENSE low')"),
-    _c("C107", "HVIN", "4.7uF 50V X7R", 50.0,
+    _c("C107", "POWER", "4.7uF 50V X7R", 50.0,
        "Q101 gate to SOURCE. Divides the dV/dt that C105 couples into the gate "
        "when the XT90-S is plugged in with the key OFF: 84 V × 68n/(68n+4.7µ) "
        "≈ 1.2 V nominal, under V_GS(th) min 2.0 V. ⚠️ The margin is thin at the "
        "corners (−1.64 … −1.98 V across tolerance, temperature and OVP), and a "
        "Y5V/25 V part loses most of its capacitance under bias and cold -- so "
        "X7R, 50 V: it sees ≤15 V (D102) and keeps its value", pkg="1206"),
-    _r("R101A", "HVIN", "270k",
+    _r("R101A", "POWER", "270k",
        "Upper half of the 540 kΩ gate pull-down string (Q101 gate → Q105). "
        "A series pair for voltage rating: ~35 V each running, 73 V each at "
        "D101's 146 V clamp", pkg="1206"),
-    _r("R101B", "HVIN", "270k",
+    _r("R101B", "POWER", "270k",
        "Lower half of the 540 kΩ gate pull-down string, into Q105's drain",
        pkg="1206"),
-    _sot23("Q105", "BSS127", "HVIN", "NFET", 600.0,
+    _sot23("Q105", "BSS127", "POWER", "NFET", 600.0,
            f"The level shifter that turns Q101 ON: D = D13_PD, S = GND, "
            f"G = D13_EN. Key on ⇒ D13_EN ≈ 7.6 V ⇒ Q105 pulls the 540 kΩ "
            f"string to GND. Key off ⇒ D13_EN = 0 ⇒ no DC path off Q101's gate "
            f"and zero quiescent drain. {_DS_BSS127}: p.1 600 V, ENHANCEMENT "
            f"mode, logic level (V_GS(th) 1.4-2.6 V); p.8 SOT-23 1.1 mm max",
            height=1.1, confirmed=True),
-    _r("R112A", "HVIN", "499k",
+    _r("R112A", "POWER", "499k",
        "Upper half of the 1 MΩ feed from KSW to Q105's gate. A series pair for "
        "voltage rating", pkg="1206"),
-    _r("R112B", "HVIN", "499k",
+    _r("R112B", "POWER", "499k",
        "Lower half of the 1 MΩ feed from KSW to Q105's gate. With R113: "
        "84 V → 7.6 V, 60 V → 5.5 V, 43 V → 3.9 V, all over V_GS(th) 2.6 V max",
        pkg="1206"),
-    _r("R113", "HVIN", "100k",
+    _r("R113", "POWER", "100k",
        "Q105 gate to GND — the D14 bias-OFF: key off or J101 unplugged ⇒ "
        "Q105 off ⇒ Q101 off"),
-    Part("D106", "BZT52B10", "SOD-123", "HVIN", "ZENER",
+    Part("D106", "BZT52B10", "SOD-123", "POWER", "ZENER",
          ("A", "K"), 1.35, footprint_mm=(3.7, 1.6), v_max=10.0, value="10V",
          source="Q105 gate clamp, D13_EN to GND, inside the BSS127's ±20 V "
                 "V_GS. The node runs at 7.6 V, so it conducts only on a "
                 "transient. The 2 % B grade. ⬜ SOD-123 height not read off a "
                 "drawing"),
-    _c("C108", "HVIN", "100nF", 50.0,
+    _c("C108", "POWER", "100nF", 50.0,
        "D13_EN to GND: key-contact bounce filter, τ ≈ 9 ms with R112A/B ‖ R113"),
-    _r("R107", "HVIN", "165k",
+    _r("R107", "POWER", "165k",
        "IN-12 divider top, upper half, fed from KSW. 330 kΩ / 10 kΩ gives "
        "84 V → 2.47 V (plan §3.1.3); 2 × 165 k because plan §4 class B wants a "
        "series pair for voltage rating (40.8 V and 10 mW each). BOM E14",
        pkg="1206"),
-    _r("R108", "HVIN", "165k",
+    _r("R108", "POWER", "165k",
        "IN-12 divider top, lower half — series partner of R107", pkg="1206"),
-    _r("R109", "HVIN", "10k", "IN-12 divider bottom. 84 V → 2.47 V. BOM E14"),
-    _c("C109", "HVIN", "100nF", 50.0,
+    _r("R109", "POWER", "10k", "IN-12 divider bottom. 84 V → 2.47 V. BOM E14"),
+    _c("C109", "POWER", "100nF", 50.0,
        "At the divider: holds the KEY_SENSE node low-impedance at its source "
        "before it crosses three boards. τ ≈ 1 ms with R109. The HDG's 0.1 µF "
        "at the ESP pin is C437"),
-    Part("L101", "7448022010", "THT common-mode choke, vertical", "HVIN",
+    Part("L101", "7448022010", "THT common-mode choke, vertical", "POWER",
          "CMCHOKE", ("1", "2", "3", "4"), 22.0, height_confirmed=True,
          footprint_mm=(18.0, 14.0), value="10 mH · 2 A @ 70 °C · 300 V AC",
          source=f"DC-DC #1's input filter, ahead of its bulk cap. FOUR "
@@ -309,7 +309,7 @@ _HVIN_PARTS = (
                 f"HV_C1_N → 3→2 → GND, so the DC currents cancel in the core. "
                 f"{_DS_WE} p.1: 22,0 max tall, 18,0 max wide, 14,0 max deep; "
                 f"pins 3,5 ± 0,5 below the body. BOM E7", lead_mm=4.0),
-    Part("L102", "7448022010", "THT common-mode choke, vertical", "HVIN",
+    Part("L102", "7448022010", "THT common-mode choke, vertical", "POWER",
          "CMCHOKE", ("1", "2", "3", "4"), 22.0, height_confirmed=True,
          footprint_mm=(18.0, 14.0), value="10 mH · 2 A @ 70 °C · 300 V AC",
          source=f"DC-DC #2's input filter: HV_SW → 1→4 → HV_C2_P, "
@@ -318,16 +318,21 @@ _HVIN_PARTS = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — CONV (L2): both converters. Each converter's −Vin is its own net and
+# PARTS — POWER (L1), continued: both converters. Each converter's −Vin is its own net and
 # reaches GND only through its choke winding; −Vout IS GND (isolated bricks).
 # ════════════════════════════════════════════════════════════════════════════
 _CONV_PARTS = (
     Part("U201", "CN150B110-12/CO", "quarter brick 58.3 × 37.2 × 12.7 mm",
-         "CONV", "CONVERTER",
+         "POWER", "CONVERTER",
          ("-Vin", "CNT", "+Vin", "-V", "-S", "+S", "+V", "BASEPLATE"), 12.7,
          height_confirmed=True, footprint_mm=(58.3, 37.2), nc=("TRM",),
-         v_max=160.0, value="43-160 V → 12 V / 12.5 A, isolated",
-         source=f"DC-DC #1, the load rail. BOM E1. {_DS_TDK} p.5 pins: 1 -Vin, "
+         v_max=160.0, value="43-160 V → 12 V / 12.5 A, isolated", side="bottom",
+         source=f"DC-DC #1, the load rail. BOM E1. ⚠️ UNDERSIDE: the brick is "
+                f"conduction-cooled and its baseplate bolts to the box floor "
+                f"through a thermal pad, which is the heatsink. The board's "
+                f"height above the floor is measured from this seat "
+                f"(`board_params.FLOOR_SEAT`), so nothing else on this face may "
+                f"hang deeper than it does. {_DS_TDK} p.5 pins: 1 -Vin, "
                 f"2 CNT, 3 +Vin, 4 -V, 5 -S, 6 TRM, 7 +S, 8 +V; 'Base-plate can "
                 f"be connected to FG by M3 threaded holes' = pin BASEPLATE. "
                 f"p.18 CNT is negative logic, 'H Level or Open → OFF'; 'When "
@@ -341,35 +346,42 @@ _CONV_PARTS = (
                 f"{_DS_TDK_OUT} p.1 note F: pins 5 ± 0.5 below the case, ø1.0 "
                 f"and ø1.5 -- too stiff to trim after soldering. "
                 f"⚠️ 160 V is a hard ceiling, transients included", lead_mm=5.5),
-    Part("U202", "EC7BW-110S05", "2 × 1 in. THT module", "CONV", "CONVERTER",
+    Part("U202", "EC7BW-110S05", "2 × 1 in. THT module", "POWER", "CONVERTER",
          ("+Vin", "-Vin", "+Vout", "-Vout"), 10.7, height_confirmed=True,
          footprint_mm=(50.8, 25.4), nc=("Trim", "Remote"), v_max=160.0,
-         value="43-160 V → 5 V / 4 A, 3 kV isolation",
-         source=f"DC-DC #2, the logic rail. BOM E2. {_DS_CINCON} p.7 pins: "
+         value="43-160 V → 5 V / 4 A, 3 kV isolation", side="bottom",
+         source=f"DC-DC #2, the logic rail. BOM E2. UNDERSIDE, beside U201: at "
+                f"10.7 mm it stands clear under the brick's 12.7 mm seat, so it "
+                f"rides the same face without lifting the board off the floor. "
+                f"{_DS_CINCON} p.7 pins: "
                 f"1 +V Input, 2 -V Input, 3 +V Output, 4 Trim, 5 -V Output, "
                 f"6 Remote On/Off; 50.8 × 25.4 × 10.2 mm ±0.5, booked at the "
                 f"10.7 mm maximum. nc Remote: p.3 positive logic, 'Pin open=On'. "
                 f"nc Trim: p.2 'Output Voltage Trim Range' ±10 % is an "
                 f"optional external-resistor adjustment; open = nominal 5 V. "
                 f"p.7: pins '0.22 min. [5.6]', no maximum: TRIM them to leave "
-                f"≤ 1.5 mm below CONV before soldering"),
+                f"≤ 1.5 mm through POWER before soldering"),
     Part("C201", "EKXJ221ELL221MM25S", "radial can 18 × 25 mm, lying down",
-         "CONV", "C", ("+", "-"), 18.5, height_confirmed=True,
-         footprint_mm=(18.5, 29.6), v_max=220.0, side="bottom",
+         "POWER", "C", ("+", "-"), 18.5, height_confirmed=True,
+         footprint_mm=(18.5, 29.6), v_max=220.0, side="top",
          value="220uF 220V",
          source=f"'C1': TDK's input bulk across HV_C1_P / HV_C1_N at U201's "
-                f"terminals ({_DS_TDK} p.7: ≥100 µF, KXJ class). UNDERSIDE, "
-                f"lying down and bonded (BD-14). {_DS_KXJ} p.1: φD' = φD + 0.5 "
+                f"terminals ({_DS_TDK} p.7: ≥100 µF, KXJ class). TOP FACE, "
+                f"lying down and bonded (BD-14): the underside is the brick's "
+                f"seat and nothing there may hang deeper than it, while on top "
+                f"an 18.5 mm can lies well under the chokes' 22 mm. "
+                f"{_DS_KXJ} p.1: φD' = φD + 0.5 "
                 f"max = 18.5 mm, L' = L + 1.5 max = 26.5 mm. BOM E8"),
     Part("C202", "EKXJ221ELL221MM25S", "radial can 18 × 25 mm, lying down",
-         "CONV", "C", ("+", "-"), 18.5, height_confirmed=True,
-         footprint_mm=(18.5, 29.6), v_max=220.0, side="bottom",
+         "POWER", "C", ("+", "-"), 18.5, height_confirmed=True,
+         footprint_mm=(18.5, 29.6), v_max=220.0, side="top",
          value="220uF 220V",
          source=f"'C2': hold-up across U202's ±Vin, BEHIND D201 and F201. "
                 f"⚠️ Not interchangeable with C1: on the common node ride-out "
-                f"collapses from ~237 ms to ~20 ms (plan §3.2.2). UNDERSIDE "
-                f"(BD-14). {_DS_KXJ} p.1: 18.5 mm. BOM E8"),
-    Part("C203", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
+                f"collapses from ~237 ms to ~20 ms (plan §3.2.2). TOP FACE, "
+                f"lying down and bonded, as C1 (BD-14). {_DS_KXJ} p.1: 18.5 mm. "
+                f"BOM E8"),
+    Part("C203", "VY2472M49Y5US6", "radial disc, lying FLAT", "POWER", "C",
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C1_P to BASEPLATE at U201's terminals ({_DS_TDK} p.8 "
@@ -377,21 +389,21 @@ _CONV_PARTS = (
                 f"FLAT it is 5.0 mm where upright it is 15.5-16.5; p.1 "
                 f"1000 VDC, IEC 60384-14 Y2; leads ø0.6, 7.5 mm apart (the "
                 f"'…TV7' reel). BOM E9"),
-    Part("C204", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
+    Part("C204", "VY2472M49Y5US6", "radial disc, lying FLAT", "POWER", "C",
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C1_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
-    Part("C205", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
+    Part("C205", "VY2472M49Y5US6", "radial disc, lying FLAT", "POWER", "C",
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"U202 +Vin (HV_C2_HOLD) to BASEPLATE. {_DS_VY2} p.2: T max "
                 f"5.0 mm. BOM E9"),
-    Part("C206", "VY2472M49Y5US6", "radial disc, lying FLAT", "CONV", "C",
+    Part("C206", "VY2472M49Y5US6", "radial disc, lying FLAT", "POWER", "C",
          ("1", "2"), 5.0, height_confirmed=True, footprint_mm=(12.5, 18.5),
          v_max=1000.0, value="4700pF Y2 1000VDC",
          source=f"HV_C2_N to BASEPLATE. {_DS_VY2} p.2: T max 5.0 mm. BOM E9"),
     Part("C207", "PA35V680M10x15", "radial polymer 10 × 15 mm, lying down",
-         "CONV", "C", ("+", "-"), 10.5, height_confirmed=True,
+         "POWER", "C", ("+", "-"), 10.5, height_confirmed=True,
          footprint_mm=(10.5, 19.1), v_max=35.0,
          value="680uF 35V polymer, 16 mΩ",
          source=f"U201 +V to -V. {_DS_TDK} p.9 Table 6-1: '12,15V: 25V 680μF "
@@ -400,28 +412,28 @@ _CONV_PARTS = (
                 f"part's rating (rules VR-CLAMP). JIERR PA series "
                 f"(jierr_pa25v680m8x12.pdf) p.7: PA35V680M10X15, 680 µF, 16 mΩ, "
                 f"4.1 A ripple, -55…105 °C; p.2: φD + 0.5 max = 10.5 mm, "
-                f"L + α = 16 mm, F 5.0, ø0.6 leads. LYING DOWN, under the "
-                f"12.7 mm brick"),
-    _c("C208", "CONV", "2.2uF", 25.0,
+                f"L + α = 16 mm, F 5.0, ø0.6 leads. LYING DOWN: 10.5 mm, "
+                f"against the 16 mm it stands at upright"),
+    _c("C208", "POWER", "2.2uF", 25.0,
        f"U201 +V to -V. {_DS_TDK} p.8 C6: 2.2 µF ceramic against output spike "
        f"noise", pkg="1206"),
-    _c("C209", "CONV", "22nF", 250.0,
+    _c("C209", "POWER", "22nF", 250.0,
        f"U201 +V to BASEPLATE, close to the terminal. {_DS_TDK} p.8 C4/C5: "
        f"0.022 µF. 250 V so it survives BASEPLATE lifted to the 84 V rail by a "
        f"shorted Y2 with R211 open", pkg="1206"),
-    _c("C210", "CONV", "22nF", 250.0,
+    _c("C210", "POWER", "22nF", 250.0,
        f"U201 -V to BASEPLATE. {_DS_TDK} p.8 C4/C5: 0.022 µF. Rated as C209",
        pkg="1206"),
-    _c("C211", "CONV", "10uF", 16.0, "U202 output bulk, V5 to GND", pkg="1206"),
-    _c("C212", "CONV", "100nF", 50.0, "U202 output HF decoupling, V5 to GND"),
-    Part("D201", "M7", "DO-214AC (SMA)", "CONV", "D", ("A", "K"), 2.44,
+    _c("C211", "POWER", "10uF", 16.0, "U202 output bulk, V5 to GND", pkg="1206"),
+    _c("C212", "POWER", "100nF", 50.0, "U202 output HF decoupling, V5 to GND"),
+    Part("D201", "M7", "DO-214AC (SMA)", "POWER", "D", ("A", "K"), 2.44,
          footprint_mm=(5.3, 2.9), v_max=1000.0,
          source=f"Hold-up blocking diode, HV_C2_P → HV_C2_HOLD_IN. Plain "
                 f"silicon (plan §3.2.6): the SMA 1N4007, 1000 V / 1 A, 30 A "
                 f"surge; it carries <= 0.62 A (the whole module at 60 V) "
                 f"behind F201. The DO-41 1N4007 (BOM E10) is the breadboard's. "
                 f"⬜ SMA envelope 2.44 mm, not read off a drawing"),
-    Part("FH201", "01110501Z", "5 × 20 fuse holder: two PCB clips", "CONV",
+    Part("FH201", "01110501Z", "5 × 20 fuse holder: two PCB clips", "POWER",
          "FUSECLIP", ("1", "2"), 7.1, footprint_mm=(22.6, 5.2),
          value="2 × Littelfuse 01110501Z",
          source="F201's holder: BOTH clips in one footprint, their 17.8 mm "
@@ -433,13 +445,13 @@ _CONV_PARTS = (
                 "clip with fuse stop, 10 A; catalogue body 7.1 mm tall, 4.8 × "
                 "3.8 mm, rows 17.8 mm apart for 5 × 20. ⬜ seated height to "
                 "confirm on a real part"),
-    Part("F201", "0001.2504", "5 × 20 ceramic, in the holder FH201", "CONV",
+    Part("F201", "0001.2504", "5 × 20 ceramic, in the holder FH201", "POWER",
          "FUSE", ("1", "2"), 8.0, footprint_mm=(5.2, 20.0), v_max=300.0,
          value="1A T-lag 300VDC",
          source=f"DC-DC #2's input fuse (Cincon: 1 A time-delay). ⛔ Order by "
                 f"part number: FST and SP have NO DC rating. {_DS_SPT} p.2: "
                 f"ø 5.2 × 20 mm; 8.0 mm assumes a ≤2.8 mm clip seat. BOM E11"),
-    Part("R211", "NET-TIE", "copper net-tie, ≥2 mm wide", "CONV", "R", ("1", "2"),
+    Part("R211", "NET-TIE", "copper net-tie, ≥2 mm wide", "POWER", "R", ("1", "2"),
          0.04, footprint_mm=(4.0, 2.0), value="0R",
          source="Single-point tie BASEPLATE → GND, so a shorted Y2 blows the "
                 "KLKD002 instead of floating a plate at 84 V. COPPER, not a "
@@ -449,7 +461,7 @@ _CONV_PARTS = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — DRV (L3): 12 V drivers, the complete D23 brake/kill hardware, and the
+# PARTS — OUTPUTS (L2): 12 V drivers, the complete D23 brake/kill hardware, and the
 # parked display block. ⚠️ 40 V parts: the 12 V rail only, never the 84 V node.
 #   U301: IN1 spare · IN2 HL_LOW · IN3 HL_HIGH · IN4 HL_DRL
 #   U302: IN1 TAIL_RUN · IN2 TURN_L · IN3 TURN_R · IN4 spare
@@ -461,7 +473,7 @@ _TPS_PINS = ("GND", "IN1", "IN2", "IN3", "IN4", "SEH", "SEL", "FAULT", "CS",
 
 def _tps4h160(refdes: str, role: str) -> Part:
     return Part(refdes, "TPS4H160BQPWPRQ1", "28-HTSSOP PowerPAD, 0.65 mm",
-                "DRV", "IC", _TPS_PINS, 1.2, height_confirmed=True,
+                "OUTPUTS", "IC", _TPS_PINS, 1.2, height_confirmed=True,
                 footprint_mm=(9.8, 6.6), nc=("NC",), v_max=40.0,
                 value="4-ch high-side, version B (CS + SEH/SEL + FAULT)",
                 source=f"{role}. BOM D1. {_DS_TPS} p.4-5 Table 5-1, version B: "
@@ -476,7 +488,7 @@ def _tps4h160(refdes: str, role: str) -> Part:
 
 
 def _tps_series(refdes: str, signal: str) -> Part:
-    return _r(refdes, "DRV", "4k7",
+    return _r(refdes, "OUTPUTS", "4k7",
               f"Series protection in {signal}, MCU side of the TPS4H160B pin. "
               f"{_DS_TPS} p.26: 'TI recommends serial resistors to protect the "
               f"microcontroller, for example, 4.7-kΩ when using a 3.3-V "
@@ -484,7 +496,7 @@ def _tps_series(refdes: str, signal: str) -> Part:
 
 
 def _open_load_pullup(refdes: str, channel: str) -> Part:
-    return _r(refdes, "DRV", "20k",
+    return _r(refdes, "OUTPUTS", "20k",
               f"{channel} OUT → V12, for OFF-state open-load detect. "
               f"{_DS_TPS} p.23: 'The recommended pullup resistance is 20 kΩ'. "
               f"BOM D2")
@@ -502,72 +514,72 @@ _DRV_PARTS = (
     _open_load_pullup("R305", "TURN_L"),
     _open_load_pullup("R306", "TURN_R"),
     _open_load_pullup("R345", "TAIL_STOP"),
-    _r("R346", "DRV", "10k",
-       "AUX12 enable: U301 IN1 → V3P3. The channel is on whenever BRAIN's "
+    _r("R346", "OUTPUTS", "10k",
+       "AUX12 enable: U301 IN1 → V3P3. The channel is on whenever LOGIC's "
        "3.3 V is up and off when it is not; 3.3 V × 100-250k / (10k + 100-250k) "
        "= 3.0-3.2 V against V_IH 2 V. What it feeds is switched low-side "
        "(Q301-Q303), each gate biased OFF (D14), so no load runs at key-on. "
        "The channel is a FEED: it current-limits horn +, fan + and buzzer + at "
        "2 A, where raw V12 would put the 12.75-18.75 A brick into the harness "
        "and hiccup the rail the stop lamp shares"),
-    _r("R347", "DRV", "27k",
+    _r("R347", "OUTPUTS", "27k",
        f"STOP_CMD → U302 IN4, the top of a 27k / 10k divider from Q1's drain. "
        f"{_DS_TPS} p.7: INx is 0-5 V recommended, 7 V absolute, V_IH 2 V, "
        f"100-250 kΩ pull-down. 12 V → 3.02-3.15 V; TDK's 17.4 V OVP → 4.4-4.6 V; "
        f"on above 7.9 V. D318 clamps a V12 transient (D315 lets 29.2 V through) "
        f"at 5.1 V. Also the pin's series resistor (p.26)"),
-    _r("R348", "DRV", "10k", "STOP_CMD divider bottom, U302 IN4 → GND (with R347)"),
-    Part("D318", "BZT52B5V1", "SOD-123", "DRV", "ZENER", ("A", "K"), 1.35,
+    _r("R348", "OUTPUTS", "10k", "STOP_CMD divider bottom, U302 IN4 → GND (with R347)"),
+    Part("D318", "BZT52B5V1", "SOD-123", "OUTPUTS", "ZENER", ("A", "K"), 1.35,
          footprint_mm=(3.7, 1.6), v_max=5.1, value="5.1 V B grade, 5.0-5.2 V",
          source=f"U302 IN4 clamp: a V12 transient up to D315's 29.2 V puts "
                 f"(29.2 - 5.1) / 27k = 0.9 mA through it and holds IN4 under "
                 f"{_DS_TPS}'s 7 V absolute. At TDK's 17.4 V OVP IN4 sits at "
                 f"4.6 V, below the 5.0 V knee. ⬜ SOD-123 envelope"),
-    _r("R319", "DRV", "1k00 1%",
+    _r("R319", "OUTPUTS", "1k00 1%",
        f"U301 CL → GND: 0.8 V × 2500 / 1.00 kΩ = 2.0 A per channel, over the "
        f"0.71 A / 0.54 A loads. {_DS_TPS} p.29 eq. 10. This is the lamp-scale "
        f"limit D15 chose the part for"),
-    _r("R320", "DRV", "2k0 1%",
+    _r("R320", "OUTPUTS", "2k0 1%",
        f"U302 CL → GND: 0.8 V × 2500 / 2.0 kΩ = 1.0 A per channel, over the "
        f"0.05-0.10 A loads. {_DS_TPS} p.29 eq. 10"),
-    _r("R321", "DRV", "1k00 1%",
+    _r("R321", "OUTPUTS", "1k00 1%",
        f"U301 CS → GND, the sense resistor: I_OUT / 300 × 1.00 kΩ = 3.33 V/A, "
        f"so 0.71 A reads 2.37 V. {_DS_TPS} p.29 eq. 9; ≥300 Ω keeps the "
        f"15 mA fault current in range"),
-    _r("R322", "DRV", "1k00 1%", f"U302 CS → GND, the sense resistor, as R321"),
-    _r("R323", "DRV", "10k",
+    _r("R322", "OUTPUTS", "1k00 1%", f"U302 CS → GND, the sense resistor, as R321"),
+    _r("R323", "OUTPUTS", "10k",
        f"Series from U301's CS node to CS1 -- the TOP of a 10 k / 10 k divider "
        f"with R339. In any fault the CS pin pulls up to V_CS(H) 4.5-6.5 V "
        f"({_DS_TPS} p.29); TI's 10 kΩ series advice is written for a 5 V MCU, "
        f"and alone it leaves ~3.8 V on a 3.3 V pin. Halved, a fault reads "
        f"2.25-3.25 V: above every real load, below VDD"),
-    _r("R324", "DRV", "10k", "Series from U302's CS node to CS2, as R323 (with R340)"),
-    _r("R343", "DRV", "100k",
+    _r("R324", "OUTPUTS", "10k", "Series from U302's CS node to CS2, as R323 (with R340)"),
+    _r("R343", "OUTPUTS", "100k",
        "ACC+ sense divider, top. The run/off kill's pull-up (R314) is fed from "
        "the throttle's ACC+; if that wire never arrives the kill cannot cut "
        "the motor and NOTHING shows it. This divider lets firmware see ACC+: "
        "5.1 V × 180/280 = 3.28 V at the expander pin (V_IH 2.64 V)"),
-    _r("R344", "DRV", "180k", "ACC+ sense divider, bottom (with R343)"),
-    _r("R341", "DRV", "1k",
+    _r("R344", "OUTPUTS", "180k", "ACC+ sense divider, bottom (with R343)"),
+    _r("R341", "OUTPUTS", "1k",
        "IN-05 series resistor, between the D23 sense node and the wire to the "
        "MCU (plan §4 class A). Without it a negative surge on the lever wire "
        "runs D313 → D305 → straight into the S3's input clamp"),
-    _r("R342", "DRV", "1k", "IN-06 series resistor, as R341"),
-    _r("R339", "DRV", "10k",
+    _r("R342", "OUTPUTS", "1k", "IN-06 series resistor, as R341"),
+    _r("R339", "OUTPUTS", "10k",
        "CS1 to GND on the ADC side of R323: the bottom of the divider. The CS "
        "node is R321 ∥ (R323 + R339) = 952 Ω: 3.17 V/A there, 1.59 V/A at the "
        "pin (0.71 A reads 1.13 V; the 0.05 A tail lamp 79 mV). ⚠️ 79 mV is "
        "inside ATTEN3's ±50 mV error: firmware reads CS2's open-load at ATTEN0 "
        "(0-850 mV, ±5 mV; Espressif ESP32-S3 datasheet v2.2 p.66 Table 5-6)"),
-    _r("R340", "DRV", "10k", "CS2 to GND on the ADC side of R324, as R339"),
-    _c("C301", "DRV", "100nF", 50.0,
+    _r("R340", "OUTPUTS", "10k", "CS2 to GND on the ADC side of R324, as R339"),
+    _c("C301", "OUTPUTS", "100nF", 50.0,
        f"CS1 to GND on the ADC side of R323. {_DS_HDG} p.21: 0.1 µF at an ADC "
        f"input. With the 10 k / 10 k divider τ ≈ 0.55 ms: firmware waits ≥3 ms after moving SEH/SEL"),
-    _c("C302", "DRV", "100nF", 50.0, "CS2 to GND on the ADC side of R324"),
-    _c("C303", "DRV", "100nF", 50.0, "U301 VS decoupling, at the pins"),
-    _c("C304", "DRV", "10uF", 25.0, "U301 VS bulk decoupling", pkg="1206"),
-    _c("C305", "DRV", "100nF", 50.0, "U302 VS decoupling, at the pins"),
-    _c("C306", "DRV", "10uF", 25.0, "U302 VS bulk decoupling", pkg="1206"),
+    _c("C302", "OUTPUTS", "100nF", 50.0, "CS2 to GND on the ADC side of R324"),
+    _c("C303", "OUTPUTS", "100nF", 50.0, "U301 VS decoupling, at the pins"),
+    _c("C304", "OUTPUTS", "10uF", 25.0, "U301 VS bulk decoupling", pkg="1206"),
+    _c("C305", "OUTPUTS", "100nF", 50.0, "U302 VS decoupling, at the pins"),
+    _c("C306", "OUTPUTS", "10uF", 25.0, "U302 VS bulk decoupling", pkg="1206"),
     _tps_series("R327", "LGT_LOW → U301 IN2"),
     _tps_series("R328", "LGT_HIGH → U301 IN3"),
     _tps_series("R329", "LGT_DRL → U301 IN4"),
@@ -577,41 +589,41 @@ _DRV_PARTS = (
     _tps_series("R333", "DIAG_EN, bussed to both devices"),
     _tps_series("R334", "SEL, bussed to both devices"),
     _tps_series("R335", "SEH, bussed to both devices"),
-    _r("R349", "DRV", "10k",
+    _r("R349", "OUTPUTS", "10k",
        f"FAULT1 pull-up to V3P3 at U301's pin: FAULT is open-drain, "
        f"{_DS_TPS} p.29 'R(pu) = 10 kΩ'. On the DEVICE side of R350, so the "
        f"series resistor carries no DC and a fault still reads ~0 V at the MCU"),
     _tps_series("R350", "FAULT1, U301 → GPIO39"),
-    _r("R351", "DRV", "10k", "FAULT2 pull-up to V3P3 at U302's pin, as R349"),
+    _r("R351", "OUTPUTS", "10k", "FAULT2 pull-up to V3P3 at U302's pin, as R349"),
     _tps_series("R352", "FAULT2, U302 → GPIO12"),
     # ── low-side channels (plan §6.2.3) ─────────────────────────────────────
-    _sot23("Q301", "AO3400A", "DRV", "NFET", 30.0,
+    _sot23("Q301", "AO3400A", "OUTPUTS", "NFET", 30.0,
            "Horn low-side. 48 mΩ max at V_GS 2.5 V. BOM D3"),
-    _sot23("Q302", "AO3400A", "DRV", "NFET", 30.0,
+    _sot23("Q302", "AO3400A", "OUTPUTS", "NFET", 30.0,
            "Fan low-side, LEDC PWM. BOM D3"),
-    _sot23("Q303", "AO3400A", "DRV", "NFET", 30.0,
+    _sot23("Q303", "AO3400A", "OUTPUTS", "NFET", 30.0,
            "Buzzer low-side, LEDC PWM. BOM D3"),
-    _r("R307", "DRV", "10k",
+    _r("R307", "OUTPUTS", "10k",
        "Horn gate pull-down. D14: every gate biases OFF, so a hung module "
        "drives no load (plan §3.1.2). BOM D9"),
-    _r("R308", "DRV", "10k", "Fan gate pull-down (D14). BOM D9"),
-    _r("R309", "DRV", "10k", "Buzzer gate pull-down (D14). BOM D9"),
-    _r("R310", "DRV", "100R", "Horn gate series (plan §6.2.3). BOM D9"),
-    _r("R311", "DRV", "100R", "Fan gate series. BOM D9"),
-    _r("R312", "DRV", "100R", "Buzzer gate series. BOM D9"),
-    Part("D307", "SS14", "DO-214AC (SMA)", "DRV", "D", ("A", "K"), 2.4,
+    _r("R308", "OUTPUTS", "10k", "Fan gate pull-down (D14). BOM D9"),
+    _r("R309", "OUTPUTS", "10k", "Buzzer gate pull-down (D14). BOM D9"),
+    _r("R310", "OUTPUTS", "100R", "Horn gate series (plan §6.2.3). BOM D9"),
+    _r("R311", "OUTPUTS", "100R", "Fan gate series. BOM D9"),
+    _r("R312", "OUTPUTS", "100R", "Buzzer gate series. BOM D9"),
+    Part("D307", "SS14", "DO-214AC (SMA)", "OUTPUTS", "D", ("A", "K"), 2.4,
          footprint_mm=(5.3, 2.8), v_max=40.0, value="1 A / 40 V Schottky",
          source="Fan flyback across J305.1-2: anode FAN_RTN, cathode AUX12, "
                 "the fan's own + feed. "
                 "Schottky is right here: BOM G1's leakage objection concerns "
                 "3.3 V inputs, and this diode sits across a 12 V load. SMA "
                 "outline assumed"),
-    Part("D314", "SS14", "DO-214AC (SMA)", "DRV", "D", ("A", "K"), 2.4,
+    Part("D314", "SS14", "DO-214AC (SMA)", "OUTPUTS", "D", ("A", "K"), 2.4,
          footprint_mm=(5.3, 2.8), v_max=40.0, value="1 A / 40 V Schottky",
          source="Buzzer flyback across J305.3-4: anode BUZZ_RTN, cathode AUX12. "
                 "The AO3400A has no avalanche rating and a magnetic buzzer is "
                 "a coil; harmless if the buzzer is piezo. SMA outline assumed"),
-    Part("D315", "SMBJ18A", "DO-214AA (SMB)", "DRV", "TVS", ("A", "K"), 2.5,
+    Part("D315", "SMBJ18A", "DO-214AA (SMB)", "OUTPUTS", "TVS", ("A", "K"), 2.5,
          footprint_mm=(5.6, 3.95), v_max=18.0, v_clamp=29.2,
          value="V_RWM 18 V · V_BR 20.0-22.1 V · V_C 29.2 V",
          source="The clamp on the V12 rail itself, at the TPS4H160B's VS. "
@@ -632,97 +644,97 @@ _DRV_PARTS = (
     _1n4148("D304", "D2R", "right lever → Q1 gate"),
     _1n4148("D305", "D3L", "left lever → IN-05"),
     _1n4148("D306", "D3R", "right lever → IN-06"),
-    _sot23("Q304", "AO3407A", "DRV", "PFET", 30.0,
+    _sot23("Q304", "AO3407A", "OUTPUTS", "PFET", 30.0,
            f"'Q1', the HARDWARE stop-lamp command: S = V12, D = STOP_CMD, which "
            f"drives U302's IN4 through R347/R348. The lamp itself hangs on U302 "
            f"OUT4, so it gets a 1 A current limit, open-load detection and "
            f"FAULT2 -- with no firmware anywhere in the switching path: a "
            f"TPS4H160B channel follows its IN pin whatever DIAG_EN, SEL and "
            f"SEH do. P-ch, -30 V, ±20 V gate. {_BRK} §2/§3, BOM G2"),
-    _r("R313", "DRV", "10k",
+    _r("R313", "OUTPUTS", "10k",
        f"'R1': Q1 gate pull-up to V12, and the levers' wetting current "
        f"(~1.2 mA). {_BRK} §3, BOM G3"),
-    _sot23("Q305", "AO3400A", "DRV", "NFET", 30.0,
+    _sot23("Q305", "AO3400A", "OUTPUTS", "NFET", 30.0,
            f"'Q2', the run/off kill inverter: D = BL, S = GND. Node high "
            f"(toggle OFF, or the bar wire open) ⇒ BL held low ⇒ motor cut. "
            f"{_BRK} §2.1, BOM D3"),
-    _r("R314", "DRV", "1k",
+    _r("R314", "OUTPUTS", "1k",
        f"'R4': pulls the RUN node up FROM ACC+ (the throttle's 5.1 V, in on "
        f"J309), and is the run/off toggle's WETTING current: 5.1 mA, plan §4's "
        f"1 kΩ for every bought switch (tin/silver contacts want 1-10 mA; 10 kΩ "
        f"gave 0.5 mA, and a ~1.5 kΩ contact film would then have cut the motor). "
        f"Q2 now needs the contact under 146 Ω to stay in RUN. "
-       f"On DRV so an open pod, STACK or BRAIN contact leaves the node "
+       f"On OUTPUTS so an open pod, STACK or LOGIC contact leaves the node "
        f"pulled up = OFF = motor cut: those opens fail SAFE. ⚠️ An open ACC+ "
        f"does NOT: with no pull-up the node never rises and the kill goes dead "
        f"silently -- which is what ACC_SENSE (R343/R344) exists to report. "
        f"{_BRK} §2.1, BOM G3"),
-    _r("R315", "DRV", "100R", f"'R5': Q2 gate series. {_BRK} §2.1, BOM G6"),
-    _r("R316", "DRV", "100k",
+    _r("R315", "OUTPUTS", "100R", f"'R5': Q2 gate series. {_BRK} §2.1, BOM G6"),
+    _r("R316", "OUTPUTS", "100k",
        f"'R6': Q2 gate to GND, the D14 bias-OFF. {_BRK} §2.1, BOM G6"),
-    _r("R317", "DRV", "10k",
+    _r("R317", "OUTPUTS", "10k",
        f"'R3L': IN-05 pull-up to V3P3, which crosses STACK. 10 kΩ, not the "
        f"bar switches' 1 kΩ: R1 already wets the contact and 10 kΩ keeps the "
        f"low level ~0.55 V through a 1N4148. {_BRK} §3, BOM G3"),
-    _r("R318", "DRV", "10k", f"'R3R': IN-06 pull-up to V3P3. {_BRK} §3, BOM G3"),
-    _r("R336", "DRV", "100k",
+    _r("R318", "OUTPUTS", "10k", f"'R3R': IN-06 pull-up to V3P3. {_BRK} §3, BOM G3"),
+    _r("R336", "OUTPUTS", "100k",
        "BL → BL_SENSE: the 100 kΩ-isolated copy firmware reads. The real BL "
-       "never leaves DRV, so no BRAIN fault can open it. A fitted but "
-       "unpowered BRAIN (or an expander pin set as an output) clamps BL_SENSE "
+       "never leaves OUTPUTS, so no LOGIC fault can open it. A fitted but "
+       "unpowered LOGIC (or an expander pin set as an output) clamps BL_SENSE "
        "near 0.5 V, putting 100 kΩ from BL to ground: that pulls toward a CUT, "
        "the safe direction, and matters only against a FarDriver pull-up of "
        "47 kΩ or more (⬜ unmeasured)"),
     # ── IN-15: 12 V rail sense (plan §4 class D) ────────────────────────────
-    _r("R337", "DRV", "47k",
+    _r("R337", "OUTPUTS", "47k",
        "IN-15 divider top, from V12. 47 k / 10 k: 12 V → 2.11 V, and TDK's "
-       "17.4 V over-voltage ceiling → 3.05 V, inside the 3.3 V pin. On DRV so "
-       "12 V never crosses to BRAIN"),
-    _r("R338", "DRV", "10k", "IN-15 divider bottom"),
-    _c("C307", "DRV", "100nF", 50.0,
+       "17.4 V over-voltage ceiling → 3.05 V, inside the 3.3 V pin. On OUTPUTS so "
+       "12 V never crosses to LOGIC"),
+    _r("R338", "OUTPUTS", "10k", "IN-15 divider bottom"),
+    _c("C307", "OUTPUTS", "100nF", 50.0,
        f"At the V12_SENSE node (plan §4 class D). {_DS_HDG} p.21"),
     # ── protection: one array per harness connector, same board ─────────────
-    _tvs18("D308", "DRV", "At J301: HL_LOW"),
-    _tvs18("D309", "DRV", "At J301: HL_HIGH"),
-    _tvs18("D310", "DRV", "At J301: HL_DRL"),
-    _tvs18("D311", "DRV", "At J304: HORN_N"),
-    _tvs18("D312", "DRV", "At J305: FAN_RTN"),
-    _tvs18("D319", "DRV", "At J305: BUZZ_RTN"),
-    _tvs18("D320", "DRV", "At J302: TAIL_RUN"),
-    _tvs18("D321", "DRV", "At J302: rear TURN_L"),
-    _tvs18("D322", "DRV", "At J302: rear TURN_R"),
-    _tvs18("D323", "DRV", "At J302: TAIL_STOP"),
-    _tvs18("D324", "DRV", "At J303: front TURN_L"),
-    _tvs18("D325", "DRV", "At J303: front TURN_R"),
-    _tvs18("D326", "DRV", "At J304/J305: AUX12, the horn/fan/buzzer + feed"),
-    _tvs15("D313", "DRV",
+    _tvs18("D308", "OUTPUTS", "At J301: HL_LOW"),
+    _tvs18("D309", "OUTPUTS", "At J301: HL_HIGH"),
+    _tvs18("D310", "OUTPUTS", "At J301: HL_DRL"),
+    _tvs18("D311", "OUTPUTS", "At J304: HORN_N"),
+    _tvs18("D312", "OUTPUTS", "At J305: FAN_RTN"),
+    _tvs18("D319", "OUTPUTS", "At J305: BUZZ_RTN"),
+    _tvs18("D320", "OUTPUTS", "At J302: TAIL_RUN"),
+    _tvs18("D321", "OUTPUTS", "At J302: rear TURN_L"),
+    _tvs18("D322", "OUTPUTS", "At J302: rear TURN_R"),
+    _tvs18("D323", "OUTPUTS", "At J302: TAIL_STOP"),
+    _tvs18("D324", "OUTPUTS", "At J303: front TURN_L"),
+    _tvs18("D325", "OUTPUTS", "At J303: front TURN_R"),
+    _tvs18("D326", "OUTPUTS", "At J304/J305: AUX12, the horn/fan/buzzer + feed"),
+    _tvs15("D313", "OUTPUTS",
            f"At J306: LEVER_L, LEVER_R. The lever nodes idle at ~11.4 V "
            f"({_BRK} §3), so a 5 V array here would hold the stop lamp on"),
-    _tvs15("D316", "DRV", "At J309: BL and ACC+"),
-    _tvs15("D317", "DRV", "At J310: FD_ONELINE, 0-15 V. ⏸️ DNP with the "
+    _tvs15("D316", "OUTPUTS", "At J309: BL and ACC+"),
+    _tvs15("D317", "OUTPUTS", "At J310: FD_ONELINE, 0-15 V. ⏸️ DNP with the "
            "parked display (D19)", dnp=True),
     # ── display block, parked with D19: footprints fitted ───────────────────
-    _tvs15("D406", "DRV", "At J405: TT_L, TT_R, TT_HL, DISP_ONELINE. ⏸️ DNP "
+    _tvs15("D406", "OUTPUTS", "At J405: TT_L, TT_R, TT_HL, DISP_ONELINE. ⏸️ DNP "
            "with the parked display (D19); populate-and-go", dnp=True),
-    _tvs5("D405", "DRV", "At J405: CANH, CANL"),
-    _r("R426", "DRV", "1k",
+    _tvs5("D405", "OUTPUTS", "At J405: CANH, CANL"),
+    _r("R426", "OUTPUTS", "1k",
        "LEFT telltale series to display pin 1, fed from the TURN_L lamp feed, "
        "not a driver channel (plan §6.2.1). 1206: a display wire shorted to "
        "ground puts the 12 V feed across it, 144 mW (rules VR-POWER). BOM B3",
        pkg="1206"),
-    _r("R427", "DRV", "1k", "RIGHT telltale series to display pin 4, 1206 as "
+    _r("R427", "OUTPUTS", "1k", "RIGHT telltale series to display pin 4, 1206 as "
        "R426. BOM B3", pkg="1206"),
-    _r("R428", "DRV", "1k",
+    _r("R428", "OUTPUTS", "1k",
        "Headlight telltale series to display pin 5, fed from HL_HIGH so a "
        "flash lights it with no firmware (plan §7); LOW beam does not. 1206 "
        "as R426. BOM B3", pkg="1206"),
-    _r("R429", "DRV", "1k",
+    _r("R429", "OUTPUTS", "1k",
        "Series in the one-line feed to display pin 9: back-feed protection "
        "while the FarDriver drives 0-15 V into an unpowered display "
        "(plan §3.3). 1206 as R426. BOM B3", pkg="1206"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — BRAIN (L4): logic. The module footprint serves -WROOM-1 and -1U.
+# PARTS — LOGIC (L3): logic. The module footprint serves -WROOM-1 and -1U.
 # ════════════════════════════════════════════════════════════════════════════
 _U401_PINS = (
     "3V3", "EN", "GND", "EPAD",
@@ -761,20 +773,20 @@ _MCP_SOURCE = (
 def _class_a_parts(pull: str, series: str, cap: str, net: str) -> tuple[Part, ...]:
     """plan §4 class A: 1 kΩ pull-up · 1 kΩ series · 100 nF at the pin."""
     return (
-        _r(pull, "BRAIN", "1k",
+        _r(pull, "LOGIC", "1k",
            f"Class-A PULL-UP to V3P3 for {net}, on the CONTACT side of the "
            f"series resistor. 1 kΩ, not 4.7 kΩ: 3.3 mA of wetting current "
            f"through a bought switch (plan §4). BOM C1"),
-        _r(series, "BRAIN", "1k",
+        _r(series, "LOGIC", "1k",
            f"Class-A SERIES into the pin for {net} (plan §4). BOM C1"),
-        _c(cap, "BRAIN", "100nF", 50.0,
+        _c(cap, "LOGIC", "100nF", 50.0,
            f"Class-A 100 nF to GND at the pin for {net} (plan §4). BOM C1"),
     )
 
 
 _BRAIN_PARTS = (
     Part("U401", "ESP32-S3-WROOM-1U-N8", "WROOM-1 / WROOM-1U SMD module",
-         "BRAIN", "MODULE", _U401_PINS, 3.35, height_confirmed=True,
+         "LOGIC", "MODULE", _U401_PINS, 3.35, height_confirmed=True,
          footprint_mm=(18.0, 25.5), nc=("IO3", "IO19", "IO20", "IO45", "IO46"),
          value="U.FL antenna: the enclosure is metal. The footprint also takes the -1-N8",
          source=f"BOM A4 / D18: 8 MB quad flash, no PSRAM, -40…+85 °C; never "
@@ -790,7 +802,7 @@ _BRAIN_PARTS = (
                 f"internal pull during software initialization'. p.42: 18 × 25.5 × 3.1±0.15 (-1), "
                 f"18 × 19.2 × 3.2±0.15 (-1U) — booked at the -1U's 3.35 max. "
                 f"Keep the antenna keep-out either way"),
-    Part("U402", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
+    Part("U402", "MCP23017T-E/SS", "SSOP-28", "LOGIC", "IC",
          ("GPA0", "GPA1", "GPA2", "GPA3", "GPA4", "GPA5", "GPA6",
           "GPB0", "GPB1", "GPB2", "GPB3", "GPB4", "GPB5",
           "VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "INTA"),
@@ -799,7 +811,7 @@ _BRAIN_PARTS = (
          value="I²C address 0x20 (A2..A0 = 000)",
          source=f"Expander #1: every bar input. nc GPB6: a spare bit, "
                 f"driven as an output by firmware as GPA7/GPB7 are. {_MCP_SOURCE}"),
-    Part("U403", "MCP23017T-E/SS", "SSOP-28", "BRAIN", "IC",
+    Part("U403", "MCP23017T-E/SS", "SSOP-28", "LOGIC", "IC",
          ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET", "GPA0")
          + _U403_SPARES,
          2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
@@ -811,27 +823,27 @@ _BRAIN_PARTS = (
                 f"polled. {_MCP_SOURCE}"),
     *(part for bit, _, pull, series, cap, _ in _SPARE_LINES
       for part in _class_a_parts(pull, series, cap, f"SPARE_{bit[2:]}")),
-    *(_tvs5(ref, "BRAIN", "J409, expander #2's spare inputs: class A (plan §4)")
+    *(_tvs5(ref, "LOGIC", "J409, expander #2's spare inputs: class A (plan §4)")
       for ref in _SPARE_TVS),
-    Part("U404", "SN65HVD230DR", "SOIC-8", "BRAIN", "IC",
+    Part("U404", "SN65HVD230DR", "SOIC-8", "LOGIC", "IC",
          ("D", "GND", "VCC", "R", "CANL", "CANH", "RS"), 1.75,
          height_confirmed=True, footprint_mm=(5.0, 6.2), nc=("Vref",),
          source=f"CAN transceiver; hardware fitted, feed parked (D19). BOM B1. "
                 f"{_DS_HVD} p.5: D 1 · GND 2 · VCC 3 · R 4 · Vref 5 · CANL 6 · "
                 f"CANH 7 · RS 8. nc Vref: p.20 'If the Vref pin is not used it "
                 f"may be left floating'. p.40: SOIC 1.75 mm max"),
-    Part("U405", "TLV76733DGNR", "8-HVSSOP PowerPAD", "BRAIN", "IC",
+    Part("U405", "TLV76733DGNR", "8-HVSSOP PowerPAD", "LOGIC", "IC",
          ("IN", "OUT", "SNS", "EN", "GND", "PAD"), 1.1, height_confirmed=True,
          footprint_mm=(3.1, 5.05), nc=("NC",), v_max=16.0,
          value="5 V → 3.3 V, 1 A, 1 %",
-         source=f"BRAIN's regulator: the S3 wants ≥500 mA ({_DS_HDG} p.8) and "
+         source=f"LOGIC's regulator: the S3 wants ≥500 mA ({_DS_HDG} p.8) and "
                 f"16 V of input rating rides the Cincon's 6.2 V output clamp. "
                 f"{_DS_TLV} p.3-4 (DGN, fixed): OUT 1 · SNS 2 · NC 3,7 · GND "
                 f"4,6 · EN 5 · IN 8 · pad. SNS: 'Connect the SNS pin to the OUT "
                 f"pin … Do not float'. EN ties to IN ('can be connected to the "
                 f"input pin'). PAD to GND. nc NC: Figure 5-4 names pads 3 and "
                 f"7 NC and Table 5-1 gives them no function. p.41: 1.1 mm max"),
-    Part("U406", "TLV803SDBZR", "SOT-23", "BRAIN", "IC", ("GND", "RESET", "VDD"),
+    Part("U406", "TLV803SDBZR", "SOT-23", "LOGIC", "IC", ("GND", "RESET", "VDD"),
          1.12, height_confirmed=True, footprint_mm=(2.9, 2.6), v_max=6.0, dnp=True,
          value="2.93 V threshold, 200 ms, open drain",
          source="EN supervisor, NOT FITTED: the footprint is there if a slow "
@@ -843,10 +855,10 @@ _BRAIN_PARTS = (
                 "TLV803 DBZ GND 1 · RESET 2 · VDD 3; RESET open drain, 'Use a 10-kΩ "
                 "to 1-MΩ pullup' = R438. VIT- 2.87-2.99 V (p.6). p.22: DBZ "
                 "1.12 mm max"),
-    _c("C436", "BRAIN", "100nF", 50.0,
+    _c("C436", "LOGIC", "100nF", 50.0,
        "U406 VDD decoupling, not fitted with it. TI SBVS157E p.4: 'place a "
        "0.1-µF ceramic capacitor close to this pin'", dnp=True),
-    _r("R401", "BRAIN", "120R",
+    _r("R401", "LOGIC", "120R",
        "CAN termination at the module end. 68 Ω joined with the panel's own "
        "132.4 Ω is the CAN pre-flight gate. BOM B2"),
     *_class_a_parts("R402", "R413", "C401", "IN01_TURN_L"),
@@ -860,96 +872,96 @@ _BRAIN_PARTS = (
     *_class_a_parts("R410", "R421", "C409", "IN08A_RUNNING"),
     *_class_a_parts("R411", "R422", "C410", "IN08B_HEADLIGHT"),
     *_class_a_parts("R412", "R423", "C411", "START_SENSE"),
-    _tvs5("D401", "BRAIN", "At J402: IN04A, IN04B, IN03, IN01"),
-    _tvs5("D402", "BRAIN", "At J402: IN09, IN02, IN10"),
-    _tvs5("D403", "BRAIN",
+    _tvs5("D401", "LOGIC", "At J402: IN04A, IN04B, IN03, IN01"),
+    _tvs5("D402", "LOGIC", "At J402: IN09, IN02, IN10"),
+    _tvs5("D403", "LOGIC",
           "At J403: IN08A, IN08B, RUN, START. RUN idles at 5.03 V (5.3 V "
           "with ACC+ at its 5.4 V top): at V_RWM and at least 0.7 V under "
           "V_BR min 6.0 V. I_R ≤ 20 µA costs 20 mV across R314's 1 kΩ"),
-    _tvs5("D404", "BRAIN", "At J404: the two FarDriver serial wires (K1, K3) "
+    _tvs5("D404", "LOGIC", "At J404: the two FarDriver serial wires (K1, K3) "
           "and the throttle's boost button (K4)"),
-    _tvs15("D407", "BRAIN",
+    _tvs15("D407", "LOGIC",
            "At J404: BOOST_OUT, whose controller-side pull-up must meter "
            "≤ 15 V before the wire is connected (plan §7.1): the 15 V array"),
-    _sot23("Q401", "AO3400A", "BRAIN", "NFET", 30.0,
+    _sot23("Q401", "AO3400A", "LOGIC", "NFET", 30.0,
            "Boost open-drain output to the controller's CruisePin. ⛔ METER THE "
            "WIRE FIRST: the same 30-pin harness carries pink 60VC at 72-84 V; "
            "above 15 V (D407's stand-off) the module needs a PC817 opto "
            "instead of this FET. BOM D3"),
-    _r("R424", "BRAIN", "100R", "Boost gate series (plan §6.2.3). BOM D9"),
-    _r("R425", "BRAIN", "10k",
+    _r("R424", "LOGIC", "100R", "Boost gate series (plan §6.2.3). BOM D9"),
+    _r("R425", "LOGIC", "10k",
        "Boost HARD external pull-down (plan §3.1.1). D14: the gate biases OFF "
        "through the ~200 ms of high-Z at boot. BOM D9"),
-    _r("R430", "BRAIN", "100k",
+    _r("R430", "LOGIC", "100k",
        "IN-11 divider top, from the RUN node. SENSE ONLY: it never drives the "
        "cut. RUN is pulled to ACC+ 5.1 V by R314 1 k and loaded by Q2's gate "
        "network (R315 100 Ω + R316 100 k) in parallel with this 280 k divider: "
        "5.1 V × 73.7 k / 74.7 k = 5.03 V at the node"),
-    _r("R431", "BRAIN", "180k",
+    _r("R431", "LOGIC", "180k",
        "IN-11 divider bottom: 5.03 V × 180 / 280 = 3.24 V at U402.GPB2 — "
        "0.60 V over the MCP23017's V_IH (0.8 × V_DD = 2.64 V); ACC+ at 5.4 V "
        "gives 3.42 V, under V_DD + 0.3"),
 
-    _r("R434", "BRAIN", "2k2",
+    _r("R434", "LOGIC", "2k2",
        "I²C SDA pull-up. I²C at 3.3 V / 400 kHz allows 967 Ω-3.5 kΩ at "
        "100 pF; D16 wants the STRONG end beside 80 A of chopped phase current"),
-    _r("R435", "BRAIN", "2k2", "I²C SCL pull-up, as R434"),
-    _r("R436", "BRAIN", "1k",
+    _r("R435", "LOGIC", "2k2", "I²C SCL pull-up, as R434"),
+    _r("R436", "LOGIC", "1k",
        "UART1 TX series (plan §4 class E); the pin is tri-stated whenever the "
        "module is not sending"),
-    _r("R437", "BRAIN", "10k",
+    _r("R437", "LOGIC", "10k",
        f"MCP23017 RESET (both devices) pull-up to V3P3. {_DS_MCP} p.11: RESET "
        f"'Must be externally biased'"),
-    _r("R438", "BRAIN", "10k",
+    _r("R438", "LOGIC", "10k",
        f"U401 EN pull-up to V3P3, the R of the reset RC. {_DS_HDG} p.11: "
        f"'CHIP_PU must not be left floating … R = 10 kΩ and C = 1 μF'"),
-    _r("R439", "BRAIN", "10k",
+    _r("R439", "LOGIC", "10k",
        f"U401 IO0 pull-up to V3P3, so an unprobed J408 pad cannot select "
        f"download mode at key-on. {_DS_HDG} p.18: 'It is recommended to place "
        f"a pull-up resistor at the GPIO0 pin'"),
-    _r("R442", "BRAIN", "10k",
+    _r("R442", "LOGIC", "10k",
        f"U404 RS → GND, NOT FITTED while CAN is parked (D19). {_DS_HVD} p.5: "
        f"'10kΩ to 100kΩ pull down to GND = slope control mode' — 10 kΩ is "
        f"the fastest slope, ample at 250 kbit/s. To un-park: fit R442, "
        f"remove R472", dnp=True),
-    _r("R472", "BRAIN", "10k",
+    _r("R472", "LOGIC", "10k",
        f"U404 RS → V3P3: standby while CAN is parked (D19). {_DS_HVD} p.6: "
        f"V(Rs) ≥ 0.75 VCC is standby — driver off, receiver listening, 370 µA "
        f"typ (p.7) where slope mode drew 10-17 mA. The transceiver cannot "
        f"drive the bus"),
-    _r("R476", "BRAIN", "1k",
+    _r("R476", "LOGIC", "1k",
        "KEY_SENSE series, at U401.IO1. The line crosses three boards and runs "
-       "past 84 V copper on HVIN; 1 kΩ limits what a fault or ESD event can "
+       "past 84 V copper on POWER; 1 kΩ limits what a fault or ESD event can "
        "push into the pin's clamp diodes, and what the divider can back-feed "
        "into an unpowered module (<0.3 mA before it)"),
-    _c("C437", "BRAIN", "100nF", 50.0,
+    _c("C437", "LOGIC", "100nF", 50.0,
        f"KEY_SENSE at U401.IO1. {_DS_HDG} p.21: 'add a 0.1 μF filter "
        f"capacitor between ESP pins and ground when using the ADC function'. "
        f"With R476: τ = 0.1 ms"),
-    _r("R475", "BRAIN", "470R",
+    _r("R475", "LOGIC", "470R",
        f"U0TXD series, at U401, on its way to J408 pad 3. {_DS_HDG}, UART: 'a "
        f"499 Ω series resistor to the U0TXD line to suppress harmonics'. "
        f"470 Ω is the nearest JLC Basic value"),
-    _r("R443", "BRAIN", "1k",
+    _r("R443", "LOGIC", "1k",
        "UART1 RX series (plan §4 class E): the FarDriver's TX level is "
        "unmeasured (⬜ M9), so the harness wire never meets GPIO18 directly"),
-    _c("C412", "BRAIN", "1uF", 16.0,
+    _c("C412", "LOGIC", "1uF", 16.0,
        f"U401 EN to GND, the C of the reset RC. {_DS_HDG} p.11"),
-    _c("C413", "BRAIN", "10uF", 16.0,
+    _c("C413", "LOGIC", "10uF", 16.0,
        f"U401 3V3 bulk, at pad 2. {_DS_HDG} p.8", pkg="1206"),
-    _c("C414", "BRAIN", "100nF", 50.0, f"U401 3V3 HF decoupling. {_DS_HDG} p.8"),
-    _c("C415", "BRAIN", "10uF", 16.0, "U405 input, V5 to GND", pkg="1206"),
-    _c("C416", "BRAIN", "10uF", 16.0,
+    _c("C414", "LOGIC", "100nF", 50.0, f"U401 3V3 HF decoupling. {_DS_HDG} p.8"),
+    _c("C415", "LOGIC", "10uF", 16.0, "U405 input, V5 to GND", pkg="1206"),
+    _c("C416", "LOGIC", "10uF", 16.0,
        f"U405 output, V3P3 to GND. {_DS_TLV} p.5: C_OUT 1-220 µF, ESR "
        f"2-500 mΩ — ceramic-stable", pkg="1206"),
-    _c("C417", "BRAIN", "100nF", 50.0, "U405 output HF decoupling"),
-    _c("C418", "BRAIN", "100nF", 50.0, "U402 VDD decoupling"),
-    _c("C419", "BRAIN", "100nF", 50.0, "U403 VDD decoupling"),
-    _c("C420", "BRAIN", "100nF", 50.0, "U404 VCC decoupling"),
-    _c("C421", "BRAIN", "100nF", 50.0,
+    _c("C417", "LOGIC", "100nF", 50.0, "U405 output HF decoupling"),
+    _c("C418", "LOGIC", "100nF", 50.0, "U402 VDD decoupling"),
+    _c("C419", "LOGIC", "100nF", 50.0, "U403 VDD decoupling"),
+    _c("C420", "LOGIC", "100nF", 50.0, "U404 VCC decoupling"),
+    _c("C421", "LOGIC", "100nF", 50.0,
        "IN-05 to GND at the MCU pin (plan §4 class A). With R341: τ = 100 µs, "
        "well inside the <10 ms the boost safety-release wants"),
-    _c("C422", "BRAIN", "100nF", 50.0, "IN-06 to GND at the MCU pin, as C421"),
+    _c("C422", "LOGIC", "100nF", 50.0, "IN-06 to GND at the MCU pin, as C421"),
 )
 
 _PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
@@ -963,19 +975,12 @@ _PARTS = _HVIN_PARTS + _CONV_PARTS + _DRV_PARTS + _BRAIN_PARTS
 # a half mated one contact off shorts a rail at worst -- it never puts 84 V or
 # 12 V on KEY_SENSE. Each is ONE crossing between two neighbouring boards.
 
-#: HV-LINK, J104 ↔ J201. Each converter pair on two contacts: DC-DC #1 draws
-#: ~2.9 A at the 60 V LVC, and one fretted contact must not drop the 12 V
-#: rail. Two GND contacts, so one open contact cannot push the input return
-#: through a signal ground. KEY_SENSE in the middle, a ground either side.
-_HVLINK_NETS = ("HV_C1_P", "HV_C1_N", "HV_C2_P", "HV_C2_N", "GND", "KEY_SENSE",
-                "GND", "HV_C2_N", "HV_C2_P", "HV_C1_N", "HV_C1_P")
-
-#: PWR-UP, J202 ↔ J311, CONV to DRV. Four V12 contacts: 2.62 A is 0.66 A
-#: each, and 0.87 A with one open. V5 and KEY_SENSE only pass through DRV.
+#: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS. Four V12 contacts: 2.62 A is 0.66 A
+#: each, and 0.87 A with one open. V5 and KEY_SENSE only pass through OUTPUTS.
 _PWRUP_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
                "GND", "V12", "V12")
 
-#: PWR-BRAIN, J307 ↔ J407, DRV to BRAIN: only what BRAIN uses. Its ground
+#: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: only what LOGIC uses. Its ground
 #: return is also every even STACK contact.
 _PWRBRAIN_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
 
@@ -996,11 +1001,6 @@ def _p(spec: str) -> tuple[tuple[str, str], ...]:
                  (tok.split(".", 1) for tok in spec.split()))
 
 
-def _hvlink(net: str) -> tuple[tuple[str, str], ...]:
-    return tuple((c, str(i + 1)) for i, n in enumerate(_HVLINK_NETS)
-                 if n == net for c in ("J104", "J201"))
-
-
 def _pwrup(net: str) -> tuple[tuple[str, str], ...]:
     return tuple((c, str(i + 1)) for i, n in enumerate(_PWRUP_NETS)
                  if n == net for c in ("J202", "J311"))
@@ -1019,7 +1019,7 @@ def _stack(net: str) -> tuple[tuple[str, str], ...]:
 _STACK_GND = tuple((c, str(n)) for c in ("J308", "J406") for n in range(2, 51, 2))
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — the 84 V section. HVIN and CONV only (BD-2).
+# NETS — the 84 V section. POWER only (BD-2).
 # ⚠️ Order on each branch: HV_SW → choke → bulk cap → converter. D201 + F201 sit
 # between the choke and C2 ONLY, so the hold-up cap serves DC-DC #2 alone.
 # ════════════════════════════════════════════════════════════════════════════
@@ -1055,20 +1055,19 @@ _NETS_84V = (
                "clamped at 10 V by D106. Key off ⇒ 0 V ⇒ module off"),
     Net("KEY_SENSE_MID", _p("R107.2 R108.1"), domain="84V",
         source="The join of the 2 × 165 kΩ IN-12 divider top"),
-    Net("HV_C1_P", _p("L101.4 C201.+ U201.+Vin C203.1") + _hvlink("HV_C1_P"),
-        domain="84V", interface="HV-LINK",
+    Net("HV_C1_P", _p("L101.4 C201.+ U201.+Vin C203.1"),
+        domain="84V",
         source="DC-DC #1 +Vin: choke → C1 → converter, in that order"),
-    Net("HV_C1_N", _p("L101.3 C201.- U201.-Vin U201.CNT C204.1")
-        + _hvlink("HV_C1_N"),
-        domain="84V", interface="HV-LINK",
+    Net("HV_C1_N", _p("L101.3 C201.- U201.-Vin U201.CNT C204.1"),
+        domain="84V",
         source="DC-DC #1 -Vin, its OWN net: it joins GND only through L101's "
                "3-2 winding. ~0 V DC, but it is 84 V-section copper. U201.CNT "
                "is strapped here: negative logic, open = OFF"),
-    Net("HV_C2_P", _p("L102.4 D201.A") + _hvlink("HV_C2_P"),
-        domain="84V", interface="HV-LINK",
+    Net("HV_C2_P", _p("L102.4 D201.A"),
+        domain="84V",
         source="DC-DC #2's branch after its choke, ahead of the hold-up diode"),
-    Net("HV_C2_N", _p("L102.3 C202.- U202.-Vin C206.1") + _hvlink("HV_C2_N"),
-        domain="84V", interface="HV-LINK",
+    Net("HV_C2_N", _p("L102.3 C202.- U202.-Vin C206.1"),
+        domain="84V",
         source="DC-DC #2 -Vin, its OWN net: it joins GND only through L102's "
                "3-2 winding"),
     Net("HV_C2_HOLD_IN", _p("D201.K FH201.1 F201.1"), domain="84V",
@@ -1086,13 +1085,13 @@ _NETS_84V = (
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_RAILS = (
     Net("GND",
-        # HVIN
+        # POWER
         _p("J101.3 J101.4 D101.A Q105.S R113.2 D106.A C108.2 "
            "R109.2 C109.2 L101.2 L102.2")
-        # CONV
+        # POWER
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
              "R211.2")
-        # DRV
+        # OUTPUTS
         + _p("U301.GND U301.PAD U301.THER U302.GND U302.PAD U302.THER "
              "R319.2 R320.2 R321.2 R322.2 R348.2 D318.A "
              "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 R344.2 "
@@ -1105,7 +1104,7 @@ _NETS_RAILS = (
              "D316.A2 D316.A5 D316.K4 D316.K6 "
              "D317.A2 D317.A5 D317.K3 D317.K4 D317.K6 "
              "D405.A2 D405.A5 D405.K4 D405.K6 D406.A2 D406.A5")
-        # BRAIN
+        # LOGIC
         + _p("U401.GND U401.EPAD C412.2 C413.2 C414.2 "
              "U402.VSS U402.A0 U402.A1 U402.A2 C418.2 "
              "U403.VSS U403.A1 U403.A2 C419.2 "
@@ -1119,11 +1118,10 @@ _NETS_RAILS = (
              "J402.1 J403.1 J404.4 J404.7 J408.4 J409.2 J409.16")
         + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
         + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
-        + _p("D413.K3 D413.K4 D413.K6")
-        + _hvlink("GND") + _pwrup("GND") + _pwrbrain("GND") + _STACK_GND,
-        domain="GND", interface="HV-LINK",
-        source="The star net, on all four boards and across all three "
-               "interfaces (HV-LINK × 2, PWR-UP × 4, PWR-BRAIN × 2, every even STACK "
+        + _p("D413.K3 D413.K4 D413.K6") + _pwrup("GND") + _pwrbrain("GND") + _STACK_GND,
+        domain="GND", interface="PWR-OUT",
+        source="The star net, on all three boards and across all three "
+               "interfaces (PWR-OUT × 4, PWR-LOGIC × 2, every even STACK "
                "contact); "
                "`interface` names the lowest. Both converters' -Vout, every "
                "lamp common (plan §6.0.2), both B− conductors of J101, and "
@@ -1140,16 +1138,16 @@ _NETS_RAILS = (
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
              "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 R345.2 "
              "Q304.S R313.2 D315.K R337.1"),
-        domain="12V", interface="PWR-UP",
+        domain="12V", interface="PWR-OUT",
         source="DC-DC #1's output, +S strapped to +V at the brick. 2.62 A "
                "measured (plan §3.2.3). It never leaves the box: every 12 V "
                "wire out is a TPS4H160B channel. D315 is its clamp"),
     Net("V5",
         _p("U202.+Vout C211.1 C212.1") + _pwrup("V5") + _pwrbrain("V5")
         + _p("U405.IN U405.EN C415.1"),
-        domain="5V", interface="PWR-UP",
+        domain="5V", interface="PWR-OUT",
         source="DC-DC #2's isolated output, referenced to the star. Feeds "
-               "BRAIN's regulator and nothing else"),
+               "LOGIC's regulator and nothing else"),
     Net("V3P3",
         _p("U405.OUT U405.SNS C416.1 C417.1 U401.3V3 C413.1 C414.1 "
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
@@ -1158,12 +1156,12 @@ _NETS_RAILS = (
            "R472.2 U406.VDD C436.1 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
         + _stack("V3P3") + _p("R317.2 R318.2 R346.2 R349.2 R351.2"),
         domain="3V3", interface="STACK",
-        source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
+        source="LOGIC's 3.3 V rail. Crosses STACK to OUTPUTS for R317/R318, the "
                "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — DRV outputs. Every lamp common is GND; there is no separate return.
+# NETS — the OUTPUTS board's outputs. Every lamp common is GND; there is no separate return.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_12V = (
     Net("HL_LOW", _p("U301.OUT2 R301.1 J301.3 D308.K"), domain="12V",
@@ -1218,10 +1216,10 @@ _NETS_12V = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — D23, the brake and kill hardware. Complete on DRV: BRAIN only listens.
+# NETS — D23, the brake and kill hardware. Complete on OUTPUTS: LOGIC only listens.
 # ⚠️ brake-circuit.md §2's '|◄' = CATHODE ON THE LEVER-NODE SIDE.
-# ⭐ An open bar wire, pod, STACK contact or BRAIN leaves the RUN node pulled up
-# by R314 on DRV, which reads as OFF and stops drive. ⚠️ The exception is ACC+
+# ⭐ An open bar wire, pod, STACK contact or LOGIC leaves the RUN node pulled up
+# by R314 on OUTPUTS, which reads as OFF and stops drive. ⚠️ The exception is ACC+
 # itself: open, there is nothing to pull the node up with, and the kill is dead
 # without a sign -- ACC_SENSE reports it to firmware; the levers still cut.
 # ════════════════════════════════════════════════════════════════════════════
@@ -1239,7 +1237,7 @@ _NETS_BRAKE = (
         source=f"FarDriver BL, YELLOW/GREEN — never grey BH, which stays "
                f"capped. Rests on the controller's own ~3.3 V pull-up "
                f"({_BRK} §7.1); a lever or Q2 pulls it low = motor cut. It "
-               f"leaves the box from DRV on J309 and touches no other board. "
+               f"leaves the box from OUTPUTS on J309 and touches no other board. "
                f"The 100 nF brake C1 belongs at the controller, not here"),
     Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
         domain="3V3", interface="STACK",
@@ -1257,7 +1255,7 @@ _NETS_BRAKE = (
         _p("J403.4 D403.K4 R430.1") + _stack("RUN") + _p("R314.2 R315.1"),
         domain="5V", interface="STACK",
         source=f"Right pod RED: closed to ground in RUN, open in OFF. Bare "
-               f"copper from J403 across STACK to DRV (BD-7), tapped on BRAIN "
+               f"copper from J403 across STACK to OUTPUTS (BD-7), tapped on LOGIC "
                f"for IN-11. 5.03 V when open ({_BRK} §2.1). D403's SMS05T1G "
                f"line is rated V_RWM 5.0 V: at 5.03 V it sits 1 V under its "
                f"6.0 V breakdown, and its leakage is sourced through R314's 1 k. "
@@ -1286,7 +1284,7 @@ _NETS_BRAKE = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — STACK control and diagnostics (DRV ↔ BRAIN). Lighting is FULL NATIVE
+# NETS — STACK control and diagnostics (OUTPUTS ↔ LOGIC). Lighting is FULL NATIVE
 # (BD-5): no bus sits between the S3 and a lamp.
 # ════════════════════════════════════════════════════════════════════════════
 _LGT = ("The TPS4H160B's internal input pull-down holds the channel OFF "
@@ -1376,13 +1374,13 @@ _NETS_STACK = (
     Net("V12_SENSE",
         _p("R337.2 R338.1 C307.1") + _stack("V12_SENSE") + _p("U401.IO2"),
         domain="3V3", interface="STACK", gpio="GPIO2",
-        source="IN-15, ADC1_CH1: V12 through 47 k / 10 k on DRV"),
+        source="IN-15, ADC1_CH1: V12 through 47 k / 10 k on OUTPUTS"),
     Net("CANH", _p("U404.CANH R401.1") + _stack("CANH") + _p("J405.8 D405.K1"),
         domain="3V3", interface="STACK",
         source="Display pin 8, RED-BLACK. The panel terminates its own end "
                "(132.4 Ω). A 3.3 V transceiver's pair; even a 5 V part at the "
                "panel end drives CANH to 4.5 V at most, under D405's 5 V "
-               "V_RWM. The transceiver is on BRAIN and J405 on DRV, so the "
+               "V_RWM. The transceiver is on LOGIC and J405 on OUTPUTS, so the "
                "pair crosses STACK"),
     Net("CANL", _p("U404.CANL R401.2") + _stack("CANL") + _p("J405.7 D405.K3"),
         domain="3V3", interface="STACK",
@@ -1390,7 +1388,7 @@ _NETS_STACK = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — the parked display block on DRV (D19).
+# NETS — the parked display block on OUTPUTS (D19).
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_DISPLAY = (
     Net("TT_L", _p("R426.2 J405.1 D406.K1"), domain="12V",
@@ -1407,18 +1405,18 @@ _NETS_DISPLAY = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — BRAIN: the module's support pins, buses, serial, CAN, boost.
+# NETS — LOGIC: the module's support pins, buses, serial, CAN, boost.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_BRAIN = (
     Net("KEY_SENSE",
-        _p("R108.2 R109.1 C109.1") + _hvlink("KEY_SENSE") + _pwrup("KEY_SENSE")
+        _p("R108.2 R109.1 C109.1") + _pwrup("KEY_SENSE")
         + _pwrbrain("KEY_SENSE") + _p("R476.1"),
-        domain="3V3", interface="HV-LINK",
+        domain="3V3", interface="PWR-OUT",
         source="IN-12, ADC1_CH0: KSW through 330 k / 10 k, 84 V → 2.47 V. "
                "Tapped UPSTREAM of the hold-up diode, so key-off shows at once "
-               "while C2 keeps the logic alive (plan §3.2.2). Divider on HVIN, "
-               "pin on BRAIN behind R476: crosses HV-LINK, PWR-UP and "
-               "PWR-BRAIN, a ground either side of it on each. Key state only "
+               "while C2 keeps the logic alive (plan §3.2.2). Divider on POWER, "
+               "pin on LOGIC behind R476: crosses PWR-OUT and PWR-LOGIC, a "
+               "ground either side of it on each. Key state only "
                "— never a battery gauge"),
     Net("KEY_SENSE_PIN", _p("R476.2 C437.1 U401.IO1"), domain="3V3", gpio="GPIO1",
         source="KEY_SENSE at the ADC pin, behind its 1 kΩ, with the HDG's "
@@ -1622,8 +1620,8 @@ _INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board
                "Height here is a generic 2.54 mm part, unconfirmed")
 
 _CONNECTORS = (
-    # ── HVIN ────────────────────────────────────────────────────────────────
-    _tb("J101", "HVIN", "Pack entry: B+, two B− returns and the key tap on one "
+    # ── POWER ───────────────────────────────────────────────────────────────
+    _tb("J101", "POWER", "Pack entry: B+, two B− returns and the key tap on one "
         "plug. The KLKD002 in its FEB-11-11 holder is UPSTREAM IN THE HARNESS, "
         "not a board part", (
             _cp("1", "HV_BPLUS", "84 V tap, downstream of the XT90-S"),
@@ -1639,52 +1637,42 @@ _CONNECTORS = (
         ), pitch=7.62, note="The only 7.62 mm terminal, so no other plug seats "
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
-    Connector("J104", "HVIN", "HV-LINK, HVIN side: a 2.54 mm header with "
-              "alternate pins skipped, 5.08 mm effective (BD-4)",
-              _bus(_HVLINK_NETS), 8.5, footprint_mm=(53.34, 2.54),
-              leaves_box=False, pitch_mm=5.08, interface="HV-LINK",
-              source=_INTERBOARD),
-    # ── CONV ────────────────────────────────────────────────────────────────
-    Connector("J201", "CONV", "HV-LINK, CONV side, under the board (BD-4)",
-              _bus(_HVLINK_NETS), 2.54, footprint_mm=(53.34, 2.54),
-              leaves_box=False, pitch_mm=5.08, interface="HV-LINK",
-              side="bottom", source=_INTERBOARD),
-    Connector("J202", "CONV", "PWR-UP, CONV side: 4 × V12, 4 × GND, 2 × V5, "
+    Connector("J202", "POWER", "PWR-OUT, POWER side: 4 × V12, 4 × GND, 2 × V5, "
               "KEY_SENSE", _bus(_PWRUP_NETS), 8.5, footprint_mm=(27.94, 2.54),
-              leaves_box=False, interface="PWR-UP", source=_INTERBOARD),
-    # ── DRV ─────────────────────────────────────────────────────────────────
-    _tb("J301", "DRV", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
+              leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
+    # ── OUTPUTS ─────────────────────────────────────────────────────────────
+    _tb("J301", "OUTPUTS", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
         "do not land it", (
             _cp("1", "GND", "black — lamp common (M4)"),
             _cp("2", "HL_HIGH", "green — HIGH beam"),
             _cp("3", "HL_LOW", "blue — LOW beam"),
             _cp("4", "HL_DRL", "yellow — DRL"),
         )),
-    _tb("J302", "DRV", "Tail + rear signals (M5/M6)", (
+    _tb("J302", "OUTPUTS", "Tail + rear signals (M5/M6)", (
         _cp("1", "GND", "black — lamp common (M5)"),
         _cp("2", "TAIL_RUN", "yellow — running, 0.05 A"),
         _cp("3", "TAIL_STOP", "red — STOP, 0.12 A, switched by Q1 in hardware"),
         _cp("4", "TURN_L", "blue — rear LEFT (M6)"),
         _cp("5", "TURN_R", "green — rear RIGHT (M6)"),
     )),
-    _tb("J303", "DRV", "Front turn L/R, two isolated 2-wire pairs", (
+    _tb("J303", "OUTPUTS", "Front turn L/R, two isolated 2-wire pairs", (
         _cp("1", "TURN_L", "front LEFT feed"),
         _cp("2", "GND", "front LEFT return. ⬜ M6: confirm the front pair may "
                         "share the tail common"),
         _cp("3", "TURN_R", "front RIGHT feed"),
         _cp("4", "GND", "front RIGHT return"),
     )),
-    _tb("J304", "DRV", "Horn (M7)", (
+    _tb("J304", "OUTPUTS", "Horn (M7)", (
         _cp("1", "AUX12", "⛔ BLUE IS THE POSITIVE"),
         _cp("2", "HORN_N", "black = '-'. ⛔ Red is not the positive"),
     )),
-    _tb("J305", "DRV", "Fan + buzzer", (
+    _tb("J305", "OUTPUTS", "Fan + buzzer", (
         _cp("1", "AUX12", "fan +"),
         _cp("2", "FAN_RTN", "fan -, flyback D307"),
         _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
-    _tb("J306", "DRV", "Brake levers. ⬜ GATED ON M3", (
+    _tb("J306", "OUTPUTS", "Brake levers. ⬜ GATED ON M3", (
         _cp("1", "LEVER_L", "⬜ M2 identifies the wires in loom '1T3 10'"),
         _cp("2", "GND", "left lever return"),
         _cp("3", "LEVER_R"),
@@ -1693,19 +1681,19 @@ _CONNECTORS = (
     ), pitch=5.08, note="In the 5.08 mm family with J309 alone: no lamp or "
                         "pod plug seats here, and no other header in the "
                         "family is 4-way"),
-    Connector("J311", "DRV", "PWR-UP, DRV side, under the board: V12 for the "
+    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
               "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWRUP_NETS), 2.54,
               footprint_mm=(27.94, 2.54), leaves_box=False,
-              interface="PWR-UP", side="bottom", source=_INTERBOARD),
-    Connector("J307", "DRV", "PWR-BRAIN, DRV side: V5, KEY_SENSE and ground "
-              "for BRAIN", _bus(_PWRBRAIN_NETS), 8.5,
+              interface="PWR-OUT", side="bottom", source=_INTERBOARD),
+    Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5, KEY_SENSE and ground "
+              "for LOGIC", _bus(_PWRBRAIN_NETS), 8.5,
               footprint_mm=(12.7, 2.54), leaves_box=False,
-              interface="PWR-BRAIN", source=_INTERBOARD),
-    Connector("J308", "DRV", "STACK, DRV side: 2 × 25, alternating grounds",
+              interface="PWR-LOGIC", source=_INTERBOARD),
+    Connector("J308", "OUTPUTS", "STACK, OUTPUTS side: 2 × 25, alternating grounds",
               _stack_pins(), 4.06, footprint_mm=(63.5, 5.08),
               leaves_box=False, interface="STACK", source=_INTERBOARD),
-    _tb("J309", "DRV", "FarDriver brake/kill: the D23 hardware's own exit, so "
-        "BL never passes through BRAIN", (
+    _tb("J309", "OUTPUTS", "FarDriver brake/kill: the D23 hardware's own exit, so "
+        "BL never passes through LOGIC", (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
                            "stays capped"),
             _cp("2", "GND", "BL's only neighbour: a strand bridging them "
@@ -1716,12 +1704,12 @@ _CONNECTORS = (
                                  "source"),
         ), pitch=5.08, note="In the 5.08 mm family with J306 alone, the only "
                             "3-way there"),
-    _tb("J310", "DRV", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
+    _tb("J310", "OUTPUTS", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
         "with the display (D19)", (
             _cp("1", "FD_ONELINE", "brown, 0-15 V"),
             _cp("2", "GND"),
         ), parked=True),
-    _tb("J405", "DRV", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
+    _tb("J405", "OUTPUTS", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
         _cp("1", "TT_L", "telltale LEFT, 0-15 V in"),
         _cp("2", "", "display supply. ⏸️ D11 parked: under D19 the dash feeds "
                      "from switched B+ in the harness"),
@@ -1735,8 +1723,8 @@ _CONNECTORS = (
         _cp("8", "CANH", "red-black — the panel terminates its own end"),
         _cp("9", "DISP_ONELINE", "brown — behind R429's 1 kΩ"),
     ), parked=True),
-    # ── BRAIN ───────────────────────────────────────────────────────────────
-    _tb("J402", "BRAIN", "Left pod: 9-way shell, 8 conductors. The module "
+    # ── LOGIC ───────────────────────────────────────────────────────────────
+    _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
             _cp("1", "GND", "thick green ← the pod's ground bundle (6 wires)"),
             _cp("2", "", "thin green — spare conductor, not connected as built"),
@@ -1754,7 +1742,7 @@ _CONNECTORS = (
                 "indicators flash continuously — a loud failure instead of a "
                 "silent dead control"),
         )),
-    _tb("J403", "BRAIN", "Right pod, 5 conductors on 6 ways. The slider is OFF / A / "
+    _tb("J403", "LOGIC", "Right pod, 5 conductors on 6 ways. The slider is OFF / A / "
         "A+B, so headlight implies running IN HARDWARE", (
             _cp("1", "GND", "blue — ⛔ GROUND FOR ALL THREE CONTROLS"),
             _cp("2", "IN08A_RUNNING_WIRE", "black — running (IN-08a), closed "
@@ -1769,7 +1757,7 @@ _CONNECTORS = (
                          "RUN to ground through a lamp) always leaves a plug "
                          "in the hand"),
         )),
-    _tb("J404", "BRAIN", "FarDriver serial + boost (5 conductors), and the "
+    _tb("J404", "LOGIC", "FarDriver serial + boost (5 conductors), and the "
         "throttle's boost button (2)", (
         _cp("1", "UART1_RX_WIRE", "brown/blue, labelled 'TXD' — ⬜ M9, measure"),
         _cp("2", "UART1_TX_WIRE", "red/black, labelled 'RXD' — ⬜ M9"),
@@ -1783,15 +1771,15 @@ _CONNECTORS = (
         _cp("7", "GND", "the button's other leg: its own return, never "
                         "shared with the serial ground on 4"),
     )),
-    Connector("J406", "BRAIN", "STACK, BRAIN side, under the board: 2 × 25, "
+    Connector("J406", "LOGIC", "STACK, LOGIC side, under the board: 2 × 25, "
               "alternating grounds", _stack_pins(), 2.54,
               footprint_mm=(63.5, 5.08), leaves_box=False, interface="STACK",
               side="bottom", source=_INTERBOARD),
-    Connector("J407", "BRAIN", "PWR-BRAIN, BRAIN side, under the board",
+    Connector("J407", "LOGIC", "PWR-LOGIC, LOGIC side, under the board",
               _bus(_PWRBRAIN_NETS), 2.54, footprint_mm=(12.7, 2.54),
-              leaves_box=False, interface="PWR-BRAIN", side="bottom",
+              leaves_box=False, interface="PWR-LOGIC", side="bottom",
               source=_INTERBOARD),
-    Connector("J408", "BRAIN", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "
+    Connector("J408", "LOGIC", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "
               "land on UART0 — first flash, the console, and recovery when OTA "
               "fails (hold IO0 low, pulse EN, flash over UART0)", (
         _cp("1", "EN", "ESP-Prog ESP_EN"),
@@ -1816,7 +1804,7 @@ _CONNECTORS = (
                "whose DTR/RTS drive EN and IO0 for an automatic download. "
                "Any USB-serial adapter at 3.3 V does as well, wired to the "
                "IDC end. 0 mm: nothing stands above the board"),
-    Connector("J409", "BRAIN", "Spare inputs, INTERNAL: expander #2's thirteen "
+    Connector("J409", "LOGIC", "Spare inputs, INTERNAL: expander #2's thirteen "
               "spare bits, each class-A conditioned on the board", (
         _cp("1", "V3P3"),
         _cp("2", "GND"),
@@ -1830,7 +1818,7 @@ _CONNECTORS = (
                "side, 1 kΩ series and 100 nF at the pin. For a dry contact to "
                "ground or 3.3 V logic; nothing above 5 V. LCSC lists it 2.5 mm of body and a "
                "6 mm pin, so 8.5 mm fitted, unconfirmed -- and the tallest body "
-               "on BRAIN, above its 7.25 mm terminals, so fitted it sets the gap "
+               "on LOGIC, above its 7.25 mm terminals, so fitted it sets the gap "
                "to the lid"),
 )
 
@@ -1889,7 +1877,7 @@ _FAB_BY_MPN = {
 #: which clips into its holder. mpn -> (LCSC, maker part, per refdes, why).
 _LOOSE_BY_MPN = {
     "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", 1,
-                           "bent over and bonded LYING on CONV's underside"),
+                           "bent over and bonded LYING on POWER's underside"),
     "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", 1,
                        "X1/Y2, kinked 7.5 mm leads on reel: bent FLAT"),
     "PA35V680M10x15": ("C46550429", "JIERR PA35V680M10x15", 1,

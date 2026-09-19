@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the EasyEDA Pro project for the four-board set.
+"""Generate the EasyEDA Pro project for the three-board set.
 
     python3 tools/build_project.py [--out DIR]          (default: build-eprj3/)
 
 Writes `<out>/revv1-module/`, an `.eprj3` folder project with one board per
-`board_params.STACK_ORDER` layer -- HVIN, CONV, DRV, BRAIN -- each with:
+`board_params.STACK_ORDER` layer -- POWER, OUTPUTS, LOGIC -- each with:
 
   * its schematic: one sheet holding every part and connector of that board,
     every connected pin wired to its net (stub + net flag + wire name, see

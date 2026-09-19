@@ -12,27 +12,27 @@ from tools.model import ConnPin, Connector, Design, Net, Part
 
 
 def _r(ref):
-    return Part(ref, "RC0805", "0805", "BRAIN", "R", ("1", "2"), 0.6)
+    return Part(ref, "RC0805", "0805", "LOGIC", "R", ("1", "2"), 0.6)
 
 
 def _c(ref):
-    return Part(ref, "CC0805", "0805", "BRAIN", "C", ("1", "2"), 0.9, v_max=16.0)
+    return Part(ref, "CC0805", "0805", "LOGIC", "C", ("1", "2"), 0.9, v_max=16.0)
 
 
 def clean() -> Design:
     parts = (
-        Part("U401", "ESP32-S3-WROOM-1-N8", "module", "BRAIN", "MODULE",
+        Part("U401", "ESP32-S3-WROOM-1-N8", "module", "LOGIC", "MODULE",
              ("3V3", "GND", "IO0", "IO1", "IO4", "IO7", "IO17", "IO43"), 3.1),
-        Part("Q401", "AO3400A", "SOT-23", "BRAIN", "NFET", ("G", "S", "D"), 1.1,
+        Part("Q401", "AO3400A", "SOT-23", "LOGIC", "NFET", ("G", "S", "D"), 1.1,
              v_max=30.0),
-        Part("U301", "TPS4H160B", "HTSSOP-28", "DRV", "IC", ("CS", "VS", "GND"), 1.2),
+        Part("U301", "TPS4H160B", "HTSSOP-28", "OUTPUTS", "IC", ("CS", "VS", "GND"), 1.2),
         _r("R1"), _r("R2"), _r("R3"), _r("R4"), _r("R5"), _c("C1"), _c("C2"),
     )
     connectors = (
-        Connector("J408", "BRAIN", "service header",
+        Connector("J408", "LOGIC", "service header",
                   (ConnPin("1", "BOOT"), ConnPin("2", "U0TXD")), 8.5,
                   leaves_box=False),
-        Connector("J402", "BRAIN", "FarDriver serial",
+        Connector("J402", "LOGIC", "FarDriver serial",
                   (ConnPin("1", "UART1_TX_WIRE"),), 7.0),
     )
     nets = (

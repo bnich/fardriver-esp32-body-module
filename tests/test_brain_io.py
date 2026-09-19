@@ -1,4 +1,4 @@
-"""BRAIN's own interfaces: the service pads, the reset line, CAN and the boost
+"""LOGIC's own interfaces: the service pads, the reset line, CAN and the boost
 button.  Each test states the behaviour the review asked for."""
 from tools import drawn_footprints, gpio_budget, netlist
 from tools.eprj3.schematic import landed_pins
@@ -71,7 +71,7 @@ def test_a_supervisor_footprint_can_hold_en_low_until_3v3_is_good():
     U406 if a slow or bouncing 3V3 ramp ever shows up."""
     d = _d()
     u = d.part("U406")
-    assert (u.mpn, u.dnp, u.board) == ("TLV803SDBZR", True, "BRAIN")
+    assert (u.mpn, u.dnp, u.board) == ("TLV803SDBZR", True, "LOGIC")
     assert _net(d, "U406", "RESET") == "EN"
     assert _net(d, "U406", "VDD") == "V3P3" and _net(d, "U406", "GND") == "GND"
 

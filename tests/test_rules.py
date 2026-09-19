@@ -1,7 +1,7 @@
 """Every rule: quiet on a real circuit, and FIRING on each defect that once
 walked past it.
 
-The fixture is a small but real four-board circuit -- a soft-started 84 V
+The fixture is a small but real three-board circuit -- a soft-started 84 V
 P-FET with its level shifter, a converter behind a common-mode choke, a
 low-side horn, the hardware brake lamp, a high-side driver with current sense,
 a pod input, USB, an expander and the service header. Every part declares its
@@ -103,8 +103,8 @@ DOMAINS = {
     "BOOT": "SIGNAL", "U0TXD": "SIGNAL", "U0RXD": "SIGNAL",
 }
 INTERFACES = {
-    "GND": "HV-LINK", "HV_C1_P": "HV-LINK", "HV_C1_N": "HV-LINK",
-    "KEY_SENSE": "HV-LINK", "V12": "PWR-UP", "V5": "PWR-UP", "V3P3": "STACK",
+    "GND": "PWR-OUT", "KEY_SENSE": "PWR-OUT",
+    "V12": "PWR-OUT", "V5": "PWR-OUT", "V3P3": "STACK",
     "HORN_CMD": "STACK", "IN05_BRAKE_L": "STACK", "CS1": "STACK",
     "LGT_LOW": "STACK",
 }
@@ -117,120 +117,114 @@ GPIOS = {
 
 def _good() -> Design:
     # Power buses read the same from both ends, a return beside every rail.
-    hv_link = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE", "GND", "HV_C1_N", "HV_C1_P")
     pwr = ("V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5", "GND", "V12")
     stack = ("HORN_CMD", "GND", "IN05_BRAKE_L", "GND", "V3P3", "GND", "CS1",
              "GND", "LGT_LOW")
     connectors = (
-        # HVIN
-        _conn("J101", "HVIN", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
-        _conn("J102", "HVIN", "Key tap", ("KSW", "GND"), pitch_mm=5.08),
-        _conn("J104", "HVIN", "HV-LINK", hv_link, leaves_box=False,
-              pitch_mm=5.08, interface="HV-LINK"),
-        # CONV
-        _conn("J201", "CONV", "HV-LINK", hv_link, leaves_box=False,
-              pitch_mm=5.08, interface="HV-LINK", side="bottom"),
-        _conn("J202", "CONV", "PWR-UP", pwr, leaves_box=False, interface="PWR-UP"),
-        # DRV
-        _conn("J311", "DRV", "PWR-UP", pwr, leaves_box=False, interface="PWR-UP",
+        # POWER
+        _conn("J101", "POWER", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
+        _conn("J102", "POWER", "Key tap", ("KSW", "GND"), pitch_mm=5.08),
+        _conn("J202", "POWER", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT"),
+        # OUTPUTS
+        _conn("J311", "OUTPUTS", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT",
               side="bottom"),
-        _conn("J307", "DRV", "PWR-BRAIN", pwr, leaves_box=False,
-              interface="PWR-BRAIN"),
-        _conn("J308", "DRV", "STACK", stack, leaves_box=False, interface="STACK"),
-        _conn("J301", "DRV", "Headlight", ("HL_LOW", "GND")),
-        _conn("J302", "DRV", "Stop lamp", ("STOP_OUT", "GND")),
-        _conn("J303", "DRV", "Horn", ("V12", "HORN_OUT")),
-        _conn("J306", "DRV", "Brake lever", ("LEVER_L", "GND")),
-        _conn("J305", "DRV", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True,
+        _conn("J307", "OUTPUTS", "PWR-LOGIC", pwr, leaves_box=False,
+              interface="PWR-LOGIC"),
+        _conn("J308", "OUTPUTS", "STACK", stack, leaves_box=False, interface="STACK"),
+        _conn("J301", "OUTPUTS", "Headlight", ("HL_LOW", "GND")),
+        _conn("J302", "OUTPUTS", "Stop lamp", ("STOP_OUT", "GND")),
+        _conn("J303", "OUTPUTS", "Horn", ("V12", "HORN_OUT")),
+        _conn("J306", "OUTPUTS", "Brake lever", ("LEVER_L", "GND")),
+        _conn("J305", "OUTPUTS", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True,
               dnp=True),
-        # BRAIN
-        _conn("J406", "BRAIN", "STACK", stack, leaves_box=False, interface="STACK",
+        # LOGIC
+        _conn("J406", "LOGIC", "STACK", stack, leaves_box=False, interface="STACK",
               side="bottom"),
-        _conn("J407", "BRAIN", "PWR-BRAIN", pwr, leaves_box=False,
-              interface="PWR-BRAIN", side="bottom"),
-        _conn("J401", "BRAIN", "USB-C", ("USB_DM", "USB_DP", "GND")),
-        _conn("J402", "BRAIN", "Left pod", ("SW_WIRE", "POD2_WIRE", "GND")),
-        _conn("J408", "BRAIN", "Service header",
+        _conn("J407", "LOGIC", "PWR-LOGIC", pwr, leaves_box=False,
+              interface="PWR-LOGIC", side="bottom"),
+        _conn("J401", "LOGIC", "USB-C", ("USB_DM", "USB_DP", "GND")),
+        _conn("J402", "LOGIC", "Left pod", ("SW_WIRE", "POD2_WIRE", "GND")),
+        _conn("J408", "LOGIC", "Service header",
               ("EN", "BOOT", "U0TXD", "U0RXD", "V3P3", "GND"), leaves_box=False),
     )
 
     used_io = {f"IO{g}" for g in GPIOS.values()}
     parts = (
-        # ── HVIN: entry, clamps, the D13 switch and its level shifter ──
-        _d("D101", "HVIN", "SMCJ90A", "TVS", 90.0),
-        _d("D104", "HVIN", "SMCJ90A", "TVS", 90.0),
-        _fet("Q101", "HVIN", "IXTP26P20P", "PFET", 200.0, height=4.7),
-        _r("R110", "HVIN", "100k"),
-        _d("D102", "HVIN", "BZT52C15", "ZENER", 15.0),
-        _c("C105", "HVIN", "68n", 250.0),
-        _c("C107", "HVIN", "4.7u", 25.0),
-        _r("R101", "HVIN", "560k"),
-        _fet("Q105", "HVIN", "BSS127", "NFET", 600.0),
-        _r("R112", "HVIN", "1M"),
-        _r("R113", "HVIN", "100k"),
-        _d("D106", "HVIN", "BZT52C10", "ZENER", 10.0),
-        _c("C108", "HVIN", "100n", 50.0),
-        _r("R107", "HVIN", "330k"),
-        _r("R109", "HVIN", "10k"),
-        _c("C109", "HVIN", "100n", 50.0),
-        Part("L101", "CM-CHOKE", "THT", "HVIN", "CMCHOKE", ("1", "2", "3", "4"),
+        # ── POWER: entry, clamps, the D13 switch and its level shifter ──
+        _d("D101", "POWER", "SMCJ90A", "TVS", 90.0),
+        _d("D104", "POWER", "SMCJ90A", "TVS", 90.0),
+        _fet("Q101", "POWER", "IXTP26P20P", "PFET", 200.0, height=4.7),
+        _r("R110", "POWER", "100k"),
+        _d("D102", "POWER", "BZT52C15", "ZENER", 15.0),
+        _c("C105", "POWER", "68n", 250.0),
+        _c("C107", "POWER", "4.7u", 25.0),
+        _r("R101", "POWER", "560k"),
+        _fet("Q105", "POWER", "BSS127", "NFET", 600.0),
+        _r("R112", "POWER", "1M"),
+        _r("R113", "POWER", "100k"),
+        _d("D106", "POWER", "BZT52C10", "ZENER", 10.0),
+        _c("C108", "POWER", "100n", 50.0),
+        _r("R107", "POWER", "330k"),
+        _r("R109", "POWER", "10k"),
+        _c("C109", "POWER", "100n", 50.0),
+        Part("L101", "CM-CHOKE", "THT", "POWER", "CMCHOKE", ("1", "2", "3", "4"),
              5.0, source="fixture"),
-        # ── CONV ──
-        _ic("U201", "CN150B110-12/CO", "BRICK", "CONV", "CONVERTER",
+        # ── POWER ──
+        _ic("U201", "CN150B110-12/CO", "BRICK", "POWER", "CONVERTER",
             ("-Vin", "CNT", "+Vin", "-V", "-S", "TRM", "+S", "+V", "BASEPLATE"),
             {"TRM"}, 5.0),
-        _c("C201", "CONV", "220u", 160.0, side="bottom"),
-        # The logic rail's own converter, so BRAIN's regulator is not on the
+        _c("C201", "POWER", "220u", 160.0, side="bottom"),
+        # The logic rail's own converter, so LOGIC's regulator is not on the
         # clamped 12 V rail (no TVS holds 12 V under its 16 V).
-        _ic("U202", "EC7BW-110S05", "MODULE", "CONV", "CONVERTER",
+        _ic("U202", "EC7BW-110S05", "MODULE", "POWER", "CONVERTER",
             ("+Vin", "-Vin", "+Vout", "-Vout"), set(), 3.0),
-        _c("C203", "CONV", "4.7n Y2", 1000.0),
-        _r("R211", "CONV", "0R"),
-        _c("C207", "CONV", "680u", 25.0),
-        _c("C208", "CONV", "2.2u", 25.0),
-        # ── DRV ──
-        _fet("Q301", "DRV", "AO3400A", "NFET", 30.0),
-        _r("R307", "DRV", "10k"),
-        _r("R310", "DRV", "100R"),
-        _d("D315", "DRV", "SMBJ15A", "TVS", 15.0),
-        _array("D310", "DRV", "SMS15T1G", 15.0),
-        _d("D303", "DRV", "1N4148", "D", 100.0),
-        _d("D305", "DRV", "1N4148", "D", 100.0),
-        _r("R313", "DRV", "10k"),
-        _fet("Q304", "DRV", "AO3407A", "PFET", 30.0),
-        _r("R317", "DRV", "10k"),
-        _d("D406", "DRV", "SMBJ15A", "TVS", 15.0, dnp=True),
-        _ic("U301", "TPS4H160BQPWPRQ1", "HTSSOP-28", "DRV", "IC", TPS_PINS,
+        _c("C203", "POWER", "4.7n Y2", 1000.0),
+        _r("R211", "POWER", "0R"),
+        _c("C207", "POWER", "680u", 25.0),
+        _c("C208", "POWER", "2.2u", 25.0),
+        # ── OUTPUTS ──
+        _fet("Q301", "OUTPUTS", "AO3400A", "NFET", 30.0),
+        _r("R307", "OUTPUTS", "10k"),
+        _r("R310", "OUTPUTS", "100R"),
+        _d("D315", "OUTPUTS", "SMBJ15A", "TVS", 15.0),
+        _array("D310", "OUTPUTS", "SMS15T1G", 15.0),
+        _d("D303", "OUTPUTS", "1N4148", "D", 100.0),
+        _d("D305", "OUTPUTS", "1N4148", "D", 100.0),
+        _r("R313", "OUTPUTS", "10k"),
+        _fet("Q304", "OUTPUTS", "AO3407A", "PFET", 30.0),
+        _r("R317", "OUTPUTS", "10k"),
+        _d("D406", "OUTPUTS", "SMBJ15A", "TVS", 15.0, dnp=True),
+        _ic("U301", "TPS4H160BQPWPRQ1", "HTSSOP-28", "OUTPUTS", "IC", TPS_PINS,
             {"IN2", "IN3", "IN4", "OUT2", "OUT3", "OUT4", "FAULT", "THER"}, 1.2,
             v_max=40.0),
-        _r("R330", "DRV", "4.7k"),
-        _r("R319", "DRV", "1.00k"),
-        _r("R321", "DRV", "1.00k"),
-        _r("R323", "DRV", "10k"),
-        _c("C303", "DRV", "100n", 25.0),
-        _c("C304", "DRV", "10u", 25.0),
-        # ── BRAIN ──
-        _ic("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "BRAIN", "MODULE",
+        _r("R330", "OUTPUTS", "4.7k"),
+        _r("R319", "OUTPUTS", "1.00k"),
+        _r("R321", "OUTPUTS", "1.00k"),
+        _r("R323", "OUTPUTS", "10k"),
+        _c("C303", "OUTPUTS", "100n", 25.0),
+        _c("C304", "OUTPUTS", "10u", 25.0),
+        # ── LOGIC ──
+        _ic("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "LOGIC", "MODULE",
             ("3V3", "GND", "EN") + IO_PINS, set(IO_PINS) - used_io, 3.1),
-        Part("U405", "TLV76733DGNR", "HVSSOP-8", "BRAIN", "IC",
+        Part("U405", "TLV76733DGNR", "HVSSOP-8", "LOGIC", "IC",
              ("IN", "OUT", "GND", "EN"), 1.1, v_max=16.0, source="fixture"),
-        _c("C404", "BRAIN", "10u", 25.0),
-        _c("C402", "BRAIN", "10u", 10.0),
-        _c("C403", "BRAIN", "100n", 16.0),
-        _c("C405", "BRAIN", "100n", 16.0),
-        _r("R401", "BRAIN", "10k"),
-        _c("C401", "BRAIN", "1u", 10.0),
-        _array("D401", "BRAIN", "PESD5V0S4UD", 5.0),
-        _r("R410", "BRAIN", "1k"),
-        _r("R411", "BRAIN", "4.7k"),
-        _c("C410", "BRAIN", "100n", 16.0),
-        _r("R412", "BRAIN", "1k"),
-        _r("R413", "BRAIN", "4.7k"),
-        _r("R414", "BRAIN", "10k"),
-        _r("R415", "BRAIN", "4.7k"),
-        _r("R416", "BRAIN", "4.7k"),
-        _c("C301", "BRAIN", "100n", 16.0),
-        _ic("U402", "MCP23017-E/SO", "SOIC-28", "BRAIN", "IC",
+        _c("C404", "LOGIC", "10u", 25.0),
+        _c("C402", "LOGIC", "10u", 10.0),
+        _c("C403", "LOGIC", "100n", 16.0),
+        _c("C405", "LOGIC", "100n", 16.0),
+        _r("R401", "LOGIC", "10k"),
+        _c("C401", "LOGIC", "1u", 10.0),
+        _array("D401", "LOGIC", "PESD5V0S4UD", 5.0),
+        _r("R410", "LOGIC", "1k"),
+        _r("R411", "LOGIC", "4.7k"),
+        _c("C410", "LOGIC", "100n", 16.0),
+        _r("R412", "LOGIC", "1k"),
+        _r("R413", "LOGIC", "4.7k"),
+        _r("R414", "LOGIC", "10k"),
+        _r("R415", "LOGIC", "4.7k"),
+        _r("R416", "LOGIC", "4.7k"),
+        _c("C301", "LOGIC", "100n", 16.0),
+        _ic("U402", "MCP23017-E/SO", "SOIC-28", "LOGIC", "IC",
             ("VDD", "VSS", "SCL", "SDA", "RESET", "A0", "A1", "A2", "INTA",
              "INTB") + MCP_PORT, {"INTA", "INTB"} | set(MCP_PORT) - {"GPB3"}, 2.65),
     )
@@ -411,7 +405,7 @@ def test_bd2_fires_when_an_84v_net_lands_on_a_brain_part():
 
 def test_bd2_fires_on_drv_too_not_only_brain():
     bad = add_pin(GOOD, "HV_SW", "R307", "9")
-    assert any("DRV" in e for e in fired(bad, "BD-2"))
+    assert any("OUTPUTS" in e for e in fired(bad, "BD-2"))
 
 
 def test_bd2_fires_on_a_connector_pin():
@@ -435,11 +429,11 @@ def test_bd2_is_not_fooled_by_relabelling_the_net():
 
 
 def test_bd2_fires_when_an_84v_part_pin_is_tied_onto_a_logic_net():
-    """Audit 3a: the switch's drain tied onto a net that lands on BRAIN."""
+    """Audit 3a: the switch's drain tied onto a net that lands on LOGIC."""
     bad = add_pin(GOOD, "SW_IN", "Q101", "D")
     errs = fired(bad, "BD-2")
     assert any("'SW_IN'" in e and "typed 3V3" in e for e in errs)
-    assert any("BRAIN" in e for e in errs)
+    assert any("LOGIC" in e for e in errs)
 
 
 def test_bd2_lets_a_divided_sense_net_cross_to_brain():
@@ -453,19 +447,9 @@ def test_bd2_reports_an_84v_net_on_a_refdes_that_does_not_exist():
 
 
 # ── BD-4: creepage on every connector that carries pack voltage ──────────────
-def test_bd4_fires_on_a_254_hv_link():
-    assert fired(GOOD.replace_connector("J104", pitch_mm=2.54), "BD-4")
-
-
 def test_bd4_boundary_is_508_not_anything_above_254():
-    assert fired(GOOD.replace_connector("J104", pitch_mm=5.0), "BD-4")
-    assert not fired(GOOD.replace_connector("J104", pitch_mm=5.08), "BD-4")
-
-
-def test_bd4_fires_with_the_interface_label_dropped():
-    """Audit 9a: what makes it an HV connector is the 84 V net on it."""
-    bad = GOOD.replace_connector("J201", pitch_mm=1.27, interface=None)
-    assert any("J201" in e for e in fired(bad, "BD-4"))
+    assert fired(GOOD.replace_connector("J102", pitch_mm=5.0), "BD-4")
+    assert not fired(GOOD.replace_connector("J102", pitch_mm=5.08), "BD-4")
 
 
 def test_bd4_fires_on_a_harness_connector_carrying_84v():
@@ -474,15 +458,8 @@ def test_bd4_fires_on_a_harness_connector_carrying_84v():
     assert any("J102" in e for e in fired(bad, "BD-4"))
 
 
-def test_bd4_fires_on_an_hv_link_label_even_with_no_net():
-    bad = replace(GOOD, connectors=GOOD.connectors + (
-        _conn("J199", "HVIN", "HV-LINK spare", (), leaves_box=False,
-              interface="HV-LINK", pitch_mm=2.54),))
-    assert any("J199" in e for e in fired(bad, "BD-4"))
-
-
 def test_bd4_nan_pitch_is_not_a_pass():
-    assert fired(GOOD.replace_connector("J104", pitch_mm=float("nan")), "BD-4")
+    assert fired(GOOD.replace_connector("J102", pitch_mm=float("nan")), "BD-4")
 
 
 # ── GPIO ─────────────────────────────────────────────────────────────────────
@@ -583,7 +560,7 @@ def _behind_resistors(d, n):
     prev = "KEY_SENSE"
     for i in range(n):
         ref, net = f"R49{i}", f"KS_{i}"
-        d = d.with_part(_r(ref, "BRAIN", "1k"))
+        d = d.with_part(_r(ref, "LOGIC", "1k"))
         d = add_pin(d, prev, ref, "1")
         pins = ((ref, "2"),) + ((("U401", "IO1"),) if i == n - 1 else ())
         d = replace(d, nets=d.nets + (Net(net, pins, "3V3",
@@ -751,8 +728,8 @@ def test_turn_on_fires_when_the_pulldown_is_dnp():
 def test_turn_on_allows_one_nfet_in_the_path_not_two():
     """Two stacked N-FETs need two commands to be true at once; nothing here
     checks the second. One level shifter is the topology that was verified."""
-    bad = GOOD.with_part(_fet("Q199", "HVIN", "BSS127", "NFET", 600.0))
-    bad = bad.with_part(_r("R198", "HVIN", "100k"))
+    bad = GOOD.with_part(_fet("Q199", "POWER", "BSS127", "NFET", 600.0))
+    bad = bad.with_part(_r("R198", "POWER", "100k"))
     bad = bad.with_net(Net("D13_PD2", (("Q105", "S"), ("Q199", "D")), domain="84V"))
     bad = replace(bad, nets=tuple(
         replace(n, pins=tuple(p for p in n.pins if p != ("Q105", "S")))
@@ -772,7 +749,7 @@ def test_sensed_node_typed_at_its_fault_ceiling_does_not_condemn_the_adc_pin():
 
 def test_turn_on_does_not_count_a_path_through_the_source():
     """gate -> R110 -> source -> anything -> ground turns nothing on."""
-    bad = GOOD.without_part("Q105").with_part(_r("R199", "HVIN", "1M"))
+    bad = GOOD.without_part("Q105").with_part(_r("R199", "POWER", "1M"))
     bad = add_pin(add_pin(bad, "HV_BPLUS", "R199", "1"), "GND", "R199", "2")
     assert any("Q101" in e for e in fired(bad, "TURN-ON"))
 
@@ -895,7 +872,7 @@ def test_vr_lets_a_25v_cap_sit_across_a_zener_clamped_gate():
 
 def test_vr_treats_a_zener_as_a_clamp_only_across_a_gate():
     assert not [e for e in rules.check_all(GOOD) if "D102" in e or "D106" in e]
-    bad = GOOD.with_part(_d("D199", "DRV", "BZT52C5V1", "ZENER", 5.1))
+    bad = GOOD.with_part(_d("D199", "OUTPUTS", "BZT52C5V1", "ZENER", 5.1))
     bad = add_pin(add_pin(bad, "LEVER_L", "D199", "K"), "GND", "D199", "A")
     assert any("D199" in e for e in fired(bad, "VR-UNDER"))
 
@@ -950,9 +927,9 @@ def test_prot_fires_on_a_dnp_tvs():
 
 
 def test_prot_fires_on_a_tvs_on_another_board():
-    """Audit F-6: D405 sat on BRAIN while its connector moved to DRV."""
-    assert any("is on BRAIN, not DRV" in e
-               for e in fired(GOOD.replace_part("D310", board="BRAIN"), "PROT"))
+    """Audit F-6: D405 sat on LOGIC while its connector moved to OUTPUTS."""
+    assert any("is on LOGIC, not OUTPUTS" in e
+               for e in fired(GOOD.replace_part("D310", board="LOGIC"), "PROT"))
 
 
 def test_prot_fires_when_the_return_is_an_island_called_ground():
@@ -1070,13 +1047,15 @@ def test_ht_does_not_exempt_a_bottom_side_part(binding_envelope):
 
 
 def test_ht_checks_a_bottom_side_part_against_the_gap_below_it():
-    """With the HV-LINK pair chosen (both heights confirmed) the HVIN->CONV
-    spacing is fixed; a can hanging deeper under CONV than that does not fit."""
-    chosen = GOOD.replace_connector("J104", height_confirmed=True, height_mm=10.0)
-    chosen = chosen.replace_connector("J201", height_confirmed=True, height_mm=2.0)
-    assert not fired(chosen.replace_part("C201", height_mm=5.0), "HT-STACK")
-    errs = fired(chosen.replace_part("C201", height_mm=13.0), "HT-STACK")
-    assert any("C201" in e for e in errs)
+    """With the PWR-LOGIC pair chosen (both heights confirmed) the
+    OUTPUTS->LOGIC spacing is fixed at 10.0 + 2.0; a part hanging deeper under
+    LOGIC than that does not fit."""
+    chosen = GOOD.replace_connector("J307", height_confirmed=True, height_mm=10.0)
+    chosen = chosen.replace_connector("J407", height_confirmed=True, height_mm=2.0)
+    fits = chosen.replace_part("U402", side="bottom", height_mm=5.0)
+    assert not fired(fits, "HT-STACK")
+    errs = fired(chosen.replace_part("U402", side="bottom", height_mm=13.0), "HT-STACK")
+    assert any("U402" in e for e in errs)
 
 
 def test_ht_relays_every_stack_problem(monkeypatch):
@@ -1103,14 +1082,14 @@ def _rebus(d, iface, nets):
 
 
 def test_bus_order_fires_on_a_bus_that_reads_differently_reversed():
-    """The old HV-LINK order: reversed, HV_C1_P meets KEY_SENSE."""
-    bad = _rebus(GOOD, "HV-LINK", ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE"))
-    assert any("HV-LINK" in e and "both ends" in e for e in fired(bad, "BUS-ORDER"))
+    """A bus that is not palindromic: mated reversed, V12 lands where V5 was."""
+    bad = _rebus(GOOD, "PWR-OUT", ("V12", "GND", "KEY_SENSE", "GND", "V5"))
+    assert any("PWR-OUT" in e and "both ends" in e for e in fired(bad, "BUS-ORDER"))
 
 
 def test_bus_order_fires_on_a_rail_beside_a_signal():
     """Palindromic, but one contact off puts V12 on KEY_SENSE."""
-    bad = _rebus(GOOD, "PWR-UP", ("GND", "V12", "KEY_SENSE", "V12", "GND"))
+    bad = _rebus(GOOD, "PWR-OUT", ("GND", "V12", "KEY_SENSE", "V12", "GND"))
     errs = fired(bad, "BUS-ORDER")
     assert any("V12 beside KEY_SENSE" in e for e in errs)
     assert not any("both ends" in e for e in errs)
@@ -1118,9 +1097,12 @@ def test_bus_order_fires_on_a_rail_beside_a_signal():
 
 def test_bus_order_lets_a_converter_return_sit_beside_its_feed():
     """HV_C1_N joins GND through the choke's winding: a shift that lands the
-    feed on it shorts the input, the same as landing it on GND."""
+    feed on it shorts the input, the same as landing it on GND. No bus in this
+    design carries a converter pair -- both stay on POWER -- so the exemption is
+    shown on a bus built to hold one."""
     assert not fired(GOOD, "BUS-ORDER")
-    assert "HV_C1_N" in [cp.net for cp in GOOD.connector("J104").pins]
+    pair = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE", "GND", "HV_C1_N", "HV_C1_P")
+    assert not fired(_rebus(GOOD, "PWR-OUT", pair), "BUS-ORDER")
 
 
 def test_bus_order_leaves_the_stack_to_its_ground_row():
@@ -1135,7 +1117,7 @@ def _warned(d, wid, ref=None):
 
 
 def test_unconfirmed_height_near_what_sets_its_gap_is_a_warning_not_an_error():
-    top = _tallest_on_top_of(GOOD, "BRAIN")
+    top = _tallest_on_top_of(GOOD, "LOGIC")
     near = GOOD.replace_part("U405", height_mm=top - 1.5)
     assert rules.check_all(near) == []
     assert _warned(near, "HT-W1", "U405")
@@ -1165,7 +1147,7 @@ def test_an_unconfirmed_inter_board_connector_is_warned_about():
 def test_stack_notes_and_load_bearing_heights_are_relayed(monkeypatch):
     class Stack:
         notes = ("keep-out: X under Y",)
-        load_bearing = ("R307",)                 # far from tallest on DRV
+        load_bearing = ("R307",)                 # far from tallest on OUTPUTS
     assert not _warned(GOOD, "HT-W1", "R307")
     monkeypatch.setattr(rules, "_stack_height", lambda d: Stack())
     assert _warned(GOOD, "HT-W2") == ["HT-W2: keep-out: X under Y"]
@@ -1200,7 +1182,7 @@ def test_d10_fires_on_a_diode_from_the_switched_rail_onto_the_key_wire():
     FarDriver KEY on with the key out. It passed every gate before D10 had a
     rule of its own."""
     d = _real_design().with_part(Part(
-        "D999", "1N4007", "DO-41", "HVIN", "D", ("A", "K"), 3.0, v_max=1000.0,
+        "D999", "1N4007", "DO-41", "POWER", "D", ("A", "K"), 3.0, v_max=1000.0,
         source="fixture"))
     d = _with_extra_pins(d, "HV_SW", [("D999", "A")])
     d = _with_extra_pins(d, "KSW", [("D999", "K")])
@@ -1209,7 +1191,7 @@ def test_d10_fires_on_a_diode_from_the_switched_rail_onto_the_key_wire():
 
 def test_d10_fires_on_a_fet_channel_onto_the_key_wire_even_if_dnp():
     d = _real_design().with_part(Part(
-        "Q999", "IXTP26P20P", "TO-220", "HVIN", "PFET", ("G", "D", "S"), 5.0,
+        "Q999", "IXTP26P20P", "TO-220", "POWER", "PFET", ("G", "D", "S"), 5.0,
         v_max=200.0, dnp=True, source="fixture"))
     d = _with_extra_pins(d, "HV_BPLUS", [("Q999", "S")])
     d = _with_extra_pins(d, "KSW", [("Q999", "D")])
@@ -1244,7 +1226,7 @@ def test_supply_fires_on_an_ic_moved_to_the_wrong_rail(refdes, pin, wrong_rail):
 
 def test_supply_reports_an_ic_it_knows_nothing_about():
     d = _real_design().with_part(Part(
-        "U999", "LM358", "SOIC-8", "BRAIN", "IC", ("V+", "V-"), 1.75, source="fixture"))
+        "U999", "LM358", "SOIC-8", "LOGIC", "IC", ("V+", "V-"), 1.75, source="fixture"))
     d = d.replace_net("V3P3", pins=d.net("V3P3").pins + (("U999", "V+"),))
     d = d.replace_net("GND", pins=d.net("GND").pins + (("U999", "V-"),))
     assert any("SUPPLY: U999" in e and "no entry" in e for e in rules.check_all(d))

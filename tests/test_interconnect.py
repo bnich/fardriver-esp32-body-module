@@ -12,7 +12,7 @@ import pytest
 
 from tools import board_params, footprint_lib, netlist
 
-POWER_BUSES = ("HV-LINK", "PWR-UP", "PWR-BRAIN")
+POWER_BUSES = ("PWR-OUT", "PWR-LOGIC")
 
 
 @pytest.fixture(scope="module")
@@ -32,8 +32,8 @@ def _nets(c):
 
 # ── board to board ───────────────────────────────────────────────────────────
 def test_every_interface_is_one_crossing_between_neighbours_with_matching_halves(d):
-    """Every crossing has a part on each side.  PWR-UP once ran CONV → DRV →
-    BRAIN on one tabled bus with nothing between CONV and DRV."""
+    """Every crossing has a part on each side.  PWR-OUT once ran POWER → OUTPUTS →
+    LOGIC on one tabled bus with nothing between POWER and OUTPUTS."""
     order = board_params.STACK_ORDER
     for iface in {c.interface for c in d.connectors if c.interface}:
         halves = _halves(d, iface)
@@ -70,16 +70,12 @@ def test_a_power_bus_mated_one_contact_off_puts_no_rail_on_another(d):
 
 
 def test_each_crossing_carries_what_the_boards_above_it_use(d):
-    up = Counter(_nets(_halves(d, "PWR-UP")[0]))
+    up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
     assert up["V12"] >= 3, "2.62 A: one fretted contact of two is 100 %"
     assert up["GND"] >= 4 and up["V5"] and up["KEY_SENSE"]
     assert set(up) == {"V12", "V5", "KEY_SENSE", "GND"}
-    brain = Counter(_nets(_halves(d, "PWR-BRAIN")[0]))
-    assert set(brain) == {"V5", "KEY_SENSE", "GND"}, "BRAIN uses no V12"
-    hv = Counter(_nets(_halves(d, "HV-LINK")[0]))
-    assert hv["HV_C1_P"] >= 2 and hv["HV_C1_N"] >= 2, (
-        "DC-DC #1 draws ~2.9 A at the LVC: one contact is its single point of failure")
-    assert hv["GND"] >= 2 and hv["KEY_SENSE"] == 1
+    brain = Counter(_nets(_halves(d, "PWR-LOGIC")[0]))
+    assert set(brain) == {"V5", "KEY_SENSE", "GND"}, "LOGIC uses no V12"
 
 
 def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):

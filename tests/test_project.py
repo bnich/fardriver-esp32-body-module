@@ -50,8 +50,8 @@ def rejoin(pairs):
 @pytest.fixture
 def project():
     project = Project("esp32-body-module")
-    project.add_board("HVIN")
-    project.add_board("BRAIN", sheets=("P1", "P2"))
+    project.add_board("POWER")
+    project.add_board("LOGIC", sheets=("P1", "P2"))
     return project
 
 
@@ -63,13 +63,13 @@ def test_the_tree_is_the_documented_folder_layout(project, tmp_path):
         if path.is_file())
     assert produced == [
         "esp32-body-module.eprj3",
-        "pcb/BRAIN.epcb2",
-        "pcb/HVIN.epcb2",
-        "sch/BRAIN/BRAIN.ecfg",
-        "sch/BRAIN/P1.esch2",
-        "sch/BRAIN/P2.esch2",
-        "sch/HVIN/HVIN.ecfg",
-        "sch/HVIN/P1.esch2",
+        "pcb/LOGIC.epcb2",
+        "pcb/POWER.epcb2",
+        "sch/LOGIC/LOGIC.ecfg",
+        "sch/LOGIC/P1.esch2",
+        "sch/LOGIC/P2.esch2",
+        "sch/POWER/P1.esch2",
+        "sch/POWER/POWER.ecfg",
     ]
 
 
@@ -121,7 +121,7 @@ def test_a_board_schematic_and_pcb_of_the_same_name_do_not_collide():
     # add_board() defaults all three names to the board title, so the uuid
     # derivation has to be namespaced or the index collapses to one entry.
     project = Project("collide")
-    project.add_board("DRV")
+    project.add_board("OUTPUTS")
     profile = project.index()["profile"]
     board = next(iter(profile["boards"]))
     schematic = next(iter(profile["schematics"]))
@@ -194,7 +194,7 @@ def test_a_sheet_names_its_schematic_in_both_spellings(project):
 def test_sheet_z_index_is_one_based_within_its_schematic(project):
     profile = project.index()["profile"]
     brain = next(k for k, v in profile["schematics"].items()
-                 if v["name"] == "BRAIN")
+                 if v["name"] == "LOGIC")
     order = sorted(e["zIndex"] for e in profile["sheets"].values()
                    if e["schematic_uuid"] == brain)
     assert order == [1, 2]
@@ -215,8 +215,8 @@ def test_a_broken_link_is_reported_rather_than_written(project, tmp_path):
 def test_two_runs_produce_byte_identical_trees(tmp_path):
     def build(where):
         project = Project("esp32-body-module")
-        project.add_board("HVIN")
-        project.add_board("BRAIN", sheets=("P1", "P2"))
+        project.add_board("POWER")
+        project.add_board("LOGIC", sheets=("P1", "P2"))
         return project.write(where)
 
     first = build(tmp_path / "a")
@@ -241,9 +241,9 @@ def test_the_timestamp_is_a_stated_constant_not_the_clock(project):
 
 def test_a_different_project_name_gives_different_uuids():
     a = Project("one")
-    a.add_board("HVIN")
+    a.add_board("POWER")
     b = Project("two")
-    b.add_board("HVIN")
+    b.add_board("POWER")
     assert set(a.index()["profile"]["boards"]) != \
         set(b.index()["profile"]["boards"])
 
@@ -273,7 +273,7 @@ def test_the_project_emitter_uses_the_one_joiner():
 
 
 def test_a_schematic_document_is_dochead_then_meta(project):
-    text = project.documents()["sch/HVIN/HVIN.ecfg"]
+    text = project.documents()["sch/POWER/POWER.ecfg"]
     records = parse_document(text)
     assert [head["type"] for head, _ in records] == ["DOCHEAD", "META"]
     assert records[0][1]["docType"] == "SCH"
@@ -281,7 +281,7 @@ def test_a_schematic_document_is_dochead_then_meta(project):
 
 
 def test_a_sheet_document_is_dochead_then_meta(project):
-    records = parse_document(project.documents()["sch/HVIN/P1.esch2"])
+    records = parse_document(project.documents()["sch/POWER/P1.esch2"])
     assert [head["type"] for head, _ in records] == ["DOCHEAD", "META"]
     assert records[0][1]["docType"] == "SCH_PAGE"
 
@@ -326,15 +326,15 @@ def test_a_title_that_would_break_a_path_is_refused(title):
 
 def test_a_duplicate_board_title_is_refused():
     project = Project("guard")
-    project.add_board("DRV")
+    project.add_board("OUTPUTS")
     with pytest.raises(ValueError, match="already exists"):
-        project.add_board("DRV")
+        project.add_board("OUTPUTS")
 
 
 def test_a_schematic_with_no_sheets_is_refused():
     project = Project("guard")
     with pytest.raises(ValueError, match="no sheets"):
-        project.add_board("DRV", sheets=())
+        project.add_board("OUTPUTS", sheets=())
 
 
 # --- fields that a real saved project gets specifically right ---------------

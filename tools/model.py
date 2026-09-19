@@ -20,9 +20,9 @@ Every field here exists because its absence let a real defect through the
 from dataclasses import dataclass, replace
 from typing import Literal
 
-Board = Literal["HVIN", "CONV", "DRV", "BRAIN"]
+Board = Literal["POWER", "OUTPUTS", "LOGIC"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
-Interface = Literal["HV-LINK", "PWR-UP", "PWR-BRAIN", "STACK"]
+Interface = Literal["PWR-OUT", "PWR-LOGIC", "STACK"]
 Side = Literal["top", "bottom"]
 Assembly = Literal["", "jlc", "hand", "loose"]
 Kind = Literal[

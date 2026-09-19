@@ -34,15 +34,17 @@ def with_connectors(design, *more):
 
 
 def good() -> Design:
-    """Closes on every budget: 61.6 mm of 64, sparse boards. Its two 7.0 mm
-    connectors are internal: no harness plug fits the envelope's walls as
-    estimated (see the PLUGS tests)."""
+    """Closes on every budget: 52.0 mm of 64, sparse boards. The brick is under
+    POWER on its floor seat, as in the design. Its two 7.0 mm connectors are
+    internal: no harness plug fits the envelope's walls as estimated (see the
+    PLUGS tests)."""
     return Design(
-        parts=(part("L101", "HVIN", 14.0, (22.0, 14.0), package="THT"),
-               part("U201", "CONV", 12.7, (58.3, 37.2), package="brick"),
-               part("U401", "BRAIN", 3.1, (25.5, 18.0), package="module")),
-        connectors=(conn("J301", "DRV", 7.0, leaves_box=False),
-                    conn("J401", "BRAIN", 7.0, leaves_box=False)))
+        parts=(part("L101", "POWER", 14.0, (22.0, 14.0), package="THT"),
+               part("U201", "POWER", 12.7, (58.3, 37.2), package="brick",
+                    side="bottom"),
+               part("U401", "LOGIC", 3.1, (25.5, 18.0), package="module")),
+        connectors=(conn("J301", "OUTPUTS", 7.0, leaves_box=False),
+                    conn("J401", "LOGIC", 7.0, leaves_box=False)))
 
 
 def run(capsys, design):
@@ -62,16 +64,16 @@ def test_a_design_that_closes_passes_and_still_says_it_is_provisional(capsys):
 
 # --- height ------------------------------------------------------------------------
 def test_an_over_height_stack_fails(capsys, binding_envelope):
-    tall = good().replace_part("L101", height_mm=22.0)      # 61.6 + 8.0 = 69.6
+    tall = good().replace_part("L101", height_mm=30.0)      # 52.0 + 16.0 = 68.0
     code, out = run(capsys, tall)
     assert code == 1
-    assert "⛔ FAIL" in out and "OVER by 5.6 mm" in out
-    assert "L101 22.0 up" in out                            # and says what did it
+    assert "⛔ FAIL" in out and "OVER by 4.0 mm" in out
+    assert "L101 30.0 up" in out                            # and says what did it
 
 
 def test_an_unconfirmed_height_is_reported_and_starred_when_it_sets_a_gap(capsys):
     d = good().replace_part("L101", height_confirmed=False) \
-        .with_part(part("R101", "HVIN", 0.6, confirmed=False))
+        .with_part(part("R101", "POWER", 0.6, confirmed=False))
     code, out = run(capsys, d)
     assert code == 0                                        # reported, not failed
     assert "UNCONFIRMED HEIGHTS   2 not read" in out
@@ -86,7 +88,7 @@ def test_an_unconfirmed_height_is_reported_and_starred_when_it_sets_a_gap(capsys
 def test_identical_unconfirmed_parts_share_a_line_but_every_refdes_is_named(capsys):
     d = good()
     for ref in ("R1", "R2", "R3"):
-        d = d.with_part(part(ref, "DRV", 0.6, confirmed=False, mpn="R-1k"))
+        d = d.with_part(part(ref, "OUTPUTS", 0.6, confirmed=False, mpn="R-1k"))
     out = run(capsys, d)[1]
     assert "UNCONFIRMED HEIGHTS   3 not read" in out
     assert any(ln.endswith("R-1k: R1 R2 R3") for ln in out.splitlines())
@@ -97,48 +99,48 @@ def test_no_unconfirmed_section_when_every_height_is_confirmed(capsys):
 
 
 def test_a_bottom_side_part_taller_than_the_gap_below_it_fails(capsys):
-    # A chosen (confirmed) STACK pair sets DRV->BRAIN at 8.5 + 2.54 = 11.04 mm.
+    # A chosen (confirmed) STACK pair sets OUTPUTS->LOGIC at 8.5 + 2.54 = 11.04 mm.
     d = with_connectors(
         good(),
-        conn("J308", "DRV", 8.5, (63.5, 5.0), interface="STACK"),
-        conn("J406", "BRAIN", 2.54, (63.5, 5.0), interface="STACK"))
+        conn("J308", "OUTPUTS", 8.5, (63.5, 5.0), interface="STACK"),
+        conn("J406", "LOGIC", 2.54, (63.5, 5.0), interface="STACK"))
     assert bf.main([], d) == 0
-    d = d.with_part(part("C450", "BRAIN", 12.0, (10.0, 10.0), side="bottom"))
+    d = d.with_part(part("C450", "LOGIC", 12.0, (10.0, 10.0), side="bottom"))
     code, out = run(capsys, d)
     assert code == 1
-    assert "C450 hangs 12.0 mm under BRAIN" in out
+    assert "C450 hangs 12.0 mm under LOGIC" in out
     assert "J308+J406" in out and "11.0" in out
 
 
 # --- plugs at the walls (MX-3) ------------------------------------------------------
 def test_the_edge_a_board_s_headers_take_by_hand():
     """Two 20 mm headers 1 mm apart; room = the 9.6 mm plug + the 10 mm bend."""
-    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6),
-                        conn("J303", "DRV", 7.0, overhang=0.0))
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6),
+                        conn("J303", "OUTPUTS", 7.0, overhang=0.0))
     (e,) = bf.edge_budget(d)
-    assert (e.board, e.headers) == ("DRV", ("J302", "J303"))
+    assert (e.board, e.headers) == ("OUTPUTS", ("J302", "J303"))
     assert (e.length_mm, e.room_mm) == (pytest.approx(41.0), pytest.approx(19.6))
 
 
 def test_a_plug_no_wall_has_room_for_is_never_printed_as_a_pass(capsys):
     """The walls leave 4 mm at each end and 1 mm at each side: a mated plug
     stands 9.6 mm proud and its wire must bend after it."""
-    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
     code, out = run(capsys, d)
     assert code == 2 and "NOT A PASS" in out and "✅ PASS" not in out
-    assert "DRV's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
+    assert "OUTPUTS's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
 
 
 def test_a_plug_no_wall_has_room_for_fails_once_the_envelope_is_a_fact(capsys, binding_envelope):
-    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
     code, out = run(capsys, d)
-    assert code == 1 and "plugs: DRV" in out
+    assert code == 1 and "plugs: OUTPUTS" in out
 
 
 def test_walls_with_room_let_the_plugs_through(capsys, monkeypatch):
     from tools import board_params as bp
     monkeypatch.setattr(bp, "END_ALLOWANCE", 20.0)
-    d = with_connectors(good(), conn("J302", "DRV", 7.0, overhang=9.6))
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
     assert bf.edge_verdicts(d) == [] and run(capsys, d)[0] == 0
 
 
@@ -150,22 +152,22 @@ def test_an_unknown_height_fails_instead_of_vanishing(capsys):
 # --- area: density -------------------------------------------------------------------
 def test_density_is_bodies_over_the_side_less_its_mounting_corners():
     rows = {(s.board, s.side): s for s in bf.area_budget(good())}
-    conv = rows[("CONV", "top")]
-    assert conv.raw_mm2 == pytest.approx(58.3 * 37.2)
+    brick = rows[("POWER", "bottom")]                       # the brick's own face
+    assert brick.raw_mm2 == pytest.approx(58.3 * 37.2)
     assert bf.MOUNT_AREA == pytest.approx(4 * 7.0 * 7.0)     # 3.5 mm inset, both ways
-    assert conv.density == pytest.approx(58.3 * 37.2 / (42 * 186 - 196))
+    assert brick.density == pytest.approx(58.3 * 37.2 / (42 * 186 - 196))
 
 
 def test_a_side_over_the_density_limit_fails(capsys):
     # Three 40 x 50 slabs: 6000 mm2 of 7616 usable = 79 % > 75 %.
     d = good()
     for i in range(3):
-        d = d.with_part(part(f"X{i}", "DRV", 1.0, (40.0, 50.0)))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (40.0, 50.0)))
     code, out = run(capsys, d)
     assert code == 1
-    assert any(p.startswith("density: DRV top is 8") for p in bf.problems(d))
-    two = good().with_part(part("X0", "DRV", 1.0, (40.0, 50.0))) \
-        .with_part(part("X1", "DRV", 1.0, (40.0, 50.0)))
+    assert any(p.startswith("density: OUTPUTS top is 8") for p in bf.problems(d))
+    two = good().with_part(part("X0", "OUTPUTS", 1.0, (40.0, 50.0))) \
+        .with_part(part("X1", "OUTPUTS", 1.0, (40.0, 50.0)))
     assert not any(p.startswith("density") for p in bf.problems(two))   # 55 %
 
 
@@ -186,40 +188,42 @@ def test_a_pack_that_does_not_fit_is_a_plain_failure(capsys):
     # PACK that fails, and the density figure must not be allowed to excuse it.
     d = good()
     for i in range(8):
-        d = d.with_part(part(f"X{i}", "DRV", 1.0, (25.0, 24.0)))
-    drv = next(s for s in bf.area_budget(d) if (s.board, s.side) == ("DRV", "top"))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (25.0, 24.0)))
+    drv = next(s for s in bf.area_budget(d) if (s.board, s.side) == ("OUTPUTS", "top"))
     assert drv.density == pytest.approx(4980 / 7616) and drv.density_ok
     assert drv.pack_mm == pytest.approx(210.0) and not drv.pack_ok
     code, out = run(capsys, d)
     assert code == 1
     assert "⛔ DOES NOT FIT (24 mm over)" in out
-    assert any(p.startswith("pack: DRV top DOES NOT FIT") and "24 mm over" in p
+    assert any(p.startswith("pack: OUTPUTS top DOES NOT FIT") and "24 mm over" in p
                for p in bf.problems(d))
 
 
 def test_a_body_wider_than_the_board_both_ways_cannot_be_placed(capsys):
-    code, out = run(capsys, good().with_part(part("X1", "DRV", 1.0, (45.0, 50.0))))
+    code, out = run(capsys, good().with_part(part("X1", "OUTPUTS", 1.0, (45.0, 50.0))))
     assert code == 1 and "X1 fits a 42 mm board in neither orientation" in out
 
 
 def test_bottom_side_parts_are_packed_on_the_underside():
-    top = good().with_part(part("C201", "CONV", 5.0, (25.0, 18.0)))
-    under = good().with_part(part("C201", "CONV", 5.0, (25.0, 18.0), side="bottom"))
+    top = good().with_part(part("C201", "POWER", 5.0, (25.0, 18.0)))
+    under = good().with_part(part("C201", "POWER", 5.0, (25.0, 18.0), side="bottom"))
     rows_top = {(s.board, s.side): s for s in bf.area_budget(top)}
     rows_under = {(s.board, s.side): s for s in bf.area_budget(under)}
-    assert ("CONV", "bottom") not in rows_top
-    assert rows_under[("CONV", "bottom")].raw_mm2 == pytest.approx(25.0 * 18.0)
-    assert rows_under[("CONV", "top")].raw_mm2 == \
-        rows_top[("CONV", "top")].raw_mm2 - 25.0 * 18.0
+    # POWER already has the brick underneath, so read the two arrangements
+    # against each other: the 450 mm² body moves from the top row to the bottom.
+    assert rows_under[("POWER", "bottom")].raw_mm2 \
+        - rows_top[("POWER", "bottom")].raw_mm2 == pytest.approx(25.0 * 18.0)
+    assert rows_top[("POWER", "top")].raw_mm2 \
+        - rows_under[("POWER", "top")].raw_mm2 == pytest.approx(25.0 * 18.0)
 
 
 def test_a_body_with_no_footprint_is_a_hole_in_the_budget_not_a_free_part(capsys):
     blind = good().replace_connector("J301", footprint_mm=(0.0, 0.0))
     code, out = run(capsys, blind)
     assert code == 1 and "J301" in out and "cannot see it" in out
-    tall = good().with_part(part("Q101", "HVIN", 4.5, (0.0, 0.0)))
+    tall = good().with_part(part("Q101", "POWER", 4.5, (0.0, 0.0)))
     assert any("Q101" in p and "no footprint" in p for p in bf.problems(tall))
-    passive = good().with_part(part("R1", "HVIN", 0.6, (0.0, 0.0)))
+    passive = good().with_part(part("R1", "POWER", 0.6, (0.0, 0.0)))
     assert bf.problems(passive) == []                       # negligible, and counted:
     assert "1 part(s) carry no footprint" in bf.report(passive)
 
@@ -262,15 +266,15 @@ def test_an_overrun_of_an_estimated_envelope_is_never_printed_as_a_pass(capsys, 
     """The tool once printed 'OVER by 7.1 mm' and then '✅ PASS', exit 0."""
     from tools import board_params as bp
     monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
-    tall = good().replace_part("L101", height_mm=22.0)      # 69.6 mm of 64
+    tall = good().replace_part("L101", height_mm=30.0)      # 68.0 mm of 64
     code, out = run(capsys, tall)
     assert code == 2
-    assert "✅ PASS" not in out and "NOT A PASS" in out and "OVER by 5.6 mm" in out
+    assert "✅ PASS" not in out and "NOT A PASS" in out and "OVER by 4.0 mm" in out
 
 
 def test_an_overrun_past_the_raw_cavity_says_no_enclosure_can_absorb_it(capsys, monkeypatch):
     from tools import board_params as bp
     monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
-    taller = good().replace_part("L101", height_mm=24.0)    # 71.6 mm > the 70 mm cavity
+    taller = good().replace_part("L101", height_mm=34.0)    # 72.0 mm > the 70 mm cavity
     out = run(capsys, taller)[1]
     assert "exceeds even the RAW cavity estimate" in out

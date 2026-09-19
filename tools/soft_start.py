@@ -6,7 +6,7 @@ Q101 (`IXTA26P20P`, P-channel, high side) connects the pack to the module's
 start deliberately puts it in the MOSFET, so the MOSFET lives or dies on its
 safe operating area (SOA), and the ramp time is what buys the margin.
 
-The circuit (HVIN, refdes as netlisted):
+The circuit (POWER, refdes as netlisted):
 
     HV_BPLUS ──┬─────────┬─────────┬──────── Q101.S
              R110      D102      C107

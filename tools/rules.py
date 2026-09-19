@@ -92,8 +92,8 @@ LOGIC_PIN_V_MAX = 3.6
 MCP_PIN_OVER_VDD = 0.6
 
 # ── board facts ──────────────────────────────────────────────────────────────
-#: BD-2: 84 V stays on HVIN/CONV. The TPS4H160B on DRV is a 40 V part.
-LOW_VOLTAGE_BOARDS = frozenset({"DRV", "BRAIN"})
+#: BD-2: 84 V stays on POWER. The TPS4H160B on OUTPUTS is a 40 V part.
+LOW_VOLTAGE_BOARDS = frozenset({"OUTPUTS", "LOGIC"})
 #: BD-4: 2.54 mm leaves ~0.7 mm pad edge to pad edge against IPC-2221's 0.6 mm.
 HV_MIN_PITCH_MM = 5.08
 #: A P-FET whose source sits at or above this cannot be driven from a logic
@@ -556,7 +556,7 @@ def _hv_nets(ix: _Ix) -> tuple[dict[str, list[str]], list[str]]:
 
 
 def bd2_voltage_domain_containment(d: Design) -> list[str]:
-    """BD-2: 84 V never reaches DRV or BRAIN -- parts OR connectors."""
+    """BD-2: 84 V never reaches OUTPUTS or LOGIC -- parts OR connectors."""
     ix = _index(d)
     hv, errs = _hv_nets(ix)
     for name in hv:
@@ -576,7 +576,7 @@ def bd2_voltage_domain_containment(d: Design) -> list[str]:
                 continue
             if board in LOW_VOLTAGE_BOARDS:
                 errs.append(f"BD-2: 84 V net {name!r} reaches {ref} on {board}. "
-                            f"Pack voltage stays on HVIN/CONV.")
+                            f"Pack voltage stays on POWER.")
     return errs
 
 
@@ -656,17 +656,17 @@ def supply_pins(d: Design) -> list[str]:
 
 
 def bd4_hv_creepage(d: Design) -> list[str]:
-    """BD-4: every connector carrying pack voltage, labelled HV-LINK or not."""
+    """BD-4: every connector carrying pack voltage, whatever it is labelled."""
     ix = _index(d)
     hv, _ = _hv_nets(ix)
     errs = []
     for c in d.connectors:
         carried = sorted(n for n in hv if c.refdes in ix.net_conns.get(n, ()))
-        if not carried and c.interface != "HV-LINK":
+        if not carried:
             continue
         if not (c.pitch_mm >= HV_MIN_PITCH_MM):          # NaN fails too
             errs.append(
-                f"BD-4: {c.refdes} carries 84 V ({', '.join(carried) or 'HV-LINK'}) "
+                f"BD-4: {c.refdes} carries 84 V ({', '.join(carried)}) "
                 f"at {c.pitch_mm} mm pitch; it needs >= {HV_MIN_PITCH_MM} mm.")
     return errs
 
@@ -1547,7 +1547,7 @@ def _is_height(h) -> bool:
 def heights(d: Design) -> list[str]:
     """Parts AND connectors, top side and bottom. board_params derives each
     gap from the tallest thing standing in it, the deepest thing hanging into
-    it, solder tails, BD-9's plate and the mated inter-board connectors -- so a
+    it, solder tails, the brick's floor seat and the mated inter-board pairs -- so a
     tall connector, a 40 mm `side="bottom"` part and a NaN all land here."""
     errs = [f"HT-NUM: {ref} ({what}) has height {h!r}. An unknown height is an "
             f"unchecked height."

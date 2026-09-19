@@ -1,7 +1,7 @@
 """J409: expander #2's spare inputs on an unfitted header (owner, 2026-09-18).
 
 U403 uses GPA0 for ACC+; its other thirteen input-capable bits are brought out
-so they can be used later without a new board.  The footprint is on BRAIN and
+so they can be used later without a new board.  The footprint is on LOGIC and
 the part is not fitted: JLC skips it, and the owner solders a header when a
 spare is wanted.
 """
@@ -25,7 +25,7 @@ def test_every_spare_input_reaches_the_header_through_a_class_a_network():
     fitted later is ready to wire."""
     d = netlist.current()
     j = d.connector("J409")
-    assert (j.board, j.dnp, j.leaves_box, len(j.pins)) == ("BRAIN", True, False, 16)
+    assert (j.board, j.dnp, j.leaves_box, len(j.pins)) == ("LOGIC", True, False, 16)
     parts = {p.refdes: p for p in d.parts}
     nets = _nets(d)
     header = {cp.net: cp.pin for cp in j.pins}
@@ -83,6 +83,6 @@ def test_easyeda_marks_it_dnp():
     from tools.eprj3 import schematic
     d = netlist.current()
     j = d.connector("J409")
-    item = next(i for i in schematic.board_items(d, "BRAIN") if i.ref == "J409")
+    item = next(i for i in schematic.board_items(d, "LOGIC") if i.ref == "J409")
     attrs = dict((a[0], a[1]) for a in schematic._part_attrs(item, 0, 0, "u", connector=j))
     assert attrs.get("DNP") == "yes" and "(DNP)" in schematic.connector_name(j)

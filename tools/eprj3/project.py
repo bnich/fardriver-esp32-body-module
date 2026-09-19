@@ -61,7 +61,7 @@ def _uid(*parts, length=16):
     """A deterministic lowercase-hex id.
 
     The namespace parts matter: a board, a schematic and a PCB in this project
-    may all be called "HVIN", and three identical uuids would collapse the
+    may all be called "POWER", and three identical uuids would collapse the
     index into nonsense.  Every caller passes its kind first.
     """
     key = ":".join(str(p) for p in parts).encode("utf-8")
@@ -178,7 +178,7 @@ class Project:
     Usage:
 
         project = Project("esp32-body-module")
-        project.add_board("HVIN")
+        project.add_board("POWER")
         project.write("/somewhere")
 
     `write()` returns the project folder it created.  Writing twice with the

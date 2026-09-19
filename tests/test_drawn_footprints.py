@@ -152,12 +152,12 @@ def _devices(board):
 def test_only_the_fuse_is_left_off_the_pcb():
     """Import Changes honours `Convert to PCB`: the fuse's pads must not land on
     top of FH201's."""
-    off = [d["title"] for d in _devices("CONV")
+    off = [d["title"] for d in _devices("POWER")
            if "Global Net Name" not in d["attributes"]      # net flags are not parts
            and d["attributes"].get("Convert to PCB") != "yes"]
     assert off == ["0001.2504_C1665055"]
     assert all(d["attributes"].get("Convert to PCB") == "yes"
-               for b in ("HVIN", "DRV", "BRAIN") for d in _devices(b)
+               for b in ("OUTPUTS", "LOGIC") for d in _devices(b)
                if "Global Net Name" not in d["attributes"])
 
 
@@ -225,8 +225,8 @@ def test_repeated_pad_numbers_need_declaring():
     assert sum('"num": "M"' in r or '"num":"M"' in r for r in recs) == 2
 
 
-@pytest.mark.parametrize("board, refs", [("HVIN", {"L101", "L102"}),
-                                         ("CONV", {"U201", "U202", "R211", "F201"})])
+@pytest.mark.parametrize("board, refs", [("POWER", {"L101", "L102"}),
+                                         ("POWER", {"U201", "U202", "R211", "F201"})])
 def test_the_drawn_parts_are_bound_without_the_library(board, refs):
     project = Project("t")
     project.add_board(board)

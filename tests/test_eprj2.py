@@ -216,7 +216,7 @@ def test_with_this_machines_editor_template_when_there_is_one(gauge_folder, tmp_
 
 
 # --- the build writes it ------------------------------------------------------------
-def test_the_build_writes_an_openable_eprj2_for_all_four_boards(template, tmp_path, capsys):
+def test_the_build_writes_an_openable_eprj2_for_every_board(template, tmp_path, capsys):
     from tools import build_project
     from tools.board_params import STACK_ORDER
     assert build_project.main(["--out", str(tmp_path), "--template", str(template)]) == 0

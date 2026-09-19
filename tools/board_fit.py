@@ -1,4 +1,4 @@
-"""Area and height budget for the four-board stack, read off the netlist.
+"""Area and height budget for the three-board stack, read off the netlist.
 
 Nothing about the design is typed here. Parts and connectors -- board, side,
 footprint, height, whether that height was ever confirmed -- come from
@@ -34,11 +34,11 @@ from . import board_params as bp
 from .eprj3.pcb import M3_INSET_MM
 from .model import Design
 
-#: FAIL above this share of a side's usable area, bodies only. CONV's two
-#: converter modules put it at about 0.65-0.70, and placing that by hand leaves
-#: nothing over; routing, courtyards and creepage have to come out of what is
-#: left, so a side past 0.75 has no layout. A sparse logic board
-#: scores 0.2-0.4.
+#: FAIL above this share of a side's usable area, bodies only. POWER's two faces
+#: run about 0.45-0.55 -- both converter bricks underneath, the chokes and the
+#: cans on top -- and placing that by hand already leaves little over; routing,
+#: courtyards and creepage have to come out of what is left, so a side past 0.75
+#: has no layout. A sparse logic board scores 0.2-0.4.
 DENSITY_LIMIT = 0.75
 #: Per side of every body in the pack: 1.0 mm body to body. IPC-7351's most
 #: generous courtyard excess, and clear of the 0.6 mm IPC-2221 spacing BD-4
@@ -224,12 +224,14 @@ def report(d: Design) -> str:
 
     stack = bp.stack_height(d)
     out.append(f"\nHEIGHT   derived: PCB {bp.PCB_T}, clearance {bp.CLEARANCE}, solder tails "
-               f"{bp.TAIL}, plate {bp.PLATE_T} above {bp.PLATE_ABOVE}")
+               f"{bp.TAIL}, {bp.FLOOR_SEAT} bolted to the floor on a "
+               f"{bp.THERMAL_PAD_T} mm pad (liner {bp.FLOOR_LINER_T} elsewhere)")
     z = 0.0
     for g in stack.gaps:
         why = [f"{g.top_ref} {g.top_mm:.1f} up" if g.top_mm else "",
                f"{g.hang_ref} {g.hang_mm:.1f} down" if g.hang_mm else "",
-               f"plate {g.plate_mm:.1f}" if g.plate_mm else "",
+               (f"{g.seat_ref} seats on the floor at {g.seat_mm:.1f}"
+                + (", which sets it" if g.seat_sets_gap else "")) if g.seat_mm else "",
                *(f"{pr.refs} mates at {pr.mated_mm:.1f}"
                  + ("" if pr.confirmed else " (unconfirmed)") for pr in g.pairs)]
         out.append(f"  {z:6.1f}  gap {g.below:>5} -> {g.above:<5} {g.gap_mm:5.1f}   "

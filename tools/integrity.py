@@ -49,10 +49,9 @@ def _nc_ok(mpn: str, pin: str) -> bool:
 #: One interface is ONE crossing: a bus that must reach a third board does so
 #: on a second interface, with parts of its own.
 INTERFACE_BOARDS = {
-    "HV-LINK": ("HVIN", "CONV"),
-    "PWR-UP": ("CONV", "DRV"),
-    "PWR-BRAIN": ("DRV", "BRAIN"),
-    "STACK": ("DRV", "BRAIN"),
+    "PWR-OUT": ("POWER", "OUTPUTS"),
+    "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
+    "STACK": ("OUTPUTS", "LOGIC"),
 }
 
 
@@ -177,8 +176,8 @@ def check(d: Design) -> list[str]:
             errs.append(f"gpio: {g} is assigned to {n} nets")
 
     # -- every interface: two halves that mate, one on each board --------------
-    # The pin tables alone cannot show a missing half: PWR-UP once ran from
-    # CONV to DRV with no part between them, and J407.1 could be set to GND
+    # The pin tables alone cannot show a missing half: PWR-OUT once ran from
+    # POWER to OUTPUTS with no part between them, and J407.1 could be set to GND
     # against J307.1's V12 without a complaint.
     for c in d.connectors:
         if c.interface and c.interface not in INTERFACE_BOARDS:

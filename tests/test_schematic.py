@@ -216,7 +216,7 @@ def test_connectors_run_along_the_left_edge(sheets_by_mode, board):
 
 def test_two_pin_parts_group_with_the_anchor_they_serve():
     # R110 (gate pull-up) and C107 hang off Q101's gate node D13_GATE.
-    items = schematic.board_items(DESIGN, "HVIN")
+    items = schematic.board_items(DESIGN, "POWER")
     group = next(g for g in placement.groups(items) if g[0] == "Q101")
     assert {"R110", "C107", "D102"} <= set(group)
 
@@ -278,7 +278,7 @@ def test_one_flag_symbol_per_net_name(sheets_by_mode, board):
 
 
 def test_flag_component_carries_the_exemplified_attrs(sheets_by_mode):
-    text, _ = sheets_by_mode["both"]["HVIN"]
+    text, _ = sheets_by_mode["both"]["POWER"]
     sheet = read_sheet(text)
     flag = next(c for c in sheet.components if sheet.is_flag(c))
     assert set(sheet.attrs[flag]) == {"Symbol", "Device", "Relevance",
@@ -288,7 +288,7 @@ def test_flag_component_carries_the_exemplified_attrs(sheets_by_mode):
 
 
 def test_part_attrs_carry_catalogue_data(sheets_by_mode):
-    text, _ = sheets_by_mode["both"]["HVIN"]
+    text, _ = sheets_by_mode["both"]["POWER"]
     sheet = read_sheet(text)
     q = next(c for c in sheet.components
              if sheet.attr(c, "Designator") == "Q101")
@@ -340,7 +340,7 @@ def test_emit_refuses_a_design_with_a_bad_net_name():
     project = Project.for_stack("test-bad-name")
     sheet = project.boards[0].schematic.sheets[0]
     with pytest.raises(ValueError, match="k sw"):
-        schematic.emit_board(bad, "HVIN", sheet)
+        schematic.emit_board(bad, "POWER", sheet)
     assert sheet.page_records == ()      # nothing half-written
 
 
@@ -373,29 +373,29 @@ def _mutate(text, predicate, change):
 
 
 def test_control_a_part_moved_one_grid_step_breaks_the_comparison():
-    text, _ = build_sheets()["HVIN"]
+    text, _ = build_sheets()["POWER"]
     sheet = read_sheet(text)
     q = next(c for c in sheet.components
              if sheet.attr(c, "Designator") == "Q101")
     moved = _mutate(text, lambda h, p: h.get("id") == q,
                     lambda p: {**p, "x": p["x"] + 10})
     derived = derive_nets(moved)
-    assert derived.nets != netlist_slice(DESIGN, "HVIN")
+    assert derived.nets != netlist_slice(DESIGN, "POWER")
     assert {("Q101", "G"), ("Q101", "D"), ("Q101", "S")} <= derived.floating
 
 
 def test_control_a_renamed_flag_breaks_the_comparison():
-    text, _ = build_sheets(naming="flag")["HVIN"]
+    text, _ = build_sheets(naming="flag")["POWER"]
     renamed = _mutate(
         text,
         lambda h, p: (h["type"] == "ATTR" and p and p["key"] ==
                       "Global Net Name" and p["value"] == "KSW"),
         lambda p: {**p, "value": "KSW2"})
-    assert derive_nets(renamed).nets != netlist_slice(DESIGN, "HVIN")
+    assert derive_nets(renamed).nets != netlist_slice(DESIGN, "POWER")
 
 
 def test_control_a_flag_and_wire_that_disagree_are_a_conflict():
-    text, _ = build_sheets(naming="both")["HVIN"]
+    text, _ = build_sheets(naming="both")["POWER"]
     clash = _mutate(
         text,
         lambda h, p: (h["type"] == "ATTR" and p and p["key"] == "NET"

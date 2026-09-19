@@ -41,22 +41,22 @@ def _fet(ref, board):
 
 # ── CK-1: current through TVS / zener / 0 Ω link / MECH ──────────────────────
 def test_m06_a_tvs_from_the_switched_rail_onto_the_key_wire_latches_it():
-    tvs = Part("D107", "SMCJ90A", "SMC", "HVIN", "TVS", ("A", "K"), 2.6, v_max=90.0)
+    tvs = Part("D107", "SMCJ90A", "SMC", "POWER", "TVS", ("A", "K"), 2.6, v_max=90.0)
     assert fired(add(D, tvs, {"A": "HV_SW", "K": "KSW"}), "D10")
 
 
 def test_m21_a_0_ohm_link_from_84_v_onto_the_12_v_rail():
-    tie = Part("R212", "NET-TIE", "copper", "CONV", "R", ("1", "2"), 0.04, value="0R")
+    tie = Part("R212", "NET-TIE", "copper", "POWER", "R", ("1", "2"), 0.04, value="0R")
     assert fired(add(D, tie, {"1": "HV_C1_P", "2": "V12"}), "BD-2")
 
 
 def test_m20_a_mech_jumper_from_84_v_onto_the_5_v_rail():
-    jumper = Part("M201", "JUMPER", "wire", "CONV", "MECH", ("1", "2"), 1.0)
+    jumper = Part("M201", "JUMPER", "wire", "POWER", "MECH", ("1", "2"), 1.0)
     assert fired(add(D, jumper, {"1": "HV_C2_HOLD", "2": "V5"}), "BD-2")
 
 
 def test_m18_a_tvs_puts_the_strapping_pin_on_a_harness_wire():
-    tvs = Part("D499", "SMBJ18A", "SMB", "BRAIN", "TVS", ("A", "K"), 2.4, v_max=18.0)
+    tvs = Part("D499", "SMBJ18A", "SMB", "LOGIC", "TVS", ("A", "K"), 2.4, v_max=18.0)
     assert fired(add(D, tvs, {"A": "BOOT_IO0", "K": "IN08A_RUNNING_WIRE"}), "GPIO-STRAP")
 
 
@@ -70,19 +70,19 @@ def test_m02_a_wrong_divider_overdrives_an_expander_pin():
 
 
 def test_m36_a_resistor_from_the_horn_gate_to_the_stop_lamp_gate():
-    bad = add(D, _r("R399", "DRV", "1k"), {"1": "HORN_GATE", "2": "Q1_GATE"})
+    bad = add(D, _r("R399", "OUTPUTS", "1k"), {"1": "HORN_GATE", "2": "Q1_GATE"})
     assert any("HORN" in e for e in fired(bad, "LV-LOGIC")), "IO42 sees ~5.7 V"
     assert fired(bad, "LISTEN"), "firmware now drives the stop lamp's gate"
 
 
 # ── CK-3: the module only listens to the brake and kill hardware ─────────────
 def test_m04_a_firmware_fet_that_holds_the_kill_off():
-    bad = add(D, _fet("Q306", "DRV"), {"G": "BUZZ_GATE", "D": "Q2_GATE", "S": "GND"})
+    bad = add(D, _fet("Q306", "OUTPUTS"), {"G": "BUZZ_GATE", "D": "Q2_GATE", "S": "GND"})
     assert any("Q2_GATE" in e for e in fired(bad, "LISTEN"))
 
 
 def test_m04b_boost_that_defeats_the_run_off_switch():
-    bad = add(D, _fet("Q402", "BRAIN"), {"G": "BOOST_GATE", "D": "RUN", "S": "GND"})
+    bad = add(D, _fet("Q402", "LOGIC"), {"G": "BOOST_GATE", "D": "RUN", "S": "GND"})
     assert any("RUN" in e for e in fired(bad, "LISTEN"))
 
 
@@ -116,7 +116,7 @@ def test_m29_parking_the_brake_kill_terminal_does_not_excuse_its_tvs():
 def test_m19_a_clamp_returned_through_10k_is_not_grounded():
     bad = D.without_pin("D101", "A")
     bad = bad.with_net(Net("TVS_RTN", (("D101", "A"),), "GND"))
-    bad = add(bad, _r("R199", "HVIN", "10k", "1206"), {"1": "TVS_RTN", "2": "GND"})
+    bad = add(bad, _r("R199", "POWER", "10k", "1206"), {"1": "TVS_RTN", "2": "GND"})
     assert fired(bad, "PROT") or fired(bad, "GND-ISLAND")
 
 

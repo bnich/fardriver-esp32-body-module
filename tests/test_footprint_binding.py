@@ -54,7 +54,7 @@ def _emit(board, table):
 
 def test_a_fets_footprint_pads_become_gate_source_drain():
     code = next(p.lcsc for p in netlist.current().parts if p.mpn == "AO3400A")
-    design, sheet, bs = _emit("DRV", {code: ("SOT-23-3", SOT23)})
+    design, sheet, bs = _emit("OUTPUTS", {code: ("SOT-23-3", SOT23)})
     docs = _docs(sheet)
     devices = [d for d in docs["DEVICE"] if d[1][1]["attributes"].get("Supplier Part") == code]
     assert len(devices) == 1, "one device, so one footprint, for every AO3400A"
@@ -68,7 +68,7 @@ def test_a_fets_footprint_pads_become_gate_source_drain():
 def test_the_b_plus_terminal_binds_its_library_footprint_pad_for_pin():
     """J101 is a 6-position 7.62 mm screw terminal: B+, empty, B−, B−, empty, KSW."""
     code = netlist.current().connector("J101").lcsc
-    design, sheet, bs = _emit("HVIN", {code: ("TB6", TB6)})
+    design, sheet, bs = _emit("POWER", {code: ("TB6", TB6)})
     fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "TB6")
     assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == [str(i) for i in range(1, 7)]
     assert "J101" in bs.footprints_bound
@@ -78,22 +78,22 @@ def test_a_pad_the_map_does_not_know_is_refused():
     code = next(p.lcsc for p in netlist.current().parts if p.mpn == "AO3400A")
     odd = _v2([_pad("e1", "1", 0), _pad("e2", "2", 10), _pad("e3", "3", 20), _pad("e4", "9", 30)])
     with pytest.raises(ValueError, match="in no pad map"):
-        _emit("DRV", {code: ("SOT-23-3?", odd)})
+        _emit("OUTPUTS", {code: ("SOT-23-3?", odd)})
 
 
 def test_a_footprint_that_leaves_a_pin_without_a_pad_is_refused():
     code = next(p.lcsc for p in netlist.current().parts if p.mpn == "AO3400A")
     short = _v2([_pad("e1", "1", 0), _pad("e2", "2", 10)])
     with pytest.raises(ValueError, match="no pad"):
-        _emit("DRV", {code: ("SOT-23-2?", short)})
+        _emit("OUTPUTS", {code: ("SOT-23-2?", short)})
 
 
 def test_without_a_library_only_generated_footprints_are_bound():
     design = netlist.current()
     project = Project("t")
-    project.add_board("DRV")
+    project.add_board("OUTPUTS")
     sheet = project.boards[0].schematic.sheets[0]
-    bs = emit_board(design, "DRV", sheet)
+    bs = emit_board(design, "OUTPUTS", sheet)
     assert set(bs.footprints_bound) == {"J307", "J308", "J311"}
     assert "Q301" in bs.footprints_unbound
 
@@ -101,7 +101,7 @@ def test_without_a_library_only_generated_footprints_are_bound():
 def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
     """The family is the owner's open choice, but every option on the list is
     on the 2.54 mm grid: the family sets the mated height, not the holes."""
-    design, sheet, bs = _emit("DRV", {})
+    design, sheet, bs = _emit("OUTPUTS", {})
     fps = _docs(sheet)["FOOTPRINT"]
     by_title = {d[1][1]["title"]: d for d in fps}
     stack = next(d for t, d in by_title.items() if "2X25" in t.upper())
@@ -114,7 +114,7 @@ def test_every_footprint_title_is_safe_for_an_allegro_netlist():
     '; ! .' and spaces in a footprint name (the editor warns and names the
     parts).  Library titles also carry non-ASCII text ('弯插,P=2mm')."""
     code = next(p.lcsc for p in netlist.current().parts if p.mpn == "AO3400A")
-    design, sheet, bs = _emit("DRV", {code: ("SOT-23-3_L2.9-W1.3 弯插", SOT23)})
+    design, sheet, bs = _emit("OUTPUTS", {code: ("SOT-23-3_L2.9-W1.3 弯插", SOT23)})
     import re
     for d in _docs(sheet)["FOOTPRINT"]:
         title = d[1][1]["title"]
