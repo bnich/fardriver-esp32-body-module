@@ -88,6 +88,7 @@ _R_LCSC = {
     ("5k1", "0805"): ("C27834", "UNI-ROYAL 0805W8F5101T5E", 150.0, "Basic"),
     ("10k", "0805"): ("C17414", "UNI-ROYAL 0805W8F1002T5E", 150.0, "Basic"),
     ("20k", "0805"): ("C4328", "UNI-ROYAL 0805W8F2002T5E", 150.0, "Basic"),
+    ("27k", "0805"): ("C17593", "UNI-ROYAL 0805W8F2702T5E", 150.0, "Basic"),
     ("47k", "0805"): ("C17713", "UNI-ROYAL 0805W8F4702T5E", 150.0, "Basic"),
     ("100k", "0805"): ("C149504", "UNI-ROYAL 0805W8F1003T5E", 150.0, "Basic"),
     ("180k", "0805"): ("C17501", "UNI-ROYAL 0805W8F1803T5E", 150.0, "preferred Extended"),
@@ -167,6 +168,21 @@ def _tvs15(refdes: str, board: Board, where: str, dnp: bool = False) -> Part:
                        f"anode; p.2 V_RWM 15 V, V_BR 16.7-18.5 V, clamp under "
                        f"the AO3400A's 30 V; p.4 SC-74 A max 1.10 mm. Spare "
                        f"cathodes tie to GND. BOM C4")
+
+
+def _tvs18(refdes: str, board: Board, where: str) -> Part:
+    """SMF18A, the single-line clamp for a line that sits at V12 while its
+    channel is on (or its low-side switch is off).  Its breakdown starts at
+    20.0 V, clear of TDK's 15.0-17.4 V over-voltage window: a 15 V part breaks
+    down at 16.7 V INSIDE that window and would carry a channel's whole
+    current-limit current until it failed short.  29.2 V clamp: under the
+    AO3400A's 30 V and the TPS4H160B's 40 V."""
+    return Part(refdes, "SMF18A", "SOD-123FL", board, "TVS", ("A", "K"), 1.1,
+                footprint_mm=(3.9, 1.9), v_max=18.0,
+                value="V_RWM 18 V · V_BR 20.0-22.1 V · V_C 29.2 V",
+                source=f"{where}. SMF18A family table: V_RWM 18 V, V_BR 20.0-"
+                       f"22.1 V, V_C 29.2 V at 6.8 A, 200 W 10/1000 µs. ⬜ SOD-123FL "
+                       f"envelope, not read off a drawing")
 
 
 def _tvs5(refdes: str, board: Board, where: str) -> Part:
@@ -458,14 +474,38 @@ def _open_load_pullup(refdes: str, channel: str) -> Part:
 
 
 _DRV_PARTS = (
-    _tps4h160("U301", "Headlight: LOW, HIGH, DRL. IN1/OUT1 spare"),
-    _tps4h160("U302", "Tail running + turn L/R. IN4/OUT4 spare"),
+    _tps4h160("U301", "Headlight: LOW, HIGH, DRL. OUT1 is AUX12, the "
+              "current-limited feed to horn +, fan + and buzzer +"),
+    _tps4h160("U302", "Tail running + turn L/R. OUT4 is the STOP lamp, its IN4 "
+              "driven by the hardware brake circuit and never by firmware"),
     _open_load_pullup("R301", "HL_LOW"),
     _open_load_pullup("R302", "HL_HIGH"),
     _open_load_pullup("R303", "HL_DRL"),
     _open_load_pullup("R304", "TAIL_RUN"),
     _open_load_pullup("R305", "TURN_L"),
     _open_load_pullup("R306", "TURN_R"),
+    _open_load_pullup("R345", "TAIL_STOP"),
+    _r("R346", "DRV", "10k",
+       "AUX12 enable: U301 IN1 → V3P3. The channel is on whenever BRAIN's "
+       "3.3 V is up and off when it is not; 3.3 V × 100-250k / (10k + 100-250k) "
+       "= 3.0-3.2 V against V_IH 2 V. What it feeds is switched low-side "
+       "(Q301-Q303), each gate biased OFF (D14), so no load runs at key-on. "
+       "The channel is a FEED: it current-limits horn +, fan + and buzzer + at "
+       "2 A, where raw V12 would put the 12.75-18.75 A brick into the harness "
+       "and hiccup the rail the stop lamp shares"),
+    _r("R347", "DRV", "27k",
+       f"STOP_CMD → U302 IN4, the top of a 27k / 10k divider from Q1's drain. "
+       f"{_DS_TPS} p.7: INx is 0-5 V recommended, 7 V absolute, V_IH 2 V, "
+       f"100-250 kΩ pull-down. 12 V → 3.02-3.15 V; TDK's 17.4 V OVP → 4.4-4.6 V; "
+       f"on above 7.9 V. D318 clamps a V12 transient (D315 lets 29.2 V through) "
+       f"at 5.1 V. Also the pin's series resistor (p.26)"),
+    _r("R348", "DRV", "10k", "STOP_CMD divider bottom, U302 IN4 → GND (with R347)"),
+    Part("D318", "BZT52B5V1", "SOD-123", "DRV", "ZENER", ("A", "K"), 1.35,
+         footprint_mm=(3.7, 1.6), v_max=5.1, value="5.1 V B grade, 5.0-5.2 V",
+         source=f"U302 IN4 clamp: a V12 transient up to D315's 29.2 V puts "
+                f"(29.2 - 5.1) / 27k = 0.9 mA through it and holds IN4 under "
+                f"{_DS_TPS}'s 7 V absolute. At TDK's 17.4 V OVP IN4 sits at "
+                f"4.6 V, below the 5.0 V knee. ⬜ SOD-123 envelope"),
     _r("R319", "DRV", "1k00 1%",
        f"U301 CL → GND: 0.8 V × 2500 / 1.00 kΩ = 2.0 A per channel, over the "
        f"0.71 A / 0.54 A loads. {_DS_TPS} p.29 eq. 10. This is the lamp-scale "
@@ -508,12 +548,6 @@ _DRV_PARTS = (
     _c("C304", "DRV", "10uF", 25.0, "U301 VS bulk decoupling", pkg="1206"),
     _c("C305", "DRV", "100nF", 50.0, "U302 VS decoupling, at the pins"),
     _c("C306", "DRV", "10uF", 25.0, "U302 VS bulk decoupling", pkg="1206"),
-    _r("R325", "DRV", "10k",
-       f"U301 spare OUT1 → GND. {_DS_TPS} p.23: with a channel off 'if an "
-       f"open load occurs, the output voltage is close to the supply voltage "
-       f"… and the fault is reported' — 10 kΩ against I(ol,off) 75 µA keeps "
-       f"an unused output from asserting the shared FAULT1"),
-    _r("R326", "DRV", "10k", "U302 spare OUT4 → GND, as R325, for FAULT2"),
     _tps_series("R327", "LGT_LOW → U301 IN2"),
     _tps_series("R328", "LGT_HIGH → U301 IN3"),
     _tps_series("R329", "LGT_DRL → U301 IN4"),
@@ -540,20 +574,22 @@ _DRV_PARTS = (
     _r("R312", "DRV", "100R", "Buzzer gate series. BOM D9"),
     Part("D307", "SS14", "DO-214AC (SMA)", "DRV", "D", ("A", "K"), 2.4,
          footprint_mm=(5.3, 2.8), v_max=40.0, value="1 A / 40 V Schottky",
-         source="Fan flyback across J305.1-2: anode FAN_RTN, cathode V12. "
+         source="Fan flyback across J305.1-2: anode FAN_RTN, cathode AUX12, "
+                "the fan's own + feed. "
                 "Schottky is right here: BOM G1's leakage objection concerns "
                 "3.3 V inputs, and this diode sits across a 12 V load. SMA "
                 "outline assumed"),
     Part("D314", "SS14", "DO-214AC (SMA)", "DRV", "D", ("A", "K"), 2.4,
          footprint_mm=(5.3, 2.8), v_max=40.0, value="1 A / 40 V Schottky",
-         source="Buzzer flyback across J305.3-4: anode BUZZ_RTN, cathode V12. "
+         source="Buzzer flyback across J305.3-4: anode BUZZ_RTN, cathode AUX12. "
                 "The AO3400A has no avalanche rating and a magnetic buzzer is "
                 "a coil; harmless if the buzzer is piezo. SMA outline assumed"),
     Part("D315", "SMBJ18A", "DO-214AA (SMB)", "DRV", "TVS", ("A", "K"), 2.5,
          footprint_mm=(5.6, 3.95), v_max=18.0,
          value="V_RWM 18 V · V_BR 20.0-22.1 V · V_C 29.2 V",
-         source="The ONE clamp on raw V12, at the connectors whose V12 pins "
-                "leave the box (horn +, fan +, buzzer +). The 18 V grade, not "
+         source="The clamp on the V12 rail itself, at the TPS4H160B's VS. "
+                "No raw V12 leaves the box: horn +, fan + and buzzer + ride "
+                "AUX12, U301's current-limited channel. The 18 V grade, not "
                 "15 V: TDK's over-voltage window is 15.0-17.4 V and a 15 V "
                 "part breaks down at 16.70-18.50 V, INSIDE it -- so a converter "
                 "fault would cook the clamp, which then fails short and takes "
@@ -570,9 +606,12 @@ _DRV_PARTS = (
     _1n4148("D305", "D3L", "left lever → IN-05"),
     _1n4148("D306", "D3R", "right lever → IN-06"),
     _sot23("Q304", "AO3407A", "DRV", "PFET", 30.0,
-           f"'Q1', the HARDWARE stop-lamp switch: S = V12, D = TAIL_STOP. "
-           f"P-ch, -30 V, ±20 V gate — a ±12 V-gate part is marginal on 12 V. "
-           f"{_BRK} §2/§3, BOM G2"),
+           f"'Q1', the HARDWARE stop-lamp command: S = V12, D = STOP_CMD, which "
+           f"drives U302's IN4 through R347/R348. The lamp itself hangs on U302 "
+           f"OUT4, so it gets a 1 A current limit, open-load detection and "
+           f"FAULT2 -- with no firmware anywhere in the switching path: a "
+           f"TPS4H160B channel follows its IN pin whatever DIAG_EN, SEL and "
+           f"SEH do. P-ch, -30 V, ±20 V gate. {_BRK} §2/§3, BOM G2"),
     _r("R313", "DRV", "10k",
        f"'R1': Q1 gate pull-up to V12, and the levers' wetting current "
        f"(~1.2 mA). {_BRK} §3, BOM G3"),
@@ -607,11 +646,19 @@ _DRV_PARTS = (
     _c("C307", "DRV", "100nF", 50.0,
        f"At the V12_SENSE node (plan §4 class D). {_DS_HDG} p.21"),
     # ── protection: one array per harness connector, same board ─────────────
-    _tvs15("D308", "DRV", "At J301: HL_LOW, HL_HIGH, HL_DRL"),
-    _tvs15("D309", "DRV", "At J302: TAIL_RUN, TAIL_STOP, TURN_L, TURN_R"),
-    _tvs15("D310", "DRV", "At J303: front TURN_L, TURN_R"),
-    _tvs15("D311", "DRV", "At J304: HORN_N"),
-    _tvs15("D312", "DRV", "At J305: FAN_RTN, BUZZ_RTN"),
+    _tvs18("D308", "DRV", "At J301: HL_LOW"),
+    _tvs18("D309", "DRV", "At J301: HL_HIGH"),
+    _tvs18("D310", "DRV", "At J301: HL_DRL"),
+    _tvs18("D311", "DRV", "At J304: HORN_N"),
+    _tvs18("D312", "DRV", "At J305: FAN_RTN"),
+    _tvs18("D319", "DRV", "At J305: BUZZ_RTN"),
+    _tvs18("D320", "DRV", "At J302: TAIL_RUN"),
+    _tvs18("D321", "DRV", "At J302: rear TURN_L"),
+    _tvs18("D322", "DRV", "At J302: rear TURN_R"),
+    _tvs18("D323", "DRV", "At J302: TAIL_STOP"),
+    _tvs18("D324", "DRV", "At J303: front TURN_L"),
+    _tvs18("D325", "DRV", "At J303: front TURN_R"),
+    _tvs18("D326", "DRV", "At J304/J305: AUX12, the horn/fan/buzzer + feed"),
     _tvs15("D313", "DRV",
            f"At J306: LEVER_L, LEVER_R. The lever nodes idle at ~11.4 V "
            f"({_BRK} §3), so a 5 V array here would hold the stop lamp on"),
@@ -968,16 +1015,14 @@ _NETS_RAILS = (
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
              "R211.2")
         # DRV
-        + _p("U301.GND U301.PAD U301.THER U301.IN1 U302.GND U302.PAD U302.THER "
-             "U302.IN4 R319.2 R320.2 R321.2 R322.2 R325.2 R326.2 "
+        + _p("U301.GND U301.PAD U301.THER U302.GND U302.PAD U302.THER "
+             "R319.2 R320.2 R321.2 R322.2 R348.2 D318.A "
              "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 R344.2 "
              "Q301.S Q302.S Q303.S R307.2 R308.2 R309.2 D315.A "
              "Q305.S R316.2 "
              "J301.1 J302.1 J303.2 J303.4 J306.2 J306.4 J309.3 J310.2 J405.3 "
-             "D308.A2 D308.A5 D308.K6 D309.A2 D309.A5 "
-             "D310.A2 D310.A5 D310.K4 D310.K6 "
-             "D311.A2 D311.A5 D311.K3 D311.K4 D311.K6 "
-             "D312.A2 D312.A5 D312.K4 D312.K6 "
+             "D308.A D309.A D310.A D311.A D312.A D319.A D320.A D321.A D322.A "
+             "D323.A D324.A D325.A D326.A "
              "D313.A2 D313.A5 D313.K4 D313.K6 "
              "D316.A2 D316.A5 D316.K4 D316.K6 "
              "D317.A2 D317.A5 D317.K3 D317.K4 D317.K6 "
@@ -1014,14 +1059,12 @@ _NETS_RAILS = (
     Net("V12",
         _p("U201.+V U201.+S C207.+ C208.1 C209.1") + _pwrup("V12")
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
-             "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 "
-             "Q304.S R313.2 D307.K D314.K D315.K R337.1 "
-             "J304.1 J305.1 J305.3"),
+             "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 R345.2 "
+             "Q304.S R313.2 D315.K R337.1"),
         domain="12V", interface="PWR-UP",
         source="DC-DC #1's output, +S strapped to +V at the brick. 2.62 A "
-               "measured (plan §3.2.3). ⛔ J304.1 is BLUE and it is the "
-               "POSITIVE — red is not. No quad array touches this net; D315 "
-               "is its clamp"),
+               "measured (plan §3.2.3). It never leaves the box: every 12 V "
+               "wire out is a TPS4H160B channel. D315 is its clamp"),
     Net("V5",
         _p("U202.+Vout C211.1 C212.1") + _pwrup("V5")
         + _p("U405.IN U405.EN C415.1"),
@@ -1034,7 +1077,7 @@ _NETS_RAILS = (
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R432.2 R433.2 R434.2 R435.2 R437.2 R438.2 R439.2 "
            "J408.5 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _stack("V3P3") + _p("R317.2 R318.2"),
+        + _stack("V3P3") + _p("R317.2 R318.2 R346.2"),
         domain="3V3", interface="STACK",
         source="BRAIN's 3.3 V rail. Crosses STACK to DRV for R317/R318, the "
                "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
@@ -1044,34 +1087,44 @@ _NETS_RAILS = (
 # NETS — DRV outputs. Every lamp common is GND; there is no separate return.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_12V = (
-    Net("HL_LOW", _p("U301.OUT2 R301.1 J301.3 D308.K1"), domain="12V",
+    Net("HL_LOW", _p("U301.OUT2 R301.1 J301.3 D308.K"), domain="12V",
         source="J301.3 is BLUE on the headlight. 12 V / 8.5 W = 0.71 A"),
-    Net("HL_HIGH", _p("U301.OUT3 R302.1 J301.2 D308.K3 R428.1"), domain="12V",
+    Net("HL_HIGH", _p("U301.OUT3 R302.1 J301.2 D309.K R428.1"), domain="12V",
         source="J301.2 is GREEN. ⚠️ Firmware breaks before make against LOW "
                "(never both: 1.96 A). R428 taps it for the headlight telltale"),
-    Net("HL_DRL", _p("U301.OUT4 R303.1 J301.4 D308.K4"), domain="12V",
+    Net("HL_DRL", _p("U301.OUT4 R303.1 J301.4 D310.K"), domain="12V",
         source="J301.4 is YELLOW. 12 V / 6.5 W = 0.54 A"),
-    Net("SPARE_OUT1", _p("U301.OUT1 R325.1"), domain="12V",
-        source="U301's spare channel, held at GND through R325; IN1 is on GND"),
-    Net("TAIL_RUN", _p("U302.OUT1 R304.1 J302.2 D309.K1"), domain="12V",
+    Net("AUX12", _p("U301.OUT1 J304.1 J305.1 J305.3 D307.K D314.K D326.K"),
+        domain="12V",
+        source="U301 OUT1, the current-limited feed to horn +, fan + and "
+               "buzzer +: 0.10 + ~0.50 A + a few mA against its 2 A limit. ⛔ "
+               "J304.1 is BLUE and it is the POSITIVE — red is not"),
+    Net("AUX12_EN", _p("U301.IN1 R346.1"), domain="3V3",
+        source="U301 IN1, held high from V3P3 by R346"),
+    Net("TAIL_RUN", _p("U302.OUT1 R304.1 J302.2 D320.K"), domain="12V",
         source="J302.2 YELLOW, 0.05 A, a separate feed and not PWM"),
-    Net("TURN_L", _p("U302.OUT2 R305.1 J302.4 J303.1 R426.1 D309.K3 D310.K1"),
+    Net("TURN_L", _p("U302.OUT2 R305.1 J302.4 J303.1 R426.1 D321.K D324.K"),
         domain="12V",
         source="Rear LEFT is J302.4 BLUE (M6); the front pair is on J303"),
-    Net("TURN_R", _p("U302.OUT3 R306.1 J302.5 J303.3 R427.1 D309.K4 D310.K3"),
+    Net("TURN_R", _p("U302.OUT3 R306.1 J302.5 J303.3 R427.1 D322.K D325.K"),
         domain="12V", source="Rear RIGHT is J302.5 GREEN (M6)"),
-    Net("SPARE_OUT2", _p("U302.OUT4 R326.1"), domain="12V",
-        source="U302's spare channel, held at GND through R326; IN4 is on GND"),
-    Net("TAIL_STOP", _p("Q304.D J302.3 D309.K6"), domain="12V",
-        source="J302.3 RED, 0.12 A. ⛔ NOT a module channel: Q1 switches it in "
-               "hardware (D23). F1, the 1 A ATM fuse in this feed, is a "
-               "harness part"),
-    Net("HORN_N", _p("J304.2 Q301.D D311.K1"), domain="12V",
+    Net("TAIL_STOP", _p("U302.OUT4 R345.1 J302.3 D323.K"), domain="12V",
+        source="J302.3 RED, 0.12 A, on U302 OUT4 -- a hardware-commanded "
+               "channel (D23): the levers drive Q1, Q1 drives IN4, and nothing "
+               "firmware touches is in that path. The channel adds the 1 A "
+               "limit, OFF-state open-load detection through R345 and FAULT2; "
+               "firmware reads the lamp current on CS2 (SEL/SEH = channel 4) "
+               "and cross-checks it against IN-05/06"),
+    Net("STOP_CMD", _p("Q304.D R347.1"), domain="12V",
+        source="Q1's drain: V12 while either lever is pulled, else open"),
+    Net("STOP_IN4", _p("R347.2 R348.1 D318.K U302.IN4"), domain="3V3",
+        source="U302 IN4: 3.0-3.2 V braking at 12 V, 0 V released"),
+    Net("HORN_N", _p("J304.2 Q301.D D311.K"), domain="12V",
         source="J304.2 BLACK = '-'. ⛔ Red is not the positive on the horn. "
                "Electronic horn, 0.10 A, so no flyback (M7)"),
-    Net("FAN_RTN", _p("J305.2 Q302.D D307.A D312.K1"), domain="12V",
+    Net("FAN_RTN", _p("J305.2 Q302.D D307.A D312.K"), domain="12V",
         source="Fan '-', LEDC PWM; D307 is the flyback across the motor"),
-    Net("BUZZ_RTN", _p("J305.4 Q303.D D314.A D312.K3"), domain="12V",
+    Net("BUZZ_RTN", _p("J305.4 Q303.D D314.A D319.K"), domain="12V",
         source="Buzzer '-', LEDC PWM; D314 is the flyback across it"),
     Net("CL1", _p("U301.CL R319.1"), domain="3V3",
         source="U301's current-limit programming node, 0.8 V across R319"),
@@ -1171,9 +1224,11 @@ _NETS_STACK = (
         source=f"Headlight DRL command. {_LGT}"),
     Net("LGT_DRL_IN", _p("R329.2 U301.IN4"), domain="3V3",
         source="Device side of R329"),
-    Net("LGT_TAIL", _p("U401.IO39") + _stack("LGT_TAIL") + _p("R330.1"),
-        domain="3V3", interface="STACK", gpio="GPIO39",
-        source=f"Tail running command. {_LGT}"),
+    Net("LGT_TAIL", _p("U401.IO11") + _stack("LGT_TAIL") + _p("R330.1"),
+        domain="3V3", interface="STACK", gpio="GPIO11",
+        source=f"Tail running command. {_LGT} GPIO11, never GPIO39: MTCK comes "
+               f"out of reset pulled UP (datasheet v2.2 Table 2-1 note 7), "
+               f"which would light the tail before firmware runs"),
     Net("LGT_TAIL_IN", _p("R330.2 U302.IN1"), domain="3V3",
         source="Device side of R330"),
     Net("LGT_TURN_L", _p("U401.IO40") + _stack("LGT_TURN_L") + _p("R331.1"),
@@ -1208,10 +1263,10 @@ _NETS_STACK = (
     Net("CS2", _p("R324.2 R340.1 C302.1") + _stack("CS2") + _p("U401.IO5"),
         domain="3V3", interface="STACK", gpio="GPIO5",
         source="U302's current sense behind R324. ⚠️ ADC1 only"),
-    Net("FAULT1", _p("U301.FAULT") + _stack("FAULT1") + _p("R432.1 U401.IO11"),
-        domain="3V3", interface="STACK", gpio="GPIO11",
+    Net("FAULT1", _p("U301.FAULT") + _stack("FAULT1") + _p("R432.1 U401.IO39"),
+        domain="3V3", interface="STACK", gpio="GPIO39",
         source="U301's open-drain global fault, pulled up on BRAIN. Digital "
-               "only: GPIO11 is ADC2"),
+               "only. GPIO39's reset pull-up only joins R432's"),
     Net("FAULT2", _p("U302.FAULT") + _stack("FAULT2") + _p("R433.1 U401.IO12"),
         domain="3V3", interface="STACK", gpio="GPIO12", source="As FAULT1"),
     Net("HORN_CMD", _p("U401.IO42") + _stack("HORN_CMD") + _p("R310.1"),
@@ -1515,13 +1570,13 @@ _CONNECTORS = (
         _cp("4", "GND", "front RIGHT return"),
     )),
     _tb("J304", "DRV", "Horn (M7)", (
-        _cp("1", "V12", "⛔ BLUE IS THE POSITIVE"),
+        _cp("1", "AUX12", "⛔ BLUE IS THE POSITIVE"),
         _cp("2", "HORN_N", "black = '-'. ⛔ Red is not the positive"),
     )),
     _tb("J305", "DRV", "Fan + buzzer", (
-        _cp("1", "V12", "fan +"),
+        _cp("1", "AUX12", "fan +"),
         _cp("2", "FAN_RTN", "fan -, flyback D307"),
-        _cp("3", "V12", "buzzer +"),
+        _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
     _tb("J306", "DRV", "Brake levers. ⬜ GATED ON M3", (
@@ -1661,6 +1716,10 @@ _FAB_BY_MPN = {
     "SMBJ18A": ("C19077573", "SMBJ18A (R+O)", "preferred Extended",
                 "600 W, V_C 29.2 V"),
     "SMS15T1G": ("C894371", "onsemi SMS15T1G", "Extended", "the part itself"),
+    "SMF18A": ("C19077512", "SMF18A (hongjiacheng)", "preferred Extended",
+               "200 W, V_RWM 18 V, V_BR 20.0-22.1 V, V_C 29.2 V @ 6.8 A"),
+    "BZT52B5V1": ("C19077393", "BZT52B5V1 (hongjiacheng)", "preferred Extended",
+                  "V_Z 5.0-5.2 V"),
     "SMS05T1G": ("C233428", "onsemi SMS05T1G", "Extended", "the part itself"),
     "USBLC6-2SC6": ("C7519", "ST USBLC6-2SC6", "Extended", "the part itself"),
     "1N4148W": ("C81598", "1N4148W", "Basic", "75 V, silicon"),

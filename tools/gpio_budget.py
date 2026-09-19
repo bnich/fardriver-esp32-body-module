@@ -29,6 +29,14 @@ USB = frozenset({19, 20})              # native USB D-/D+: the recovery path
 STRAPPING = frozenset({0, 3, 45, 46})  # sampled at reset to choose the boot mode
 BOOT_LOG = 43                          # U0TXD: the ROM prints on it at every reset
 ADC1 = frozenset(range(1, 11))         # ADC2 is dead while WiFi is on
+#: Pins that come out of reset with a weak pull (datasheet v2.2 Table 2-1,
+#: "After Reset"): pull-ups on GPIO0, GPIO20 (USB_PU), GPIO39 (MTCK: note 7,
+#: while EFUSE_DIS_PAD_JTAG = 0) and U0TXD/U0RXD (43/44); pull-downs on GPIO45
+#: and GPIO46.  Until firmware reconfigures the pin, that pull drives whatever
+#: the pin is wired to -- a ~45 kΩ pull-up beats a TPS4H160's 100-250 kΩ input
+#: pull-down through a 4.7 kΩ series resistor.
+RESET_PULL_UP = frozenset({0, 20, 39, 43, 44})
+RESET_PULL_DOWN = frozenset({45, 46})
 
 # --- module (ESP32-S3-WROOM-1 datasheet, pin table) ------------------------------
 NOT_BROUGHT_OUT = frozenset({33, 34})  # no pad on the WROOM-1 / -1U

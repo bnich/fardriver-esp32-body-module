@@ -60,6 +60,11 @@ _BY_MPN = {
     "TPS4H160BQPWPRQ1": _TPS4H160,
     "MCP23017T-E/SS": _MCP23017_SS,
     "ESP32-S3-WROOM-1U-N8": _WROOM1,
+    # R+O SMF18A datasheet rev 2.2 p.4: "Cathode Band: unidirectional only".
+    # EasyEDA's footprint for C19077512 draws that band at pad 2, and its
+    # symbol numbers K = 2: pad 1 is the ANODE here, unlike the generic
+    # diode rule below -- a reversed clamp would short its lamp output.
+    "SMF18A": {"1": "A", "2": "K"},
     # TI SLOS346O, D (SOIC-8)
     "SN65HVD230DR": {"1": "D", "2": "GND", "3": "VCC", "4": "R", "5": "Vref",
                      "6": "CANL", "7": "CANH", "8": "RS"},

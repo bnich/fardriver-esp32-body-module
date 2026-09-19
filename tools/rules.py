@@ -67,6 +67,7 @@ GPIO_FLASH = _silicon("FLASH", range(26, 33))        # in-package SPI flash
 GPIO_USB = _silicon("USB", {19, 20})                 # native USB D-/D+
 GPIO_STRAPPING = _silicon("STRAPPING", {0, 3, 45, 46})
 GPIO_ADC1 = _silicon("ADC1", range(1, 11))           # ADC2 dies with WiFi
+GPIO_RESET_PULL_UP = _silicon("RESET_PULL_UP", {0, 20, 39, 43, 44})
 GPIO_BOOT_LOG: int = getattr(_gb, "BOOT_LOG", 43) if _gb is not None else 43
 
 #: The WROOM-1 module has no pad for these two (FIX-SPEC 3.4).
@@ -606,8 +607,26 @@ def gpio_rules(d: Design) -> list[str]:
                             f"{_via(path)}. Whatever holds that wire at key-on "
                             f"picks the boot mode.")
 
+        for g in sorted(gs & GPIO_RESET_PULL_UP):
+            errs.extend(
+                f"GPIO-RESET-PULL: net {name!r} is on GPIO{g}, which comes out "
+                f"of reset pulled UP, and reaches the enable {load} {_via(path)}: "
+                f"the load is ON from reset until firmware runs, and stays on "
+                f"if it hangs. Every driver biases OFF (D14)."
+                for load, path in _loads(ix, ix.signal_reach(name), mcu)
+                if _active_high_enable(ix, load))
+
     errs.extend(_adc1(ix, gpios))
     return errs
+
+
+def _active_high_enable(ix: _Ix, load: str) -> bool:
+    """An input that switches a load ON when pulled high: an N-FET gate, or an
+    IC's IN/EN pin (a TPS4H160 channel input)."""
+    ref, _, pin = load.partition(".")
+    p = ix.parts[ref]
+    return (p.kind == "NFET" and pin == "G") or (
+        p.kind == "IC" and re.fullmatch(r"(IN\d*|EN)", pin) is not None)
 
 
 def _loads(ix: _Ix, reach, mcu) -> list[tuple[str, list[str]]]:

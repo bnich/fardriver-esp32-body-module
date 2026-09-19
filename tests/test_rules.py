@@ -1164,3 +1164,26 @@ def test_supply_reports_an_ic_it_knows_nothing_about():
     d = d.replace_net("V3P3", pins=d.net("V3P3").pins + (("U999", "V+"),))
     d = d.replace_net("GND", pins=d.net("GND").pins + (("U999", "V-"),))
     assert any("SUPPLY: U999" in e and "no entry" in e for e in rules.check_all(d))
+
+
+# --- a pin's reset-time pull must not switch a load on --------------------------------
+def test_a_driver_on_a_pin_pulled_up_at_reset_fires():
+    """ESP32-S3 datasheet v2.2 Table 2-1: GPIO39 (MTCK) comes out of reset with
+    its weak pull-up on (note 7, EFUSE_DIS_PAD_JTAG = 0).  Through a 4.7 kΩ
+    series resistor that beats the TPS4H160's 100-250 kΩ input pull-down, so a
+    lamp on GPIO39 lights before firmware runs -- and stays lit if it hangs."""
+    from tools import netlist
+    real = netlist.current()
+    assert not fired(real, "GPIO-RESET-PULL")
+    moved = on_gpio(on_gpio(real, "FAULT1", 18), "LGT_TAIL", 39)
+    hits = fired(moved, "GPIO-RESET-PULL")
+    assert any("LGT_TAIL" in e and "GPIO39" in e for e in hits), hits
+
+
+def test_an_input_on_a_pin_pulled_up_at_reset_is_fine():
+    """FAULT is an open-drain input to the MCU: a reset pull-up there only
+    joins the one it already has."""
+    from tools import netlist
+    real = netlist.current()
+    moved = on_gpio(real, "FAULT1", 39) if real.net("FAULT1").gpio != "GPIO39" else real
+    assert not fired(moved, "GPIO-RESET-PULL")

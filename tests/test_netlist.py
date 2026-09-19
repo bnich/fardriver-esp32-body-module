@@ -418,12 +418,24 @@ def test_nothing_but_the_open_drain_fault_joins_a_tps_pin_to_the_mcu(d, w):
                 assert pin == "FAULT", f"{u.refdes}.{pin} meets U401 directly"
 
 
+#: The two TPS4H160B channels no firmware commands: U301 OUT1 is AUX12, a
+#: current-limited FEED held on from V3P3, and U302 OUT4 is the STOP lamp, whose
+#: IN4 the hardware brake circuit drives (D23).  (device, input) -> source net.
+HARDWARE_INPUTS = {("U301", "IN1"): "V3P3", ("U302", "IN4"): "STOP_CMD"}
+
+
 def test_every_used_tps_input_is_reachable_from_the_mcu_and_unused_ones_are_off(d, w):
     for u in _tps(d):
         for n in "1234":
             out, inp = w.net(u.refdes, f"OUT{n}"), w.net(u.refdes, f"IN{n}")
-            if w.connectors_on(out):
-                assert any(d.net(x).gpio for x in w.walk(inp, {"R"})), (
+            src = HARDWARE_INPUTS.get((u.refdes, f"IN{n}"))
+            reach = w.walk(inp, {"R"})
+            if src:
+                assert src in reach, f"{u.refdes}.IN{n} is not driven from {src}"
+                assert not any(d.net(x).gpio for x in reach), (
+                    f"{u.refdes}.IN{n} is a hardware input, yet a GPIO reaches it")
+            elif w.connectors_on(out):
+                assert any(d.net(x).gpio for x in reach), (
                     f"{u.refdes}.IN{n} drives a lamp but no GPIO reaches it")
             else:
                 assert inp == "GND", f"{u.refdes}.IN{n} is unused yet not held off"
@@ -437,9 +449,10 @@ def test_every_ic_is_decoupled_on_every_rail_it_touches(d, w):
 
 
 def test_inductive_loads_have_a_flyback_path(d, w):
+    """Across the load: from its switched return to its OWN + feed, AUX12."""
     for net in ("FAN_RTN", "BUZZ_RTN"):
-        diodes = [x for x in w.between(net, "V12", {"D"})
-                  if w.net(x.refdes, "A") == net and w.net(x.refdes, "K") == "V12"]
+        diodes = [x for x in w.between(net, "AUX12", {"D"})
+                  if w.net(x.refdes, "A") == net and w.net(x.refdes, "K") == "AUX12"]
         assert diodes, f"{net}: the AO3400A has no avalanche rating"
 
 
@@ -452,13 +465,24 @@ def test_every_low_side_gate_biases_off(d, w):
 
 def test_lamp_commons_are_ground(d, w):
     assert not [n.name for n in d.nets if "COMMON" in n.name.upper()]
-    lamp_nets = {w.net(u.refdes, f"OUT{n}") for u in _tps(d) for n in "1234"}
-    lamp_nets.add(w.net("Q304", "D"))
+    # AUX12 is a FEED: its loads return through their own low-side switch in
+    # the same connector (test_every_aux12_load_returns_through_its_switch).
+    lamp_nets = {w.net(u.refdes, f"OUT{n}") for u in _tps(d) for n in "1234"} - {"AUX12"}
     for c in d.connectors:
         if {cp.net for cp in c.pins} & lamp_nets and c.board == "DRV" \
                 and not c.parked:
             assert "GND" in {cp.net for cp in c.pins}, (
                 f"{c.refdes} feeds a lamp and offers it no return")
+
+
+def test_every_aux12_load_returns_through_its_switch(d, w):
+    for c in w.connectors_on("AUX12"):
+        rets = [cp.net for cp in c.pins if cp.net not in ("AUX12", "")]
+        assert rets, f"{c.refdes} feeds AUX12 with no return"
+        for net in rets:
+            assert [q for q in w.parts_on(net, {"NFET"}) if w.net(q.refdes, "D") == net
+                    and w.net(q.refdes, "S") == "GND"], (
+                f"{c.refdes}: {net} is no low-side switch's drain")
 
 
 # ─── protection ──────────────────────────────────────────────────────────────
@@ -546,7 +570,15 @@ def test_a_lever_cuts_the_motor_and_lights_the_lamp_through_drv_parts_alone(d, w
     q1 = lamp_switch[0]
     assert w.net(q1.refdes, "S") == "V12"
     assert w.between("Q1_GATE", "V12", {"R"}), "Q1's gate has no pull-up: lamp stuck on"
-    stop = w.net(q1.refdes, "D")
+    # Q1's drain commands exactly one TPS4H160B input, and that channel's
+    # output is the lamp wire leaving DRV -- with no GPIO anywhere on the way.
+    cmd = w.net(q1.refdes, "D")
+    path = w.walk(cmd, {"R"})
+    ins = [(u, n) for u in _tps(d) for n in "1234" if w.net(u.refdes, f"IN{n}") in path]
+    assert len(ins) == 1, f"Q1's drain reaches TPS inputs {ins}"
+    u, n = ins[0]
+    assert u.board == "DRV" and not any(d.net(x).gpio for x in path | {cmd})
+    stop = w.net(u.refdes, f"OUT{n}")
     assert [c for c in w.connectors_on(stop) if c.leaves_box and c.board == "DRV"]
 
 
@@ -825,7 +857,7 @@ DEFECTS = [
      lambda d: d.replace_net("LEVER_L", domain="3V3"),
      test_every_net_states_a_voltage_nobody_has_to_guess, {}),
     ("a TVS array with an anode in the air",
-     lambda d: d.without_pin("D308", "A5"),
+     lambda d: d.without_pin("D313", "A5"),
      test_every_tvs_array_returns_to_ground_beside_a_connector_it_protects, {}),
     ("a TVS array on the wrong board",
      lambda d: d.replace_part("D405", board="BRAIN"),
@@ -939,8 +971,8 @@ def test_every_polarised_capacitor_has_its_plus_on_the_higher_node(d, ref, plus,
     ("D201", "HV_C2_P", "HV_C2_HOLD_IN", "hold-up diode conducts TOWARD converter 2"),
     ("D102", "D13_GATE", "HV_BPLUS", "gate zener: cathode on the SOURCE of a P-FET"),
     ("D106", "GND", "D13_EN", "level-shifter gate clamp: cathode on the gate"),
-    ("D307", "FAN_RTN", "V12", "flyback: cathode on the rail, across the load"),
-    ("D314", "BUZZ_RTN", "V12", "flyback: cathode on the rail, across the load"),
+    ("D307", "FAN_RTN", "AUX12", "flyback: cathode on the load's feed, across it"),
+    ("D314", "BUZZ_RTN", "AUX12", "flyback: cathode on the load's feed, across it"),
 ])
 def test_every_diode_points_the_way_its_job_needs(d, ref, anode, cathode, why):
     assert d.net_of(ref, "A").name == anode, f"{ref}: {why}"
