@@ -1,6 +1,6 @@
-"""BRAIN's own interfaces: USB, the service header, the reset line, CAN and
-the boost button.  Each test states the behaviour the review asked for."""
-from tools import netlist
+"""BRAIN's own interfaces: the service pads, the reset line, CAN and the boost
+button.  Each test states the behaviour the review asked for."""
+from tools import drawn_footprints, gpio_budget, netlist
 from tools.eprj3.schematic import landed_pins
 
 
@@ -31,37 +31,34 @@ def _series(d, mcu_pin, value):
     return net, r, _other(d, r, p)
 
 
-def test_the_usb_esd_array_rides_3v3_so_d_plus_cannot_back_drive_vbus():
-    """USBLC6-2SC6 pin 5 is the top of its steering diodes.  On VBUS, D+'s
-    pull-up (GPIO20 comes out of reset pulled up) forward-biases I/O1 → VBUS
-    and holds the unplugged VBUS near 2.7 V: 1.7 V at GPB6, neither high nor
-    low.  On V3P3 the diodes clamp to the rail the pins live on."""
-    d = _d()
-    assert _net(d, "D409", "VBUS") == "V3P3"
-    assert _pins(d, "USB_VBUS") == {("J401", "1"), ("R444", "1")}
-
-
-def test_the_service_header_offers_no_supply():
-    """J408 is for a USB-serial adapter, which brings its own power.  A 3V3 pin
-    there would back-feed the LDO from the adapter's rail."""
+def test_the_service_pads_are_an_esp_prog_header_with_no_supply():
+    """J408 is a Tag-Connect TC2030-NL land.  The TC2030-IDC-NL cable takes pad n
+    to IDC pin n, and the pads follow the ESP-Prog's PROG header (Espressif
+    SCH_ESP32-PROG_V2.1): 1 ESP_EN, 2 VDD, 3 ESP_TXD0, 4 GND, 5 ESP_RXD0,
+    6 ESP_IO0, where TXD0 is the target's own TX.  VDD is left open: the
+    ESP-Prog jumpers it to 5 V as readily as 3.3 V, and the board powers
+    itself."""
     j = _d().connector("J408")
-    assert all(cp.net not in ("V3P3", "V5", "V12") for cp in j.pins)
-    assert [cp.net for cp in j.pins][:4] == ["EN", "BOOT_IO0", "U0TXD_HDR", "UART2_RX"]
-    assert {cp.pin: cp.net for cp in j.pins}["6"] == "GND"
+    assert [(cp.pin, cp.net) for cp in j.pins] == [
+        ("1", "EN"), ("2", ""), ("3", "U0TXD_HDR"), ("4", "GND"),
+        ("5", "U0RXD"), ("6", "BOOT_IO0")]
+    assert j.land == "TC2030-NL" and j.dnp and not j.lcsc and j.height_mm == 0.0
+    land = drawn_footprints.LANDS[j.land]
+    assert {p.num for p in land.pads} == {cp.pin for cp in j.pins}
+    assert not any(p.paste for p in land.pads), "Tag-Connect note 3: no paste"
 
 
-def test_native_usb_passes_22_ohms_at_the_module():
-    """Espressif HDG, USB: 'reserve series resistors (initial value can be
-    22/33 Ω) … close to the chip'."""
+def test_the_board_has_no_usb_port_and_its_usb_pins_are_spare():
+    """Flashing and the console are on UART0 at J408; the S3's native USB pins
+    are ordinary spares in the pool."""
     d = _d()
-    for pin, wire, conn_pin in (("IO20", "USB_DP", "3"), ("IO19", "USB_DM", "4")):
-        mcu_net, r, beyond = _series(d, pin, "22R")
-        assert beyond == wire and ("J401", conn_pin) in _pins(d, wire)
-        assert next(n for n in d.nets if n.name == mcu_net).gpio == f"GPIO{pin[2:]}"
-        assert len(_pins(d, mcu_net)) == 2            # the pin and its resistor
+    assert not [c.refdes for c in d.connectors if "USB" in c.name.upper()
+                and "USB-SERIAL" not in c.name.upper()]
+    assert {"IO19", "IO20"} <= set(d.part("U401").nc)
+    assert {19, 20} <= set(gpio_budget.POOL) and {19, 20} <= set(gpio_budget.spare(d))
 
 
-def test_u0txd_passes_a_series_resistor_to_the_header():
+def test_u0txd_passes_a_series_resistor_to_the_service_pads():
     """HDG, UART: 'a 499 Ω series resistor to the U0TXD line to suppress
     harmonics'.  470 Ω is the nearest JLC Basic value."""
     d = _d()

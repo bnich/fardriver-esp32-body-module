@@ -15,7 +15,7 @@ map is needed.  Pin 1 is square.  These parts are fitted by hand; a part that
 LIES on the board beside its holes carries its body as a silkscreen outline,
 so layout sees what it covers.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .eprj3.footprints import Outline, Pad
 
@@ -43,8 +43,15 @@ class Drawn:
     pads: tuple[Pad, ...]
     #: Pad numbers more than one pad carries (a module's two mounting holes).
     shared: frozenset[str] = field(default_factory=frozenset)
-    #: The body, where the part lies beside its holes: silkscreen shapes.
+    #: The body, where the part lies beside its holes: silkscreen shapes.  And
+    #: any unplated hole the maker's drawing asks for (`Outline.hole`).
     outline: tuple[Outline, ...] = ()
+    #: Rectangles (x0, y0, x1, y1) no track or via may cross, from the maker's
+    #: drawing.  The project cannot carry them: tools/layout_rules.py lists them
+    #: for the owner to draw before routing.
+    keepout: tuple[tuple[float, float, float, float], ...] = ()
+    #: No other copper within this of any of its pads, from the maker's drawing.
+    pad_clearance_mm: float | None = None
 
 
 def _pin(num, x, y, lead_mm, first=False):
@@ -64,8 +71,7 @@ def _box(x0, y0, x1, y1):
 
 def _mirror(pads):
     """A pin-face or bottom view -> the top view."""
-    return tuple(Pad(p.num, round(-p.x_mm, 4) + 0.0, p.y_mm, p.w_mm, p.h_mm, p.hole_mm, p.shape)
-                 for p in pads)
+    return tuple(replace(p, x_mm=round(-p.x_mm, 4) + 0.0) for p in pads)
 
 
 def tdk_cn150b110():
@@ -185,6 +191,41 @@ def fuse_in_clips():
     (Littelfuse 01110501Z, `fuse_clip_pair`)."""
     return Drawn("FUSE-5X20_IN_CLIPS_NOT_ON_PCB", (Pad("1", -8.9, 0.0, 1.0, 1.0),
                                                    Pad("2", 8.9, 0.0, 1.0, 1.0)))
+
+
+#: Tag-Connect 'Footprint for TC2030 Plug-of-Nails cable, No-Legs version'
+#: (NL-TC2030-Footprint.pdf, rev B, 12/05/19), PCB TOP LAYER view: contact
+#: pads ø0.031" ± 0.003 (0.787 mm), NO SOLDER PASTE; non-plated alignment
+#: holes ø0.039" ± 0.003 (0.991 mm).
+TC2030_PAD_MM = 0.787
+TC2030_HOLE_MM = 0.991
+TC2030_PITCH_MM = 1.27
+
+
+def tag_connect_tc2030_nl():
+    """J408: the TC2030-NL land, top view, origin at the centre of the pads.
+    Pads 1 3 5 run left to right along the lower row and 2 4 6 along the
+    upper, 0.050" (1.270 mm) apart both ways.  The alignment holes: one
+    0.050" left of the pad array on its centre line, two 0.200" (5.080 mm)
+    right of that one and 0.040" (1.016 mm) above and below the centre line
+    (the drawing gives the upper one 1.016 mm over the left hole, whose
+    centre is 0.025" / 0.635 mm under the upper row).  The pattern is its own
+    key: one hole on one side, two on the other.
+    Notes 1-2: no track or via in the shaded area between the pads' centres,
+    and nothing else within 0.020" (0.51 mm) of a pad.  Note 3: no paste --
+    a solder dome under a spring pin makes a bad contact.  Note 4: DNL."""
+    p, half = TC2030_PITCH_MM, TC2030_PITCH_MM / 2
+    pads = tuple(Pad(str(2 * col + row + 1), (col - 1) * p, (half if row else -half),
+                     TC2030_PAD_MM, TC2030_PAD_MM, None, "ELLIPSE", paste=False)
+                 for col in range(3) for row in range(2))
+    holes = tuple(Outline(("CIRCLE", x, y, TC2030_HOLE_MM / 2), hole=True)
+                  for x, y in ((-2 * p, 0.0), (2 * p, 1.016), (2 * p, -1.016)))
+    return Drawn("TAG-CONNECT_TC2030-NL", pads, outline=holes,
+                 keepout=((-p, -half, p, half),), pad_clearance_mm=0.51)
+
+
+#: Connectors that are copper only, by `Connector.land`.
+LANDS = {"TC2030-NL": tag_connect_tc2030_nl()}
 
 
 BY_MPN = {

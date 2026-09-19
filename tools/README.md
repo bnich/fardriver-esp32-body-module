@@ -48,13 +48,13 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `board_fit.py` | Area, height and plug-room budget (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `soft_start.py` | The D13 main-switch gate network, simulated |
-| `layout_rules.py` | The HV net class the generated PCBs cannot carry, derived from the netlist |
+| `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
 | `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `project.py` (the folder and its index), `pcb.py` (outline, 4-layer stackup, holes, rules), `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `v2footprint.py` (EasyEDA library footprints, V2 → V3), `placement.py` (sheet layout), `schematic.py` (sheets, devices and nets), `reader.py` (reads a sheet back and derives its nets) |
 | `padmap.py` | Which footprint pad each netlist pin lands on, typed from the datasheets |
 | `footprint_lib.py` | Library footprints through `~/tools/lcsc-search`, fitted to our pins; the generated inter-board header patterns |
-| `drawn_footprints.py` | Land patterns drawn from the makers' drawings, for the parts with no library device |
+| `drawn_footprints.py` | Land patterns drawn from the makers' drawings: the parts with no library device, and the Tag-Connect service pads |
 | `lcsc_fixture.py` | Refreshes `tests/fixtures/lcsc.json`: what LCSC says each ordered code is |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
@@ -111,14 +111,15 @@ python3 -m tools.gpio_budget
 ```
 
 Silicon and module facts live here and nowhere else: GPIO22–25 do not exist, 26–32 are the flash,
-⛔ **33/34 have no pad on the WROOM-1**, 19/20 are USB, 0/3/45/46 are strapping pins — a pool of
-**30** — GPIO43 prints the ROM boot log and is never a driver, and analog is ADC1 (GPIO1–10) only.
+⛔ **33/34 have no pad on the WROOM-1**, 0/3/45/46 are strapping pins — a pool of **32**, GPIO19/20
+included: the board has no USB port — GPIO43 prints the ROM boot log and is never a driver, and
+analog is ADC1 (GPIO1–10) only.
 
 Demand is **derived**: `demand(design)` reads every `Net.gpio` tag and follows the copper through
 series parts (stopping at supplies) to find what the net drives, whether it is analog, and where it
 leaves. `report(design)` fires on a GPIO outside the pool, a GPIO given to two nets, anything driven
-from GPIO43, an analog net off ADC1, and an ADC net that reaches no GPIO. USB pins may go to the USB
-connector only; a strapping pin may carry its bias parts and the internal service header only.
+from GPIO43, an analog net off ADC1, and an ADC net that reaches no GPIO. A strapping pin may carry
+its bias parts and the internal service pads only.
 
 ### `soft_start.py`
 
@@ -137,7 +138,7 @@ sheet) × 0.72. Also: the V_GS excursion when the pack is plugged in with the ke
 the 2.0 V minimum threshold), the key-off hold time, and `solve_r_pd(target_ramp_s)` for choosing
 the pull-down. Prints PASS or FAIL.
 
-### `layout_rules.py` — the HV net class
+### `layout_rules.py` — the HV net class and the land keep-outs
 
 ```bash
 python3 -m tools.layout_rules
@@ -151,6 +152,10 @@ choke or a diode — as the net class **HV**. `build_project.py` writes the same
 `build-eprj3/layout-rules.txt`. ⚠️ **Set the class up in the editor before routing HVIN and CONV:**
 PCB → Design → Net Class, a class `HV` holding those nets; Design Rules → Safe Spacing, a 1.25 mm
 rule applied to `HV`.
+
+It also lists each drawn land's keep-out: `J408`, the Tag-Connect TC2030-NL service pads, wants no
+track or via between its pad centres and nothing within 0.51 mm of a pad (Tag-Connect's drawing,
+notes 1–2). Draw it as a keep-out region before routing BRAIN.
 
 ### `jlc_bom.py`
 
@@ -277,7 +282,11 @@ flag alone, and flag with wire name, which is what the build emits. `NAMING = "b
   pair, which hangs under its board, and it is generated mirrored: after the flip, plus at most a
   180° turn, every pad sits over its mate's. A same-numbered dual-row footprint cannot be aligned by
   any turn — STACK's signals would land on its ground row.
-- **Set up the HV net class before routing HVIN and CONV** (`layout_rules.py`, above).
+- **Set up the HV net class before routing HVIN and CONV, and J408's keep-out before routing BRAIN**
+  (`layout_rules.py`, above).
+- ⬜ **Check the paste layer has no aperture over `J408`'s six pads** (Gerber viewer, top paste). The
+  pads carry a paste expansion past their own radius, which should close the aperture; this has not
+  been seen in the editor yet. A solder dome under a spring pin is a bad contact.
 - **Export each board's netlist and prove it** with `tel_check.py` (above).
 - Parts JLC must not fit — DNP, hand-soldered and loose — carry `Add into BOM: no`, because
   EasyEDA's BOM ignores its own DNP flag. The fuse carries `Convert to PCB: no`: its clips are the
@@ -317,8 +326,8 @@ are renamed to the pins they carry:
   checks every map against EasyEDA's library symbol where this machine can reach the library, and
   it fails on a swapped FET or a reversed diode.
 - `footprint_lib.py` fetches the library footprints through `~/tools/lcsc-search`. `fit()` renames
-  each pad to the pin it carries, leaves a pad mapped to `None` unconnected on purpose (a USB-C SBU
-  contact), and refuses a pad no map accounts for. The inter-board connectors get a generated
+  each pad to the pin it carries, leaves a pad mapped to `None` unconnected on purpose (a contact the
+  design does not use), and refuses a pad no map accounts for. The inter-board connectors get a generated
   2.54 mm header pattern, because every family on the options list uses that grid; an upper half's
   pattern is mirrored (`-UNDER`).
 - `drawn_footprints.py` draws a land pattern from the maker's drawing for each part with no library

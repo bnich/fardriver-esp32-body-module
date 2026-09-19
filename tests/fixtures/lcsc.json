@@ -410,22 +410,6 @@
    ]
   ]
  },
- "C17561": {
-  "footprint": "r0805",
-  "manufacturer": "UNI-ROYAL",
-  "mpn": "0805W8F220JT5E",
-  "package": "0805",
-  "symbol_pins": [
-   [
-    "2",
-    "2"
-   ],
-   [
-    "1",
-    "1"
-   ]
-  ]
- },
  "C17593": {
   "footprint": "r0805",
   "manufacturer": "UNI-ROYAL",
@@ -709,22 +693,6 @@
    ]
   ]
  },
- "C27834": {
-  "footprint": "r0805",
-  "manufacturer": "UNI-ROYAL",
-  "mpn": "0805W8F5101T5E",
-  "package": "0805",
-  "symbol_pins": [
-   [
-    "2",
-    "2"
-   ],
-   [
-    "1",
-    "1"
-   ]
-  ]
- },
  "C28323": {
   "footprint": "c0805",
   "manufacturer": "Samsung Electro-Mechanics",
@@ -973,78 +941,6 @@
    ]
   ]
  },
- "C2988369": {
-  "footprint": "usb-c-smd_g-switch_gt-usb-7010asv",
-  "manufacturer": "G-Switch",
-  "mpn": "GT-USB-7010ASV",
-  "package": "SMD",
-  "symbol_pins": [
-   [
-    "4",
-    "SHELL"
-   ],
-   [
-    "3",
-    "SHELL"
-   ],
-   [
-    "2",
-    "SHELL"
-   ],
-   [
-    "1",
-    "SHELL"
-   ],
-   [
-    "B1A12",
-    "GND"
-   ],
-   [
-    "B4A9",
-    "VBUS"
-   ],
-   [
-    "B5",
-    "CC2"
-   ],
-   [
-    "A8",
-    "SBU1"
-   ],
-   [
-    "B6",
-    "DP2"
-   ],
-   [
-    "A7",
-    "DN1"
-   ],
-   [
-    "A6",
-    "DP1"
-   ],
-   [
-    "B7",
-    "DN2"
-   ],
-   [
-    "A5",
-    "CC1"
-   ],
-   [
-    "B8",
-    "SBU2"
-   ],
-   [
-    "A4B9",
-    "VBUS"
-   ],
-   [
-    "A1B12",
-    "GND"
-   ]
-  ]
- },
  "C2999515": {
   "footprint": "r1206",
   "manufacturer": "FOJAN",
@@ -1058,38 +954,6 @@
    [
     "1",
     "1"
-   ]
-  ]
- },
- "C32713265": {
-  "footprint": "hdr-th_6p-p2_54-h-m-w10_3",
-  "manufacturer": "hanxia",
-  "mpn": "HX PZ2.54-1x6P WZ",
-  "package": "Through Hole,Right Angle,P=2.54mm",
-  "symbol_pins": [
-   [
-    "1",
-    "1"
-   ],
-   [
-    "2",
-    "2"
-   ],
-   [
-    "3",
-    "3"
-   ],
-   [
-    "4",
-    "4"
-   ],
-   [
-    "5",
-    "5"
-   ],
-   [
-    "6",
-    "6"
    ]
   ]
  },
@@ -1758,38 +1622,6 @@
   "mpn": "WJ15EDGKM-3.81-02P-14-00A",
   "package": "P=3.81mm",
   "symbol_pins": null
- },
- "C7519": {
-  "footprint": "sot-23-6_l2_9-w1_6-p0_95-ls2_8-bl",
-  "manufacturer": "ST",
-  "mpn": "USBLC6-2SC6",
-  "package": "SOT-23-6L",
-  "symbol_pins": [
-   [
-    "1",
-    "1"
-   ],
-   [
-    "2",
-    "2"
-   ],
-   [
-    "3",
-    "3"
-   ],
-   [
-    "4",
-    "4"
-   ],
-   [
-    "5",
-    "5"
-   ],
-   [
-    "6",
-    "6"
-   ]
-  ]
  },
  "C81598": {
   "footprint": "sod-123f_l2_7-w1_6-ls3_8-rd",

@@ -20,7 +20,10 @@ def d():
 
 
 def _fitted(d):
-    return [p for p in d.parts if not p.dnp and p.mpn != "NET-TIE"] + list(d.connectors)
+    """Copper is not fitted: the net tie, and a connector that is a land only
+    (the Tag-Connect pads)."""
+    return ([p for p in d.parts if not p.dnp and p.mpn != "NET-TIE"]
+            + [c for c in d.connectors if not c.land])
 
 
 #: The inter-board connectors wait on the owner's choice of family

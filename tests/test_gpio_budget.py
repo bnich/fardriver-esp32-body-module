@@ -22,7 +22,7 @@ def _c(ref):
 def clean() -> Design:
     parts = (
         Part("U401", "ESP32-S3-WROOM-1-N8", "module", "BRAIN", "MODULE",
-             ("3V3", "GND", "IO0", "IO1", "IO4", "IO7", "IO17", "IO19", "IO43"), 3.1),
+             ("3V3", "GND", "IO0", "IO1", "IO4", "IO7", "IO17", "IO43"), 3.1),
         Part("Q401", "AO3400A", "SOT-23", "BRAIN", "NFET", ("G", "S", "D"), 1.1,
              v_max=30.0),
         Part("U301", "TPS4H160B", "HTSSOP-28", "DRV", "IC", ("CS", "VS", "GND"), 1.2),
@@ -32,7 +32,6 @@ def clean() -> Design:
         Connector("J408", "BRAIN", "service header",
                   (ConnPin("1", "BOOT"), ConnPin("2", "U0TXD")), 8.5,
                   leaves_box=False),
-        Connector("J404", "BRAIN", "USB-C", (ConnPin("A7", "USB_DM"),), 3.2),
         Connector("J402", "BRAIN", "FarDriver serial",
                   (ConnPin("1", "UART1_TX_WIRE"),), 7.0),
     )
@@ -52,7 +51,6 @@ def clean() -> Design:
         # reserved pins doing only their reserved job
         Net("U0TXD", (("U401", "IO43"), ("J408", "2")), "3V3", gpio="GPIO43"),
         Net("BOOT", (("U401", "IO0"), ("J408", "1"), ("R3", "2")), "3V3", gpio="GPIO0"),
-        Net("USB_DM", (("U401", "IO19"), ("J404", "A7")), "3V3", gpio="GPIO19"),
         # an ordinary signal that leaves the box
         Net("UART1_TX", (("U401", "IO17"), ("R4", "1")), "3V3", gpio="GPIO17"),
         Net("UART1_TX_WIRE", (("R4", "2"), ("J402", "1")), "3V3"),
@@ -67,13 +65,16 @@ def only(errs, *needles):
 
 
 # --- silicon and module facts -----------------------------------------------------
-def test_the_pool_is_thirty_and_here_is_why():
+def test_the_pool_is_thirty_two_and_here_is_why():
     assert len(g.EXISTS) == 45                       # GPIO0-21 and 26-48
-    assert len(g.POOL) == 45 - 7 - 2 - 2 - 4 == 30
+    assert len(g.POOL) == 45 - 7 - 2 - 4 == 32
     for pin in (22, 23, 24, 25):
         assert pin not in g.EXISTS
-    for pin in (*range(26, 33), 33, 34, 19, 20, 0, 3, 45, 46):
+    for pin in (*range(26, 33), 33, 34, 0, 3, 45, 46):
         assert pin not in g.POOL, f"GPIO{pin}"
+    # No USB port on the board: the native USB pins are ordinary pins, GPIO20
+    # with its reset pull-up (rules GPIO-RESET-PULL watches what it drives).
+    assert {19, 20} <= g.POOL and 20 in g.RESET_PULL_UP
 
 
 def test_the_wroom_1_has_no_pad_for_33_or_34():
@@ -85,7 +86,7 @@ def test_the_wroom_1_has_no_pad_for_33_or_34():
 def test_gpio43_is_in_the_pool_but_can_never_drive():
     assert g.BOOT_LOG == 43
     assert 43 in g.POOL and 43 not in g.DRIVER_POOL
-    assert len(g.DRIVER_POOL) == 29
+    assert len(g.DRIVER_POOL) == 31
 
 
 def test_adc1_is_gpio_1_to_10_less_the_strapping_pin():
@@ -97,7 +98,7 @@ def test_adc1_is_gpio_1_to_10_less_the_strapping_pin():
 def test_demand_is_every_tagged_net_and_nothing_typed():
     assert [(s.net, s.gpio) for s in g.demand(clean())] == [
         ("BOOT", 0), ("KEY_SENSE", 1), ("ISENSE_ADC", 4), ("HORN_CMD", 7),
-        ("UART1_TX", 17), ("USB_DM", 19), ("U0TXD", 43)]
+        ("UART1_TX", 17), ("U0TXD", 43)]
     assert not hasattr(g, "DEMAND") and not hasattr(g, "TOTAL")
 
 
@@ -115,7 +116,7 @@ def test_demand_sees_through_a_series_resistor_but_not_through_a_rail():
 def test_adding_a_signal_takes_a_pin_out_of_the_spare_list():
     d = clean()
     assert 5 in g.spare(d) and 7 not in g.spare(d)
-    assert len(g.spare(d)) == 30 - 5                 # 5 of the 7 nets are pool pins
+    assert len(g.spare(d)) == 32 - 5                 # 5 of the 6 nets are pool pins
     more = d.with_net(Net("FAN_CMD", (("U401", "IO5"),), "3V3", gpio="GPIO5"))
     assert 5 not in g.spare(more)
 
@@ -130,7 +131,6 @@ def test_the_clean_design_closes():
     ("GPIO27", "in-package flash"),
     ("GPIO33", "no pad on the WROOM-1"),
     ("GPIO34", "no pad on the WROOM-1"),
-    ("GPIO20", "native USB"),
     ("GPIO45", "strapping pin"),
 ])
 def test_a_signal_outside_the_pool_is_reported(gpio, why):
@@ -143,11 +143,9 @@ def test_a_strapping_pin_may_not_leave_the_box_either():
          "'UART1_TX'", "strapping pin")
 
 
-def test_a_usb_pin_may_not_pick_up_a_second_job():
-    d = clean().replace_net(
-        "USB_DM", pins=(("U401", "IO19"), ("J404", "A7"), ("Q401", "G")))
-    d = d.replace_net("HORN_GATE", pins=(("R1", "2"),))
-    only(g.report(d), "'USB_DM'", "native USB")
+def test_the_native_usb_pins_are_ordinary_pins_here():
+    for gpio in ("GPIO19", "GPIO20"):
+        assert g.report(clean().replace_net("HORN_CMD", gpio=gpio)) == []
 
 
 def test_one_gpio_given_to_two_nets_is_reported():

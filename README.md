@@ -96,7 +96,10 @@ EasyEDA Pro project. No board is laid out yet.
   (2.62 A worst case) and a Cincon module for the 5 V logic, kept apart so a lamp or horn fault cannot
   brown out the brain. **No raw 12 V leaves the box:** every lamp is a `TPS4H160B` channel
   (current-limited, with open-load and fault reporting), and horn, fan and buzzer share one more such
-  channel and are switched on their return. BRAIN takes no 12 V; USB VBUS is sensed, never a supply.
+  channel and are switched on their return. BRAIN takes no 12 V.
+- **Service.** No USB port: first flash, the console and recovery when OTA fails run over UART0, on a
+  Tag-Connect TC2030-NL land on BRAIN — bare pads in the ESP-Prog's order, reached with a
+  `TC2030-IDC-NL` cable ([BOM](docs/bom.md) A8). Later updates go over WiFi.
 - **Harness.** Every wire enters on a locking pluggable screw terminal, in three families by job —
   7.62 mm for pack voltage (one connector), 5.08 mm for the brake levers and the FarDriver brake/kill,
   3.81 mm for the rest — so a plug of one job cannot seat in a header of another, and every
@@ -130,7 +133,7 @@ impersonates a CAN FarDriver toward the display; the controller itself stays on 
 
 | | |
 |---|---|
-| [**docs/plan.md**](docs/plan.md) | The module plan — architecture, decisions (D1–D24), pin map, power design, the four-board partition (§9.2), per-function takeover. The critical path is in its header |
+| [**docs/plan.md**](docs/plan.md) | The module plan — architecture, decisions (D1–D25), pin map, power design, the four-board partition (§9.2), per-function takeover. The critical path is in its header |
 | [**docs/bom.md**](docs/bom.md) | Bill of materials and order tracker. **This owns procurement** — change a part here first, then the plan section its Notes names. It also says what JLC places, what is ordered loose and what you hand-solder |
 | [**docs/inputs-bench-session.md**](docs/inputs-bench-session.md) | Bench procedure and results for the switch sets, brake-lever wires, lever switch type, red button, serial direction and KEY tap |
 | [**tools/**](tools/README.md) | Design-time tooling, stdlib Python. `tools/netlist.py` **is** the board set — parts, nets, connectors, board assignment — and the checks below gate every change to it |

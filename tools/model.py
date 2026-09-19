@@ -109,7 +109,7 @@ class Connector:
     height_confirmed: bool = False
     footprint_mm: tuple[float, float] = (0.0, 0.0)
     #: True for harness connectors (wires leave the enclosure). False for the
-    #: board-to-board interfaces and the internal service header.
+    #: board-to-board interfaces and the internal service pads.
     leaves_box: bool = True
     pitch_mm: float = 2.54
     #: Set for the inter-board interfaces; None for harness connectors.
@@ -135,6 +135,9 @@ class Connector:
     #: How far its mated plug stands out past the board edge, from the plug's
     #: drawing; the wire leaves straight out of the back of it.
     overhang_mm: float = 0.0
+    #: A land drawn from its maker's drawing (`drawn_footprints.LANDS`), for a
+    #: connector that is copper only: a Tag-Connect pad set.
+    land: str = ""
 
 
 @dataclass(frozen=True)

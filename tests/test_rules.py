@@ -352,7 +352,7 @@ def fired(d: Design, rule_id: str) -> list[str]:
 
 
 RULE_IDS = {
-    "BD-2", "BD-4", "GPIO-TAG", "GPIO-DUP", "GPIO-PAD", "GPIO-USB", "GPIO-43",
+    "BD-2", "BD-4", "GPIO-TAG", "GPIO-DUP", "GPIO-PAD", "GPIO-43",
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
@@ -489,7 +489,6 @@ def test_bd4_nan_pitch_is_not_a_pass():
 def test_silicon_facts_are_pinned():
     assert rules.GPIO_STRAPPING == {0, 3, 45, 46}
     assert rules.GPIO_ADC1 == set(range(1, 11))
-    assert rules.GPIO_USB == {19, 20}
     assert rules.GPIO_BOOT_LOG == 43
     assert rules.GPIO_FLASH == set(range(26, 33))
     assert not rules.MODULE_GPIOS & {22, 23, 24, 25, 33, 34}
@@ -532,12 +531,6 @@ def test_gpio_tag_fires_on_a_tag_with_no_mcu_pin():
 
 def test_gpio_tag_fires_on_a_malformed_tag():
     assert fired(GOOD.replace_net("SW_IN", gpio="IO15"), "GPIO-TAG")
-
-
-def test_gpio_usb_fires_on_a_non_usb_net_and_not_on_usb():
-    assert not fired(GOOD, "GPIO-USB")
-    bad = rename_net(GOOD, "USB_DP", "AUX_OUT")
-    assert any("GPIO20" in e for e in fired(bad, "GPIO-USB"))
 
 
 def test_gpio43_is_allowed_on_the_service_header():

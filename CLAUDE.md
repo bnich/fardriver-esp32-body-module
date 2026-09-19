@@ -5,7 +5,7 @@ Parent guidance: `../CLAUDE.md` — repo map, conventions, public-repo hygiene, 
 ## What this is
 
 Design stage — no firmware, no module hardware built. `docs/plan.md` is the architecture and the
-decision log (D1–D24); its header carries the critical path. `docs/bom.md` **owns procurement** of
+decision log (D1–D25); its header carries the critical path. `docs/bom.md` **owns procurement** of
 what the owner buys: the breadboard parts, the parts JLC cannot place (hand-soldered), and the parts
 ordered loose with the boards and fitted by the owner. Change a part there first, then the plan
 section that line's Notes names. The LCSC part JLC places for each part lives in `tools/netlist.py`.
@@ -120,7 +120,12 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
 - ⛔ **`MCP23017` GPA7 and GPB7 are OUTPUT-ONLY** (DS20001952 rev D). Never land an input on them; a
   16-bit expander offers 14 inputs.
 - ⛔ **The `ESP32-S3-WROOM-1` / `-1U` module has no IO33 or IO34 pads.** They exist on the silicon
-  only. The clean GPIO pool on the custom board is **30**.
+  only. The clean GPIO pool on the custom board is **32**: it has no USB port, so GPIO19/20 are
+  ordinary pins there.
+- **The board is flashed over UART0 at `J408`, a Tag-Connect TC2030-NL land** (D25): bare copper,
+  no paste, pads in the ESP-Prog's PROG order (1 EN · 2 VDD, not connected · 3 TXD0 · 4 GND · 5 RXD0
+  · 6 IO0 — TXD0 is the S3's own TX). ⛔ `TC2030-MCP-NL` is Microchip's ICSP cable; it cannot program
+  an ESP32. **GPIO44 carries U0RXD and nothing else** — a harness wire there fights the programmer.
 - **ESP32-S3 `R8`/`R16V` are rated to 65 °C only.** Use `-N8` (85 °C) or `-H4` (105 °C).
 - **No wire leaves the box on strapping pins 0/3/45/46**; analog only on GPIO1–10 (ADC2 dies with WiFi).
 - **TVS parts follow the line's idle voltage:** the 5 V `SMS05T1G` goes only on 3.3 V-class lines;

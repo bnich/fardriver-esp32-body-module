@@ -538,18 +538,9 @@ def test_every_wire_that_leaves_the_box_has_a_tvs_on_its_own_board(d, w):
             assert tvs, f"{c.refdes}.{cp.pin} ({cp.net}) leaves {c.board} unprotected"
 
 
-#: A rail-to-rail array's own rail pin, which its datasheet ties to the supply
-#: its lines live on.  ST USBLC6-2 §2.2: pin 5 to 'VCC'; V_BR 6 V min against a
-#: 3.3 V rail, which no converter's OVP window reaches.
-_ARRAY_RAIL_PIN = {"USBLC6-2SC6": ("VBUS", "V3P3")}
-
-
 def test_no_quad_array_touches_a_raw_rail_and_v12_has_its_own_clamp(d, w):
     for a in _arrays(d):
-        rail = _ARRAY_RAIL_PIN.get(a.mpn)
-        if rail:
-            assert w.net(a.refdes, rail[0]) == rail[1], a.refdes
-        lines = {w.net(a.refdes, p) for p in a.pins if not rail or p != rail[0]}
+        lines = {w.net(a.refdes, p) for p in a.pins}
         assert not lines & {"V12", "V5", "V3P3"}, (
             f"{a.refdes}: the TDK's OVP window overlaps the array's V_BR")
     single = [t for t in w.between("V12", "GND", {"TVS"}) if len(t.pins) == 2]
@@ -696,13 +687,13 @@ def test_the_module_has_its_reset_rc_and_a_recovery_path(d, w):
         "Espressif: CHIP_PU must not float; RC = 10 k / 1 uF")
     service = [c for c in d.connectors if not c.leaves_box and not c.interface
                and {en, w.net("U401", "IO0")} <= {cp.net for cp in c.pins}]
-    assert service, "no internal header brings out EN and IO0 for recovery"
+    assert service, "no internal service pads bring out EN and IO0 for recovery"
     nets = {cp.net for cp in service[0].pins}
     tx = w.net("U401", "IO43")
     assert tx not in nets and any(w.between(tx, n, {"R"}) for n in nets), (
-        "U0TXD reaches the header through its HDG series resistor")
+        "U0TXD reaches the service pads through its HDG series resistor")
     assert {w.net("U401", "IO44"), "GND"} <= nets
-    assert "V3P3" not in nets, "the adapter powers itself: no rail on the header"
+    assert "V3P3" not in nets, "the adapter powers itself: no rail on the pads"
 
 
 def test_the_pin_map_obeys_the_silicon(d, w):
@@ -716,7 +707,9 @@ def test_the_pin_map_obeys_the_silicon(d, w):
             assert not wires, f"{strap} reaches the harness on {wires}"
     assert d.net("TWAI_TX").gpio == "GPIO10" and d.net("TWAI_RX").gpio == "GPIO21"
     assert d.net("FAN_CMD").gpio == "GPIO6", "GPIO44's boot pull-up sits at V_th"
-    assert d.net("UART2_RX").gpio == "GPIO44"
+    assert d.net("U0RXD").gpio == "GPIO44"
+    assert not [c.refdes for c in w.connectors_on("U0RXD") if c.leaves_box], (
+        "the programmer's TX drives GPIO44 while flashing: no harness wire there")
     drivers = {n.gpio for n in d.nets if n.gpio and w.parts_on(n.name, FETS)}
     assert "GPIO43" not in drivers and "GPIO44" not in drivers
 
@@ -736,14 +729,8 @@ def test_boost_is_a_dedicated_pin_that_defaults_off(d, w):
     assert {r for r, _ in d.net(cmd[0]).pins if r.startswith("U")} == {"U401"}
 
 
-def test_can_transceiver_mode_pin_and_usb_cc_are_terminated(d, w):
+def test_can_transceiver_mode_pin_is_terminated(d, w):
     assert "GND" in w.walk(w.net("U404", "RS"), {"R"}), "RS open = undefined mode"
-    usb = [c for c in d.connectors if "USB" in c.name.upper()]
-    assert usb
-    cc = [cp.net for cp in usb[0].pins if "CC" in cp.net]
-    assert len(cc) == 2 and all(w.between(n, "GND", {"R"}) for n in cc)
-    assert all(abs(ohms(w.between(n, "GND", {"R"})[0]) - 5100) < 1 for n in cc), (
-        "USB Type-C: Rd = 5.1 k marks a device")
 
 
 # ─── interfaces and connectors ───────────────────────────────────────────────
@@ -808,7 +795,8 @@ def test_84v_harness_connectors_keep_their_distance(d):
 
 def test_connectors_state_what_they_are(d):
     for c in d.connectors:
-        assert c.height_mm > 0 and min(c.footprint_mm) > 0, c.refdes
+        # A copper-only land (the Tag-Connect pads) stands 0 mm tall.
+        assert (c.height_mm > 0 or c.land) and min(c.footprint_mm) > 0, c.refdes
         if c.interface:
             assert not c.leaves_box, f"{c.refdes}: an inter-board header is inside"
     display = [c for c in d.connectors if "DISPLAY" in c.name.upper()]

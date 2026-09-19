@@ -30,3 +30,12 @@ def test_a_net_joined_to_pack_voltage_joins_the_class_whatever_its_label():
 
 def test_the_clearance_is_the_160_v_band():
     assert layout_rules.HV_CLEARANCE_MM == 1.25
+
+
+def test_the_tag_connect_keep_out_reaches_the_owner():
+    """Tag-Connect notes 1-2: no track or via between the pads' centres, and
+    nothing within 0.020 in of a pad.  The project cannot carry either."""
+    text = layout_rules.text()
+    line = next(l for l in text.splitlines() if "J408" in l)
+    assert "BRAIN" in line and "x -1.27 to 1.27, y -0.635 to 0.635" in line
+    assert "0.51 mm" in line

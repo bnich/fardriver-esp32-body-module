@@ -24,7 +24,7 @@ Two kinds of walk, and the difference is deliberate:
 Every error string starts with a stable rule ID, then a colon:
 
   BD-2  BD-4
-  GPIO-TAG  GPIO-DUP  GPIO-PAD  GPIO-USB  GPIO-43  GPIO-ADC1  GPIO-STRAP
+  GPIO-TAG  GPIO-DUP  GPIO-PAD  GPIO-43  GPIO-ADC1  GPIO-STRAP
   GPIO-RESET-PULL
   D14  TURN-ON
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
@@ -66,7 +66,6 @@ def _silicon(name: str, local) -> frozenset[int]:
 
 GPIO_EXISTS = _silicon("EXISTS", set(range(0, 22)) | set(range(26, 49)))
 GPIO_FLASH = _silicon("FLASH", range(26, 33))        # in-package SPI flash
-GPIO_USB = _silicon("USB", {19, 20})                 # native USB D-/D+
 GPIO_STRAPPING = _silicon("STRAPPING", {0, 3, 45, 46})
 GPIO_ADC1 = _silicon("ADC1", range(1, 11))           # ADC2 dies with WiFi
 GPIO_RESET_PULL_UP = _silicon("RESET_PULL_UP", {0, 20, 39, 43, 44})
@@ -143,15 +142,10 @@ _HV_JOIN = ("L", "FUSE", "LINK", "CMCHOKE") + _DIODES + FETS
 #: clamp returned through 10 k is not grounded.
 _GROUND_JOIN = ("LINK", "L", "FUSE", "CMCHOKE")
 
-#: Multi-pin protection parts whose pins are named by role, not A/K:
-#: MPN prefix -> (diodes as (anode pin, cathode pin), pins joined inside).
-#: ST USBLC6-2 (usblc6-2.pdf) p.1: steering diodes GND -> I/O -> VBUS and a
-#: zener GND -> VBUS; pins 1/6 are one I/O line (flow-through), 3/4 the other.
-_TVS_TOPOLOGY = {
-    "USBLC6": ((("GND", "IO1A"), ("GND", "IO2A"), ("IO1A", "VBUS"),
-                ("IO2A", "VBUS"), ("GND", "VBUS")),
-               (("IO1A", "IO1B"), ("IO2A", "IO2B"))),
-}
+#: Multi-pin protection parts whose pins are named by role, not A/K or the
+#: SMS arrays' A2/K1: MPN prefix -> (diodes as (anode pin, cathode pin), pins
+#: joined inside), typed from the part's datasheet.  None on the board today.
+_TVS_TOPOLOGY: dict[str, tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]] = {}
 
 
 def _diodes(p: Part) -> tuple[list[tuple[str, str]], list[tuple[str, str]]] | None:
@@ -712,9 +706,6 @@ def gpio_rules(d: Design) -> list[str]:
                        "has no pad on the WROOM-1" if g in WROOM1_NOT_BROUGHT_OUT
                        else "does not exist on the S3")
                 errs.append(f"GPIO-PAD: net {name!r} uses GPIO{g}, which {why}.")
-            if g in GPIO_USB and not name.startswith("USB_"):
-                errs.append(f"GPIO-USB: net {name!r} uses GPIO{g}, which is "
-                            f"native USB D-/D+ and the OTA fallback.")
             if g == GPIO_BOOT_LOG or g in GPIO_STRAPPING:
                 reach = reach if reach is not None else ix.signal_reach(name)
             if g == GPIO_BOOT_LOG:
@@ -735,7 +726,7 @@ def gpio_rules(d: Design) -> list[str]:
                     for conn in sorted(ix.net_conns.get(other, ())):
                         c = ix.conns.get(conn)
                         if c is None or not (c.leaves_box or c.interface):
-                            continue            # the internal service header
+                            continue            # the internal service pads
                         where = ("leaves the box" if c.leaves_box else
                                  f"crosses {c.interface} to another board")
                         errs.append(
@@ -1165,7 +1156,7 @@ def polarity(d: Design) -> list[str]:
     """Every diode-like part names its pins by role, and each diode inside it
     points the way a clamp must: cathode on the net at the higher level. A
     multi-pin array numbered 1-6 cannot be checked at all, and a swapped pair
-    of its pins (the USB array's GND and VBUS) shorts a rail."""
+    of its pins (an array's anode and a line) shorts a rail."""
     ix = _index(d)
     errs = []
     for p in d.parts:

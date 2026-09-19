@@ -164,7 +164,7 @@ class A dry contact to the module** (D20).
 
 **The bar controls take 12 of expander #1's 14 input-capable bits** (GPA7/GPB7 are output-only,
 §3.1.3) — the left pod's 7 (the selector takes two), the right pod's 4, and the throttle's boost
-button. On the custom board the other two carry the `BL` copy and USB VBUS sense, so #1 is full; the
+button. On the custom board a thirteenth carries the `BL` copy and the fourteenth is spare; the wired
 spares are expander #2's 13 bits, each class-A conditioned on an unfitted internal header (§9.8.2).
 Rule for the spares: **wire them now, assign them in firmware later** — the bar-to-box cable is the
 irreversible part; the function is one line of code.
@@ -242,7 +242,7 @@ Capabilities read from ESP-IDF v5.5's own `components/soc/<target>/include/soc/s
 **Why the S3:**
 1. **Pin count.** The S3-DevKitC-1 breaks out 36 GPIOs; the C6-DevKitC-1 ~23, the H2 fewer.
 2. **UART headroom.** Two independent RX taps (IN-13 controller TX, IN-14 dongle TX) plus one TX. The
-   C6's two HP UARTs would both be consumed; the S3 has 3, with the console on native USB.
+   C6's two HP UARTs would both be consumed, leaving none for the console; the S3 has 3.
 3. **Two cores.** Bus work (two serial streams, and the fixed-cadence CAN transmit when §7.2 resumes)
    pinned to one core, WiFi to the other, so a WiFi callback cannot jitter the bus.
 
@@ -283,7 +283,9 @@ Verified against IDF v5.5 headers unless noted:
 - ⛔ **GPIO33 and GPIO34 exist on the silicon but not on the module.** The `ESP32-S3-WROOM-1` /
   `-WROOM-1U` has no pads for them (module datasheet, pin table), so nothing can ever land there.
 - **GPIO22–25 do not exist on the S3.** Every existing pin can drive an output.
-- **GPIO19/20 are USB D−/D+** — reserved; the console/flash path is native USB, which frees a UART.
+- **GPIO19/20 are USB D−/D+.** On the DevKit they are its native USB port, and reserved. The custom
+  board has no USB port — flashing and the console run over UART0 (§9.8.1) — so there they are
+  ordinary pins; GPIO20 comes out of reset pulled up.
 - **GPIO43 = U0TXD** emits the ROM boot log at 115200 baud on every reset → **never a load driver.**
 - ⚠️ **Strapping pins GPIO0, 3, 45, 46** (S3 datasheet; bench-confirm before committing the map).
   **No wire that leaves the box may land on these.** GPIO0 is the boot-mode pin — a rider holding a
@@ -388,8 +390,8 @@ custom board (§9.8) is where full native lives; keep the prototype's margin.
 **IN-04 high/low (two bits)** · IN-07 red button · **IN-08 lighting slider (two bits)** · IN-09
 flash-to-pass · IN-10 hazard · IN-11 run/off sense · the spare start button. IN-05/06 (brakes) are
 **not** here — native for §7's <10 ms. 2 input bits spare, so a bar control added later needs only a
-wire. (On the custom board those two carry the `BL` copy and USB VBUS sense, and the spares move to
-expander #2, §9.8.2.)
+wire. (On the custom board one carries the `BL` copy, the other stays spare, and the wired spares move
+to expander #2, §9.8.2.)
 ⛔ **`MCP23017` pins GPA7 and GPB7 are OUTPUT-ONLY** (Microchip DS20001952 rev D) — never land an
 input on them, and have firmware set `IODIR` bit 7 to output on both ports. That is why a 16-bit
 expander offers 14 inputs.
@@ -564,8 +566,8 @@ want; correct star grounding buys what isolation would.
 
 - ⚠️ **Residual:** the FarDriver's own grounds still close a loop with the module ground. The star
   point keeps it small; it is not designed out.
-- ⚠️ **A laptop on BRAIN's USB-C or service header bonds its ground to the bike's.** Use an isolated
-  USB adapter whenever the pack is connected.
+- ⚠️ **A laptop on BRAIN's service pads (`J408`) bonds its ground to the bike's.** Use an isolated USB
+  adapter, or a laptop on battery, whenever the pack is connected.
 
 #### 3.2.5 Module power switching — the key switch stays a logic switch (D13)
 
@@ -1109,15 +1111,10 @@ V<sub>GS</sub> 2.5 V); SOT-23, 30 V, with open caveats in `bom.md` (D3).
     the parked display and one-line lines (not fitted).
   - **onsemi `SMS05T1G`** (the same family sheet and SC-74 pinout; V<sub>RWM</sub> 5 V, V<sub>BR</sub>
     6.0 V min, 9.8 V at 5 A, ~300 pF per line) **only** on lines at 5 V or below — the pod inputs,
-    `RUN` (5.03 V, at least 0.7 V under V<sub>BR</sub> min), the boost button, UART, the USB-C CC
-    pins and the spare inputs. It also sits on CAN at the parked display connector, where ~300 pF per
+    `RUN` (5.03 V, at least 0.7 V under V<sub>BR</sub> min), the boost button, UART and the spare
+    inputs. It also sits on CAN at the parked display connector, where ~300 pF per
     line is too heavy for the bus. ⛔ A 5 V array on a 12 V line conducts continuously: a dead short
     across the channel it was meant to protect.
-  - **`USBLC6-2SC6`** on the USB D+ / D− pair — 3.5 pF per line, where a general-purpose array's
-    165–220 pF is tens of times too much for a USB pair. ⚠️ **Its pin 5 ("VBUS", the top of its
-    steering diodes) is on 3.3 V, not the USB VBUS:** D+ comes out of reset pulled up, and through the
-    steering diode it would hold an unplugged VBUS near 2.7 V, where the VBUS sense reads neither high
-    nor low.
 - ⚠️ **No raw 12 V leaves the box.** Horn `+`, fan `+` and buzzer `+` ride AUX12 (§6.2.2a). One
   **`SMBJ18A`** clamps the 12 V rail itself, at the `TPS4H160B`s' `VS` — the 18 V grade, because its
   20.0 V minimum breakdown clears the TDK's 15.0–17.4 V over-voltage window where a 15 V part's 16.7 V
@@ -1392,7 +1389,7 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **D3** | Where do the "dashboard buttons" go? | **(d) a bought handlebar switch set** — extended to both pods by D20 | **DECIDED 2026-09-10 (owner).** A new switch set is plain dry contacts to the module (§4 class A). No printed pad, inserts or sealing job. **Selection criteria:** ⚠️ **wetting current** — prefer gold-plated or sealed contacts and use **1 kΩ pull-ups** (§4) · latching vs momentary per control (D21/D22) · ⛔ **avoid sets with built-in LEDs or a controller/USB module** (they need their own 12 V feed and ground reference) · the pair must cover turn (3-position), horn, high/low, lighting (3-position) and hazard — ⛔ the evaluated `B0CT897DDX` has **no horn button** · ⬜ measure the bar clamp Ø (22.2 mm / ⅞″ expected, some 25.4 mm) and ⬜ check right-bar space (throttle grip, switch set and brake perch compete). Two sets, **~$30–50** |
 | **D4** | Boost button routing | **(b) through the module** — HOLD / TOGGLE, long-press mode switch, safety clears | **DECIDED 2026-09-06.** The modes exist only with the module in the middle; mitigations: open-drain default-off output, brake/key/timeout clears, the controller's own boost timer |
 | **D5** | Lamp voltage class | **12 V** | **RESOLVED 2026-09-08.** The headlight housing is stamped `LOW BEAM 12V/8.5W`, `HIGH BEAM 12V/8.5W`, `DAYTIME RUNNING 12V/6.5W`; the horn measured 12 V / 0.10 A. The module's 12 V rail drives the bike's lamps directly |
-| **D6** | Board | **ESP32-S3 DevKitC-1** | **DECIDED 2026-09-07 (§3.1).** Pins (21 native used, 7 spare of a 28-pin clean pool, §3.1.3; a pool of 30 on the custom board, §9.8), 3 UARTs for the two RX taps, two cores to keep bus timing off the WiFi core. Not the H2 (no WiFi); the C6's second TWAI is the only thing given up — on the prototype an `MCP2515`/`TCAN330` on SPI recovers it from the spare pins. The module *variant* is a thermal choice (D18) |
+| **D6** | Board | **ESP32-S3 DevKitC-1** | **DECIDED 2026-09-07 (§3.1).** Pins (21 native used, 7 spare of a 28-pin clean pool, §3.1.3; a pool of 32 on the custom board, §9.8), 3 UARTs for the two RX taps, two cores to keep bus timing off the WiFi core. Not the H2 (no WiFi); the C6's second TWAI is the only thing given up — on the prototype an `MCP2515`/`TCAN330` on SPI recovers it from the spare pins. The module *variant* is a thermal choice (D18) |
 | **D7** | Use a spare latching bar input as **FarDriver gear select** (Low / Mid / High via `LowSpeedPin` PIN2 / `HighSpeedPin` PIN3)? | **(b) no for first ride** — stay `HighOnly`; (a) is cheap to add later | Options: (a) module grounds SDL/SDH through an open-drain MOSFET with `SPModeConfig` set to a 3-speed mode (currently `HighOnly`) · (b) stay `HighOnly`, gear changes in the app · (c) a hardware 3-speed switch. It is a **power limiter, not a ratio**: **Low** = 25% line / 50% phase (**20 A / 100 A**), **Mid** = 50% / 75% (**40 A / 150 A**), `MidSpeed_rpm` 4500, **High** = full 80 A / 200 A. ⚠️ **`LowSpeed_rpm` = 0 is vendor-shipped and ambiguous** (0 rpm cap, or no cap?) — resolve on the bench before enabling. ⚠️ Costs 2 module outputs and competes with boost for PIN2 (§7.1 — boost uses PIN17). Mid ≈ the "everyday 60 A" of §7.1. Its real value is a **persistent** low-power mode (lending the bike, wet roads) — a latching switch fits it |
 | ⏸️ **D8** | How to obtain the CAN table the Chaojie parses (§7.2) | ⏸️ **PARKED (D19)** — do not work this row | **Known:** protocol **`CAN` = 18** (Chaojie, 2026-09-10); **`CANBaud` = 0 = 250K** (reseller text — "0-250 kbps" is an enum index, `fardriver-nd72450-reference/tools/heb_decode.py:24`); the panel is a receive-only node, so the module transmits in `TWAI_MODE_NO_ACK` (MEDIUM); the goal is demonstrated on this display model (NRGZ28: motor temp, controller temp, bus current populate; **phase current stays blank**); **M12 is closed** — the map is firmware-internal (§7.2.1). **Missing:** the byte map. Routes when it re-opens: `can18-investigation.md` §8. ⛔ Do not enable CAN on our controller (§7.2) |
 | **D9** | What stays live at key-off? | **(a) nothing** — module + 12V rail off the key-switched path | **DECIDED 2026-09-07.** Zero parasitic drain; the §3.2.2 ride-out cap still gives a clean shutdown. **Hazards die with the key** — accepted. The D13 switch releases up to ~0.8 s after the key opens, while its gate capacitor discharges (§3.2.5); nothing is live after that |
@@ -1411,6 +1408,7 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **D21** | Lighting control | **(b) a 3-position slider + a high/low toggle**, as the bought set provides | **DECIDED 2026-09-10 (owner):** *"for the lighting, there is a high/low toggle, and a 3 position slider."* The slider's positions **are** D14's three states in order, with "low beam implies running" built into the hardware; the state is visible; and at boot the module reads the actual switch, not a remembered value. It improves **recovery**, not **immunity** — a hung module still drives no lamps. Lighting becomes a combinational lookup (§7). ⬜ Ohm the slider out before wiring (OFF/A/B vs OFF/A/A+B) |
 | **D22** | Turn-signal control | **A push-push latch whose button self-centres, with auto-cancel** — a fact of the bought left pod, in hand 2026-09-11 | ⭐ **It is a PUSH-PUSH (alternate-action) latch whose BUTTON SELF-CENTRES:** push left → latched left, the button springs back; press again to unlatch. **The latch is electrical and hidden, so the switch has NO visible state** — the dash telltale is the only indicator, and that is what auto-cancel exists to compensate for. ✅ **Auto-cancel: 20 s above 15 km/h, or 60 s regardless.** ⭐ **Implement on EDGES, not levels:** `open→closed` starts · `closed→open` stops · **auto-cancel stops the lamp and marks that latch cycle spent** so the still-closed contact cannot restart it · the next `open→closed` is a fresh signal. ⛔ **A latch state machine is required** — press = on · same side = off · **press opposite = switch sides**, a real firmware case since both sides latch independently. ⚠️ **Auto-cancel depends on speed from the serial link** — degrade to the 60 s timeout alone when speed is unavailable. ✅ Also confirmed on this pod: **horn momentary · hazard latching · high/low 2-position.** ⭐ **The rear headlight-marked momentary is the natural flash-to-pass** — IN-09 |
 | **D23** | Does the brake light depend on firmware? | **No — the brake circuit switches it in hardware** (`brake-circuit.md`) | **DECIDED 2026-09-11 (owner).** Each lever, through 1N4148 steering diodes, pulls the FarDriver `BL` low (motor cut), pulls P-FET Q1 (`AO3407A`)'s gate low so Q1 switches the tail STOP lamp on (0.12 A, M5) — on the custom board by driving the lamp's `TPS4H160B` channel, which adds a current limit and lamp-out detection (§6.2.2a) — and signals the module on IN-05/06 (10 kΩ pull-ups). **Firmware state cannot affect either function** — a hung, crashed or unflashed module leaves the brake light and the motor cut working; the module only senses. ⚠️ **The lamp is fed from the module's 12 V rail, so loss of that rail takes the lamp with it — not the motor cut**, which the lever makes by itself. The lever carries only a few mA. **Consequences:** no GPIO drives the brake lamp — GPIO41 is free on the prototype map (§3.1.3), and on the custom board the lamp takes the fourth channel of `TPS4H160B` #2, its input driven by Q1 · no hard-brake flash — the lamp is on whenever a lever is pulled · IN-05/06 are class A through the circuit's diodes, still native. **Gate:** **M3**, the lever switch type (§5), before the circuit is built. **Build order:** step 1 levers → `BL` now; step 2 the lamp when the 12 V rail is in; step 3 the module inputs. On the custom build the whole circuit sits on **DRV** (block G, §9.2) |
+| **D25** | How is the custom board flashed and serviced? | **A Tag-Connect TC2030-NL land on UART0 (`J408`) — no USB port** | **DECIDED 2026-09-19 (owner):** *"is the usb port for initial load of the firmware? if so, lets change that to a TC2030-MCP-NL."* The USB-C carried first load, the console and recovery when OTA fails. The `TC2030-MCP-NL` itself is Microchip's ICSP cable (MCLR / VDD / GND / PGD / PGC to an RJ-12), which cannot program an ESP32, so the land is the same TC2030-NL footprint wired for UART0 in the ESP-Prog's order, reached with a `TC2030-IDC-NL` cable (bom A8). It replaces both the USB-C and the pin header, and with them the CC resistors, the VBUS sense divider, both USB ESD parts and the 22 Ω pair; GPIO19/20 join the pool (§9.8.1). Later updates go over WiFi OTA |
 
 ## 9. Component breakdown and build plan
 
@@ -1451,7 +1449,7 @@ most distance between the 84 V node and the 3.3 V serial taps (§3.2.4).
 | 1 — floor | **HVIN** | 84 V | B+ / B− entry and the key tap on one plug, J101; an `SMCJ90A` on B+ and no clamp on the key tap; the D13 soft-start switch and its gate network (§3.2.5), one CM choke per converter, the IN-12 divider | E |
 | 2 | **CONV** | 84 V → 12 V / 5 V | both converters, C1 and C2 (lying on its underside), the hold-up diode and its 1 A fuse in PCB clips (§3.2.2), the Y2 capacitors, the TDK's output capacitors, one single-point tie from the baseplate to ground | E |
 | 3 | **DRV** | 12 V | both `TPS4H160B` with their `CL` / `CS` resistors — the six lamps, the hardware-driven STOP channel and AUX12 (§6.2.2a) — the three low-side FETs, **the whole brake circuit**, the rail's `SMBJ18A`, an `SMF18A` on every 12 V output and the 15 V arrays on the lever and `BL` lines (§6.2.4), the parked display and one-line connectors (footprints only, headers not fitted) | D · G · F |
-| 4 — lid | **BRAIN** | 3.3 V | the `ESP32-S3-WROOM-1` / `-1U` (§9.8.1), its 3.3 V regulator, both `MCP23017`, the CAN transceiver (in standby while CAN is parked), USB-C and a service header, the pod, serial and boost-button connectors with their input conditioning | A · B · C |
+| 4 — lid | **BRAIN** | 3.3 V | the `ESP32-S3-WROOM-1` / `-1U` (§9.8.1), its 3.3 V regulator, both `MCP23017`, the CAN transceiver (in standby while CAN is parked), the Tag-Connect service pads on UART0, the pod, serial and boost-button connectors with their input conditioning | A · B · C |
 
 **Four inter-board interfaces, all on 2.54 mm headers**, so that any one board can be stood in for by a
 breadboard or perfboard section during bring-up (owner, 2026-09-15: *"both. i want full options for
@@ -1504,7 +1502,7 @@ family follows the job,** so a plug of one job cannot seat in a header of anothe
   mated plug reaches 8.8–9.7 mm past the header's face. Each pinout, with its wire colours, is in
   `tools/netlist.py`.
 
-**What JLC does not place.** JLC places every surface-mount part and the harness and service headers.
+**What JLC does not place.** JLC places every surface-mount part and the harness headers.
 The owner **hand-solders** the TDK brick, the Cincon module and both Würth chokes (LCSC has no fit for
 any of them; trim the Cincon's pins before soldering — 5.6 mm minimum, no maximum), and fits the
 **loose parts** ordered with the boards: C1 and C2, bent over and bonded lying on CONV's underside;
@@ -1775,10 +1773,10 @@ conformal-coat anything above 12 V whatever board you buy.
 - **The plate's screws are countersunk** (ISO 10642 M3, into countersinks in the 3.0 mm plate): flush,
   so nothing stands above the plate into the gap under DRV, where DRV's pins hang.
 - ⚠️ **Ingress:** a gasket and cable glands, or a sheltered mounting position.
-- **Recovery access:** BRAIN carries USB-C and an internal service header — EN, IO0, U0TXD (through
-  470 Ω), U0RXD, GND, and **no supply pin**: the USB-serial adapter powers itself — so the stack can
-  be reflashed without dismantling it. ⚠️ With the pack connected, use an isolated USB adapter
-  (§3.2.4).
+- **Recovery access:** BRAIN, the top of the stack, carries a Tag-Connect TC2030-NL land on UART0
+  (`J408`, §9.8.1), so with the lid off the module can be flashed and its console read without
+  dismantling anything: a `TC2030-IDC-NL` cable into an ESP-Prog (bom A8), held on by hand for the
+  flash. ⚠️ With the pack connected, use an isolated USB adapter (§3.2.4).
 - Strain relief at every wire entry (§9.6.2).
 
 **At the prototype stage:**
@@ -1805,16 +1803,16 @@ and don't constrain the custom boards with DevKit artifacts. The custom build is
 | Only **36 of 45** GPIOs reach the headers | ✅ **Gone** — route all of them |
 | **GPIO33, 34** not broken out | ⛔ **Unchanged — the module, not the DevKit.** The `ESP32-S3-WROOM-1` / `-1U` has no IO33 or IO34 pad; both exist only inside the module |
 | **GPIO38 / 48** and the onboard RGB LED (the v1.0-vs-v1.1 trap) | ✅ **Gone** — no LED, or fit one where you like |
-| **GPIO44** driven by the onboard CP2102N | ✅ **Recovered** with native USB (GPIO19/20) and no UART bridge — as an input (the IN-14 tap lands there). ⚠️ Its boot-time pull-up sits at a FET's threshold, so never a gate |
+| **GPIO44** driven by the onboard CP2102N | ✅ **Recovered** — no UART bridge. It is U0RXD, the console and download RX on the service pads, and nothing else: a harness wire there would fight the programmer's TX, so the IN-14 tap is held for GPIO19. ⚠️ Its boot-time pull-up sits at a FET's threshold, so never a gate |
 | **GPIO35, 36, 37** and octal PSRAM | ✅ **Yours by purchase order** — specify the module variant (§9.8.3) |
 | ⛔ **Strapping GPIO0, 3, 45, 46** | ⚠️ **Unchanged — silicon.** No wire that leaves the box |
-| ⛔ **GPIO19, 20 = USB** | ⚠️ **Unchanged** if you keep native USB — which you should (the OTA fallback) |
+| **GPIO19, 20 = USB** | ✅ **Gone** — the custom board has no USB port; flashing, the console and the fallback when OTA fails run over UART0 at the service pads. Both are ordinary pins: GPIO20 comes out of reset pulled up (`GPIO-RESET-PULL` watches what it drives) |
 | ⛔ **GPIO43 emits the ROM boot log** | ⚠️ **Unchanged — silicon.** Never a load driver |
 | ⛔ **GPIO26–32 = in-package flash · GPIO22–25 do not exist** | ⚠️ **Unchanged** |
 
-**Net: a clean pool of 30** (the DevKit prototype has 28) — the 45 GPIOs that exist, less the 7 flash
-pins (26–32), IO33/34 (no pads), the 2 USB pins and the 4 strapping pins. GPIO43 is inside the 30 but
-stays unused (ROM boot log).
+**Net: a clean pool of 32** (the DevKit prototype has 28) — the 45 GPIOs that exist, less the 7 flash
+pins (26–32), IO33/34 (no pads) and the 4 strapping pins. GPIO43 counts in the 32 but only ever carries
+U0TXD (the ROM boot log).
 
 **One footprint, two modules.** The `ESP32-S3-WROOM-1` (PCB antenna, 18 × 25.5 mm) and the
 `ESP32-S3-WROOM-1U` (U.FL connector for an external antenna, 18 × 19.2 mm) share pads and pinout, and
@@ -1825,29 +1823,34 @@ of clearance around one in every direction. The enclosure is metal (§9.7), so t
 the `-1U`.
 
 **Around the module**, per Espressif's hardware design guidelines:
-- **22 Ω in series in USB D+ and D−** at the module; the guideline's optional capacitors to ground are
-  left off, since a full-speed pair this short needs none.
 - **470 Ω in series in U0TXD** — the guideline asks for 499 Ω against harmonics, and 470 Ω is the
   nearest JLC Basic value.
 - **EN:** a 10 kΩ / 1 µF RC. A `TLV803S` supervisor footprint sits on EN, **not fitted** — fit it if
   a slow or bouncing 3.3 V ramp ever shows up.
-- **IO0:** 10 kΩ pull-up, so a floating service-header pin cannot select download mode at key-on.
-- **USB VBUS is sensed only, never used:** it powers nothing, so the bike's 5 V and a USB host never
-  meet.
+- **IO0:** 10 kΩ pull-up, so an unprobed service pad cannot select download mode at key-on.
+- **UART0 is the service port, on a Tag-Connect TC2030-NL land (`J408`, D25)** — six bare pads and
+  three unplated alignment holes, nothing fitted, no paste. The pads follow the ESP-Prog's PROG header:
+  1 `EN` · 2 VDD, **not connected** (the board powers itself; the ESP-Prog can be jumpered to 5 V) ·
+  3 U0TXD, through the 470 Ω · 4 ground · 5 U0RXD · 6 `IO0`. The `TC2030-IDC-NL` cable takes pad *n* to
+  IDC pin *n*, so it plugs straight into an ESP-Prog, whose DTR / RTS drive `EN` and `IO0` for an
+  automatic download (bom A8). Tag-Connect's drawing asks for no track or via between the pads and
+  0.51 mm around them; the project cannot carry that, so the build writes it to `layout-rules.txt`.
+  ⬜ Before ordering, check the stencil (paste) layer has no aperture over the six pads — a solder dome
+  under a spring pin is a bad contact.
 
 #### 9.8.2 What gets easier, and what may reverse
 
 - ✅ **D16 is FULL NATIVE on the custom board (owner, 2026-09-18).** The S3 drives the six
   firmware-driven `TPS4H160B` inputs and `DIAG_EN` / `SEL` / `SEH` directly, over the STACK connector
   (§9.2) — **the I2C bus is out of the lighting path entirely.** Both `MCP23017`s are still fitted: #1
-  uses all 14 input-capable bits — the bar inputs, where a bus glitch is a missed press, the boost
-  button, the `BL` copy and USB VBUS sense; #2 senses ACC+ on GPA0 and brings its other 13
+  uses 13 of its 14 input-capable bits — the bar inputs, where a bus glitch is a missed press, the
+  boost button and the `BL` copy (GPB6 is spare); #2 senses ACC+ on GPA0 and brings its other 13
   input-capable bits to an unfitted 2 × 8 header, J409, each class-A conditioned on the board
   (GPA7/GPB7 are output-only, §3.1.3).
 - ⚠️ **The expanders share one RESET pull-up, and no GPIO drives it.** Firmware recovers a hung bus by
   clocking SCL; past that, only a power cycle resets them.
 - ⚠️ **Spare pins are scarce.** Full native moves eight signals off expander #2 and onto the S3, into a
-  pool only two pins larger than the prototype's. The BRAIN pin assignment, and the count of what is
+  pool only four pins larger than the prototype's. The BRAIN pin assignment, and the count of what is
   left, live in `tools/netlist.py` and are checked by `tools/rules.py` — this plan carries the rules,
   not the numbers.
 - ⚠️ **What does not change: the functional rules.** Carry these over verbatim — analog only on ADC1

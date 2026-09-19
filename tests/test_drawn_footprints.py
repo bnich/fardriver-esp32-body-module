@@ -16,6 +16,7 @@ from tools.eprj3 import footprints
 from tools.eprj3 import symbols as sym
 from tools.eprj3.project import Project
 from tools.eprj3.schematic import emit_board
+from tools.eprj3.units import pcb_to_mm
 
 IN = 25.4
 
@@ -297,3 +298,90 @@ def test_an_outline_is_written_as_the_library_writes_silkscreen():
     assert len(polys) == 1 and polys[0]["layerId"] == 3 and polys[0]["path"][2] == "L"
     bare = footprints.footprint_records("fp", "T", fp.pads, client="c", epoch_ms=1)
     assert not any('"LAYER"' in r or '"POLY"' in r for r in bare)
+
+
+# --- The Tag-Connect TC2030-NL land (J408) ------------------------------------------
+#: NL-TC2030-Footprint.pdf rev B, 'PCB TOP LAYER', typed as drawn: inches from
+#: the lone left alignment hole's centre.  Pads 1 3 5 run along the lower row
+#: and 2 4 6 along the upper, 0.050" apart both ways; the rows sit 0.025"
+#: above and below the left hole; the two right holes are 0.200" right of it
+#: and 0.040" above and below.
+TC2030_PADS_IN = {"1": (0.050, -0.025), "2": (0.050, 0.025), "3": (0.100, -0.025),
+                  "4": (0.100, 0.025), "5": (0.150, -0.025), "6": (0.150, 0.025)}
+TC2030_HOLES_IN = ((0.0, 0.0), (0.200, 0.040), (0.200, -0.040))
+#: The footprint's origin is the centre of the pads.
+TC2030_ORIGIN_IN = (0.100, 0.0)
+
+
+def _tc2030_mm(x, y):
+    ox, oy = TC2030_ORIGIN_IN
+    return round((x - ox) * IN, 3), round((y - oy) * IN, 3)
+
+
+def test_the_tc2030_pads_are_where_the_drawing_puts_them():
+    """A TOP view already: only the origin moves."""
+    fp = drawn.LANDS["TC2030-NL"]
+    assert centres(fp) == {n: [_tc2030_mm(*xy)] for n, xy in TC2030_PADS_IN.items()}
+    for p in fp.pads:
+        assert (p.w_mm, p.h_mm, p.hole_mm, p.shape) == (0.787, 0.787, None, "ELLIPSE"), p
+        assert not p.paste, "note 3: no paste on a contact pad"
+
+
+def test_the_tc2030_alignment_holes_are_unplated_and_key_the_cable():
+    fp = drawn.LANDS["TC2030-NL"]
+    holes = [o for o in fp.outline if o.hole]
+    assert len(holes) == len(fp.outline) == 3, "the land carries no silkscreen"
+    assert sorted((round(o.shape[1], 3), round(o.shape[2], 3)) for o in holes) == \
+        sorted(_tc2030_mm(*xy) for xy in TC2030_HOLES_IN)
+    assert all(o.shape[0] == "CIRCLE" and o.shape[3] == pytest.approx(0.991 / 2) for o in holes)
+    left = [o for o in holes if o.shape[1] < 0]
+    assert len(left) == 1, "one hole on one side, two on the other: one way on"
+
+
+def test_the_tc2030_keep_out_is_the_area_between_its_pad_centres():
+    fp = drawn.LANDS["TC2030-NL"]
+    xs, ys = [p.x_mm for p in fp.pads], [p.y_mm for p in fp.pads]
+    assert fp.keepout == ((min(xs), min(ys), max(xs), max(ys)),)
+    assert fp.pad_clearance_mm == pytest.approx(0.020 * IN, abs=0.01)
+
+
+def _records(fp):
+    return [(json.loads(h), json.loads(p)) for h, _, p in
+            (r.partition("||") for r in footprints.footprint_records(
+                "fp", fp.title, fp.pads, client="c", epoch_ms=1, outline=fp.outline))]
+
+
+def test_a_hole_is_written_as_the_library_writes_a_locating_peg():
+    """LCSC C165948's pegs, through v2footprint: a solid FILL on layer 12 with
+    one CIRCLE path and width 0.1 -- no pad, so no pin number and no copper."""
+    fills = [p for h, p in _records(drawn.LANDS["TC2030-NL"]) if h["type"] == "FILL"]
+    assert len(fills) == 3
+    for f in fills:
+        assert {k: f[k] for k in ("layerId", "width", "fillStyle", "netName",
+                                  "isBridgingCopper", "networkList", "refs")} == {
+            "layerId": 12, "width": 0.1, "fillStyle": "SOLID", "netName": "",
+            "isBridgingCopper": False, "networkList": [], "refs": []}
+        (circle,) = f["path"]
+        assert circle[0] == "CIRCLE" and pcb_to_mm(circle[3]) == pytest.approx(0.991 / 2, abs=1e-3)
+
+
+def test_a_pad_that_takes_no_paste_shrinks_its_aperture_to_nothing():
+    """The library writes -3937 mil on every PASTED pad, so a large negative
+    number there means 'the rule', not 'none': a no-paste pad carries its own
+    expansion, past its own radius."""
+    for h, p in _records(drawn.LANDS["TC2030-NL"]):
+        if h["type"] == "PAD":
+            size = p["defaultPad"]["width"]
+            assert p["topPasteExpansion"] < 0 and size + 2 * p["topPasteExpansion"] < 0, p["num"]
+    pasted = footprints.footprint_records("fp", "T", footprints.two_pad(1.9, 1.0, 1.3),
+                                          client="c", epoch_ms=1)
+    assert all(json.loads(r.partition("||")[2])["topPasteExpansion"] is None
+               for r in pasted if json.loads(r.partition("||")[0])["type"] == "PAD")
+
+
+def test_the_service_pads_take_the_tc2030_land_and_every_pin_has_a_pad():
+    j = netlist.current().connector("J408")
+    title, pads, shared, outline = footprint_lib.generated(j)
+    assert title == "TAG-CONNECT_TC2030-NL" and not shared
+    assert {p.num for p in pads} == {pin.number for pin in sym.for_connector(j).pins}
+    assert sum(o.hole for o in outline) == 3

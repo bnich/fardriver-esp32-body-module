@@ -12,7 +12,7 @@ and tests/test_padmap.py checks them against EasyEDA's library symbols, which
 are an independent reading of the same datasheets.
 
 `pad_map(item)` returns {pad number: pin name}.  A pad mapped to None is left
-unconnected on purpose (a USB-C SBU contact).
+unconnected on purpose (a contact the design does not use).
 """
 import json
 import re
@@ -68,10 +68,6 @@ _BY_MPN = {
     # symbol numbers K = 2: pad 1 is the ANODE here, unlike the generic
     # diode rule below -- a reversed clamp would short its lamp output.
     "SMF18A": {"1": "A", "2": "K"},
-    # ST USBLC6-2 (usblc6-2.pdf) p.1: 1 I/O1, 2 GND, 3 I/O2, 4 I/O2, 5 VBUS,
-    # 6 I/O1 -- by role, so a swapped GND and VBUS is a polarity error.
-    "USBLC6-2SC6": {"1": "IO1A", "2": "GND", "3": "IO2A", "4": "IO2B", "5": "VBUS",
-                    "6": "IO1B"},
     # TI SBVS157E p.4, TLV803 DBZ (SOT-23): GND 1, RESET 2, VDD 3
     "TLV803SDBZR": {"1": "GND", "2": "RESET", "3": "VDD"},
     # TI SLOS346O, D (SOIC-8)
@@ -83,18 +79,6 @@ _BY_MPN = {
     # IXYS DS99913D p.3, TO-263: 1 gate, 2 drain (and the tab), 3 source
     "IXTA26P20P-TRL": {"1": "G", "2": "D", "3": "S"},
 }
-#: USB-C receptacle GT-USB-7010ASV: contacts by function onto J401's pins.
-_USBC_J401 = {
-    "A1B12": "6", "B1A12": "6",                 # GND
-    "A4B9": "1", "B4A9": "1",                   # VBUS, sensed only
-    "A5": "2", "B5": "5",                       # CC1, CC2
-    "A6": "3", "B6": "3",                       # D+, both orientations
-    "A7": "4", "B7": "4",                       # D-, both orientations
-    "A8": None, "B8": None,                     # SBU1, SBU2: unused
-    "1": "7", "2": "7", "3": "7", "4": "7",     # shell
-}
-
-
 def pins_of(x):
     """The pins that must land on a pad."""
     if isinstance(x, Connector):
@@ -116,8 +100,6 @@ def pad_map(x):
     """{pad: pin} for `x`.  Raises for a part with no rule: a guess is how a
     transistor ends up backwards."""
     if isinstance(x, Connector):
-        if x.refdes == "J401":
-            return dict(_USBC_J401)
         return {p: p for p in pins_of(x)}
     pins = tuple(x.pins)
     if x.mpn in _BY_MPN:
@@ -156,9 +138,6 @@ def library_pins(v2_symbol_text):
 #: because the netlist lands every exposed pad on GND (tests check that).
 _LIB_ALIASES = {"EP": {"PAD", "EPAD"}, "GND": {"PAD", "EPAD"}, "C": {"K"},
                 "RXD0": {"IO44"}, "TXD0": {"IO43"}}
-_USB_NETS = {"GND": "GND", "SHELL": "GND", "VBUS": "USB_VBUS", "CC1": "USB_CC1",
-             "CC2": "USB_CC2", "DP1": "USB_DP", "DP2": "USB_DP", "DN1": "USB_DM",
-             "DN2": "USB_DM"}
 
 
 def names_agree(ours, lib_name, x):
@@ -169,7 +148,7 @@ def names_agree(ours, lib_name, x):
         return True
     if isinstance(x, Connector):
         net = next((cp.net for cp in x.pins if cp.pin == ours), None)
-        return _USB_NETS.get(lib, lib) == net
+        return lib == net
     mine = ours.upper()
     if x.kind == "TVS" and re.fullmatch(r"[AK]\d", mine):
         mine = mine[0]                 # an array pin's role, not its index

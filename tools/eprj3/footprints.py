@@ -29,6 +29,9 @@ TOP_SILK = 3
 MULTI_LAYER = 12
 #: Silkscreen stroke for a body outline: JLC's minimum line width is 0.15 mm.
 OUTLINE_STROKE_MM = 0.2
+#: The stroke field of an unplated-hole FILL, as LCSC C165948's pegs carry it
+#: (V2 FILL e55/e56: width 0.1, solid, a CIRCLE path, on layer 12).
+HOLE_FILL_WIDTH = 0.1
 #: The layer-table rows a footprint with an outline declares, exactly as
 #: `v2footprint.convert` writes them from an LCSC footprint.
 _LAYER_ROWS = (
@@ -44,9 +47,12 @@ HEADER_PAD_MM = 1.7
 
 @dataclass(frozen=True)
 class Outline:
-    """One silkscreen shape, in mm: ("CIRCLE", cx, cy, r) or a closed polygon
-    [(x, y), ...]."""
+    """One shape, in mm: ("CIRCLE", cx, cy, r) or a closed polygon [(x, y),
+    ...].  On the silkscreen, or `hole=True`: an unplated hole, a solid FILL
+    on the Multi-Layer -- the form EasyEDA's own library footprints give a
+    connector's locating pegs (LCSC C165948, its two pegs)."""
     shape: tuple
+    hole: bool = False
 
     def path(self):
         if self.shape and self.shape[0] == "CIRCLE":
@@ -72,6 +78,8 @@ class Pad:
     h_mm: float
     hole_mm: float | None = None    # None: surface mount; else a round drill
     shape: str = "RECT"             # RECT or ELLIPSE
+    #: False: no stencil aperture over it (a pad a probe presses on).
+    paste: bool = True
 
 
 def two_pad(pitch_mm, pad_w_mm, pad_h_mm, nums=("1", "2")):
@@ -98,10 +106,19 @@ def header(pins, pitch_mm, rows=1):
     return tuple(out)
 
 
+#: How far past a pad's own edge a paste aperture is pulled in when the pad
+#: takes no paste: the aperture shrinks to nothing.  EasyEDA's library puts
+#: -3937 mil (-100 mm) on EVERY pasted pad, so that figure means "the rule
+#: default", not "none"; a pad's own custom value is used instead.
+NO_PASTE_MARGIN_MM = 0.1
+
+
 def _pad_payload(pad, z):
     hole = None if pad.hole_mm is None else {
         "holeType": "ROUND", "width": round(mm_to_pcb(pad.hole_mm), 4),
         "height": round(mm_to_pcb(pad.hole_mm), 4)}
+    paste = None if pad.paste else round(
+        mm_to_pcb(-(max(pad.w_mm, pad.h_mm) / 2 + NO_PASTE_MARGIN_MM)), 4)
     return {"groupId": 0, "netName": "",
             "layerId": TOP_LAYER if pad.hole_mm is None else MULTI_LAYER,
             "num": pad.num,
@@ -114,7 +131,7 @@ def _pad_payload(pad, z):
             "specialPad": [], "padOffsetX": 0, "padOffsetY": 0,
             "relativeAngle": 0, "plated": True, "padType": "NORMAL",
             "topSolderExpansion": None, "bottomSolderExpansion": None,
-            "topPasteExpansion": None, "bottomPasteExpansion": None,
+            "topPasteExpansion": paste, "bottomPasteExpansion": paste,
             "locked": False, "zIndex": z, "connectMode": None,
             "spokeSpace": None, "spokeWidth": None, "spokeAngle": None,
             "padLen": 0}
@@ -149,7 +166,11 @@ def footprint_records(uuid, title, pads, *, client, epoch_ms,
                                    "highlightValue": 0.5})]
     body += [("PAD", f"e{n}", _pad_payload(p, n))
              for n, p in enumerate(pads, start=1)]
-    body += [("POLY", f"e{n}", {
+    body += [("FILL", f"e{n}", {
+        "groupId": 0, "netName": "", "layerId": MULTI_LAYER, "width": HOLE_FILL_WIDTH,
+        "fillStyle": "SOLID", "path": [o.path()], "locked": False, "zIndex": n,
+        "isBridgingCopper": False, "networkList": [], "refs": []})
+        if o.hole else ("POLY", f"e{n}", {
         "groupId": 0, "netName": "", "layerId": TOP_SILK,
         "width": _u(OUTLINE_STROKE_MM), "path": o.path(), "locked": False,
         "zIndex": n, "polyType": "NORMAL"})

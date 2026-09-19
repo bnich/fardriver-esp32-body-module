@@ -12,7 +12,8 @@ Two halves, kept apart:
   source of truth, and it drifts.
 
 ⛔ The `ESP32-S3-WROOM-1` / `-1U` module has NO pad for GPIO33 or GPIO34 --
-they exist on the silicon only. The pool on the custom board is 30.
+they exist on the silicon only. The pool on the custom board is 32: it has no
+USB port, so GPIO19/20 (native USB D-/D+) are ordinary pins there.
 
     python3 -m tools.gpio_budget        # the budget for netlist.current()
 """
@@ -25,7 +26,6 @@ from .model import Design
 # --- silicon (ESP32-S3 datasheet) ----------------------------------------------
 EXISTS = frozenset(range(0, 22)) | frozenset(range(26, 49))   # GPIO22-25 do not exist
 FLASH = frozenset(range(26, 33))       # in-package SPI flash
-USB = frozenset({19, 20})              # native USB D-/D+: the recovery path
 STRAPPING = frozenset({0, 3, 45, 46})  # sampled at reset to choose the boot mode
 BOOT_LOG = 43                          # U0TXD: the ROM prints on it at every reset
 ADC1 = frozenset(range(1, 11))         # ADC2 is dead while WiFi is on
@@ -42,7 +42,7 @@ RESET_PULL_DOWN = frozenset({45, 46})
 NOT_BROUGHT_OUT = frozenset({33, 34})  # no pad on the WROOM-1 / -1U
 
 #: What a signal may be given.
-POOL = EXISTS - FLASH - NOT_BROUGHT_OUT - USB - STRAPPING
+POOL = EXISTS - FLASH - NOT_BROUGHT_OUT - STRAPPING
 #: Of the pool, the pins that may drive something. GPIO43 chatters at reset,
 #: so whatever it drove would chatter with it.
 DRIVER_POOL = POOL - {BOOT_LOG}
@@ -169,19 +169,13 @@ def report(d: Design | None = None) -> list[str]:
                 why = "is wired to the in-package flash"
             elif g in NOT_BROUGHT_OUT:
                 why = "has no pad on the WROOM-1 module"
-            elif g in USB:
-                usb_only = s.connectors and not s.loads and all(
-                    "USB" in name.upper() for _, name, _, _ in s.connectors)
-                why = "" if usb_only else (
-                    "is native USB D-/D+, the recovery path; it may go to the "
-                    "USB connector and nowhere else")
             else:                          # strapping
                 quiet = not s.loads and not any(
                     leaves or iface for _, _, leaves, iface in s.connectors)
                 why = "" if quiet else (
                     "is a strapping pin: whatever it reaches sets the boot mode at "
                     "reset. It may carry its bias parts and the internal service "
-                    "header, nothing else"
+                    "pads, nothing else"
                     + (f" (reaches {', '.join(s.loads)})" if s.loads else ""))
             if why:
                 errs.append(f"GPIO budget: {tag} is outside the pool -- GPIO{g} {why}")
@@ -208,10 +202,10 @@ def main(argv=None, d: Design | None = None) -> int:
         from . import netlist
         d = netlist.current()
     signals = demand(d)
-    print(f"POOL {len(POOL)}   (45 GPIOs - 7 flash - 2 with no WROOM-1 pad - 2 USB "
+    print(f"POOL {len(POOL)}   (45 GPIOs - 7 flash - 2 with no WROOM-1 pad "
           f"- 4 strapping)\n")
     for s in signals:
-        where = ("pool" if s.gpio in POOL else "USB" if s.gpio in USB else
+        where = ("pool" if s.gpio in POOL else
                  "strap" if s.gpio in STRAPPING else "⛔")
         notes = ["analog" if s.analog else "",
                  f"-> {', '.join(s.loads)}" if s.loads else "",

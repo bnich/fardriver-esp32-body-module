@@ -100,11 +100,11 @@ def test_m34_a_15_v_array_on_3_3_v_inputs():
 
 
 # ── CK-6: an array's pins by role, so a swap is a polarity error ─────────────
-def test_m03_the_usb_array_with_ground_and_its_rail_swapped():
-    a = D.net_of("D409", "GND").name
-    b = D.net_of("D409", "VBUS").name
-    bad = move(move(D, "D409", "GND", b), "D409", "VBUS", a)
-    assert any("D409" in e for e in fired(bad, "POL"))
+def test_m03_an_array_with_its_ground_and_a_line_swapped():
+    a = D.net_of("D401", "A2").name
+    b = D.net_of("D401", "K1").name
+    bad = move(move(D, "D401", "A2", b), "D401", "K1", a)
+    assert any("D401" in e for e in fired(bad, "POL"))
 
 
 # ── CK-7: labels do not switch protection off ────────────────────────────────
