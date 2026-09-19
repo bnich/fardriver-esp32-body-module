@@ -36,6 +36,10 @@ python3 tools/build_project.py # the project, footprints bound; names every item
 python3 -m tools.jlc_bom       # the JLC BOM, and what the owner hand-solders
 ```
 
+After the owner exports a board's netlist from EasyEDA (to `~/Downloads`), prove it:
+`python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
+"identical", and exits 1 on any pin on the wrong net.
+
 - `tools.integrity` asks whether the netlist is a circuit at all — every pin of every part lands on a
   net, every inter-board net has real connector contacts. `tools/rules.py` asks whether it obeys the
   safety and pin rules. **Green rules on a netlist that fails integrity mean nothing**: a TVS with one

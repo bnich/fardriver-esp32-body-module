@@ -544,6 +544,14 @@ def _part_attrs(item, x, y, unique_id, *, part=None, connector=None):
 _TITLE_BAD = re.compile(r"[^\x21-\x7e]+")
 
 
+def converted_to_pcb(thing):
+    """False for the fuse: it sits in its clips, which are the PCB parts, so
+    Import Changes must not put its pads on top of theirs.  EasyEDA also
+    leaves such a part out of its exported netlist."""
+    from tools.model import Part
+    return not (isinstance(thing, Part) and thing.kind == "FUSE")
+
+
 def device_for(item, part=None, connector=None):
     """The device a placed part or connector is: one per real part.
 
@@ -567,9 +575,7 @@ def device_for(item, part=None, connector=None):
     sep = "-" if part is not None and lcsc and part.kind in ("R", "C") else "_"
     title = _TITLE_BAD.sub("_", f"{name}{sep}{lcsc}" if lcsc else name).strip("_")[:60]
     attrs = (("Supplier", "LCSC"), ("Supplier Part", lcsc)) if lcsc else ()
-    if part is not None and part.kind == "FUSE":
-        # It sits in its clips, which are the PCB parts: Import Changes must
-        # not put its pads on top of theirs.
+    if part is not None and not converted_to_pcb(part):
         attrs += (("Convert to PCB", "no"),)
     return Device(key=("device", item.symbol.key) + ident, title=title,
                   attributes=attrs)
