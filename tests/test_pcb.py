@@ -171,66 +171,89 @@ def test_a_hole_that_falls_off_the_board_is_refused():
         make_pcb(hole_inset_mm=BOARD_W)
 
 
-# --- the stackup ------------------------------------------------------------
-def test_the_stackup_is_two_copper_layers(records):
-    phys = {json.loads(head["id"])[1]: body
-            for head, body in records if head["type"] == "LAYER_PHYS"}
-    # silk, paste, mask, copper, substrate, copper, mask, paste, silk
-    assert len(phys) == 9
-    assert sorted(phys) == [1, 2, 3, 4, 5, 6, 7, 8, SUBSTRATE_LAYER]
-    assert phys[1]["zIndex"] == 1000                 # top copper
-    assert phys[SUBSTRATE_LAYER]["zIndex"] == 1001   # the single dielectric
-    assert phys[BOTTOM_COPPER]["zIndex"] == 9000     # bottom copper
+# --- the stackup: every board is 4-layer, JLC's standard 1.6 mm stack ---------------
+#: JLC04161H-7628, top to bottom (jlcpcb.com/impedance): (layer id, material, mm, εr).
+JLC04161H_7628 = [
+    (1, None, 0.035, None), (SUBSTRATE_LAYER, "PP", 0.2104, 4.4),
+    (15, None, 0.0152, None), (SUBSTRATE_LAYER + 1, "FR4", 1.065, 4.6),
+    (16, None, 0.0152, None), (SUBSTRATE_LAYER + 2, "PP", 0.2104, 4.4),
+    (BOTTOM_COPPER, None, 0.035, None),
+]
 
 
-def test_the_stack_z_indices_run_top_to_bottom(records):
-    phys = [(body["zIndex"], json.loads(head["id"])[1])
+def phys_of(records):
+    return [(json.loads(head["id"])[1], body)
             for head, body in records if head["type"] == "LAYER_PHYS"]
-    assert phys == sorted(phys), "LAYER_PHYS records must be in stack order"
 
 
-def test_the_board_is_1_6_mm_of_fr4_in_1_oz_copper(records):
-    phys = {json.loads(head["id"])[1]: body
-            for head, body in records if head["type"] == "LAYER_PHYS"}
-    copper = pcb_to_mm(phys[1]["thickness"])
-    assert round(copper, 4) == 0.035                  # 35 um == 1 oz
-    total = sum(pcb_to_mm(phys[i]["thickness"])
-                for i in (1, SUBSTRATE_LAYER, BOTTOM_COPPER))
-    assert total == pytest.approx(1.58, abs=0.005)
-    assert Stackup().board_thickness_mm == pytest.approx(1.58, abs=0.005)
-    assert phys[SUBSTRATE_LAYER]["material"] == "FR4"
-    assert phys[SUBSTRATE_LAYER]["permittivity"] == 4.5
+def test_every_board_is_four_copper_layers_in_jlcs_standard_stack(records):
+    """Owner, 2026-09-18: every PCB is 4-layer.  The stack is JLC's default
+    4-layer 1.6 mm build, so the board costs no stackup surcharge."""
+    stack = [(lid, body) for lid, body in phys_of(records)
+             if lid in {row[0] for row in JLC04161H_7628}]
+    assert [lid for lid, _ in stack] == [row[0] for row in JLC04161H_7628]
+    for (lid, body), (_, material, mm, eps) in zip(stack, JLC04161H_7628):
+        assert round(pcb_to_mm(body["thickness"]), 4) == mm, lid
+        assert (body["material"], body["permittivity"]) == (material, eps), lid
 
 
-def test_a_thicker_stack_moves_the_thickness_not_the_structure():
-    pcb = make_pcb(stackup=Stackup(dielectric_mm=0.76))
-    phys = {json.loads(head["id"])[1]: body
-            for head, body in parse_document(pcb.document())
-            if head["type"] == "LAYER_PHYS"}
-    assert round(pcb_to_mm(phys[SUBSTRATE_LAYER]["thickness"]), 3) == 0.76
-    assert len(phys) == 9
+def test_the_stack_runs_top_to_bottom_with_the_non_copper_films_outside(records):
+    order = [lid for lid, _ in phys_of(records)]
+    assert order == [3, 7, 5, 1, SUBSTRATE_LAYER, 15, SUBSTRATE_LAYER + 1, 16,
+                     SUBSTRATE_LAYER + 2, BOTTOM_COPPER, 6, 8, 4]
+    z = [body["zIndex"] for _, body in phys_of(records)]
+    assert z == sorted(z) and len(set(z)) == len(z), "zIndex must rise down the stack"
+
+
+def test_the_board_is_1_6_mm(records):
+    """JLC04161H-7628 is 1.586 mm of copper and dielectric; PCB_T books 1.6."""
+    total = sum(mm for _, _, mm, _ in JLC04161H_7628)
+    assert Stackup().board_thickness_mm == pytest.approx(total)
+    assert total == pytest.approx(1.586, abs=0.001)
+
+
+def test_a_two_layer_stack_can_still_be_stated():
+    two = Stackup(copper_mm=(0.035, 0.035), dielectrics=(("FR4", 1.51, 4.5),))
+    pcb = make_pcb(stackup=two)
+    recs = parse_document(pcb.document())
+    assert [lid for lid, _ in phys_of(recs)] == [3, 7, 5, 1, SUBSTRATE_LAYER,
+                                                 BOTTOM_COPPER, 6, 8, 4]
+    layers = {body["layerId"]: body for body in bodies(recs, "LAYER")}
+    assert not any(layers[i]["use"] for i in range(15, 47))
+
+
+def test_a_stack_whose_dielectrics_do_not_separate_its_coppers_is_refused():
+    with pytest.raises(ValueError, match="dielectric"):
+        Stackup(copper_mm=(0.035, 0.035, 0.035), dielectrics=(("FR4", 1.5, 4.5),))
 
 
 # --- the layer table --------------------------------------------------------
 def test_the_layer_table_covers_every_layer_the_editor_expects(records):
     layers = {body["layerId"]: body for body in bodies(records, "LAYER")}
-    assert len(layers) == 60
-    assert set(layers) == set(range(1, 60)) | {SUBSTRATE_LAYER}
+    assert len(layers) == 62
+    assert set(layers) == set(range(1, 60)) | {SUBSTRATE_LAYER + i for i in range(3)}
+    assert all(layers[SUBSTRATE_LAYER + i]["layerType"] == "SUBSTRATE" for i in range(3))
     assert layers[OUTLINE_LAYER]["layerType"] == "OUTLINE"
     assert layers[MULTI_LAYER]["layerType"] == "MULTI"
     assert layers[1]["layerType"] == "TOP" and layers[1]["use"] is True
     assert layers[2]["layerType"] == "BOTTOM" and layers[2]["use"] is True
 
 
-def test_the_thirty_two_inner_layers_are_present_but_unused(records):
+def test_inner1_and_inner2_are_in_use_and_the_other_thirty_are_not(records):
     layers = {body["layerId"]: body for body in bodies(records, "LAYER")}
     inner = [layers[i] for i in range(15, 47)]
     assert len(inner) == 32
     assert all(layer["layerType"] == "SIGNAL" for layer in inner)
+    assert [(l["use"], l["show"]) for l in inner[:2]] == [(True, True)] * 2
     assert all(layer["use"] is False and layer["show"] is False
-               for layer in inner), "a 2-layer board must not enable an inner"
+               for layer in inner[2:]), "a 4-layer board has two inner layers"
     assert [layer["layerName"] for layer in inner] == \
         [f"Inner{i}" for i in range(1, 33)]
+
+
+def test_the_rule_set_is_labelled_for_a_multilayer_board(records):
+    assert bodies(records, "RULE_TEMPLATE")[0]["name"] == \
+        "JLCPCB Capability(Multiple Layers Board)"
 
 
 def test_every_layer_colour_is_a_well_formed_hex_triple(records):

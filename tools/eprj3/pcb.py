@@ -1,4 +1,4 @@
-"""The `.epcb2` PCB document: a rectangular board, a 2-layer stackup, four M3
+"""The `.epcb2` PCB document: a rectangular board, a 4-layer stackup, four M3
 mounting holes and a board-wide clearance rule.
 
 ⛔ EVERY BYTE HERE IS AUTHORED, NOT HARVESTED.  The layer table, the display
@@ -180,7 +180,7 @@ def _hsv_hex(h, s, v):
 
 
 def inner_layer_specs():
-    """The 32 SIGNAL inner layers, unused on a 2-layer board.
+    """The 32 SIGNAL inner layers; the stackup turns on the ones it uses.
 
     Their colours carry no meaning, so rather than tabulate 32 arbitrary
     values they are 32 evenly spaced hues: if a reader ever turns inner layers
@@ -195,11 +195,14 @@ def inner_layer_specs():
     return out
 
 
-def layer_specs(inner_used=()):
+def layer_specs(inner_used=(), dielectrics=(SUBSTRATE_LAYER,)):
     """Every logical layer, in the order the table is written.
 
     `inner_used` names inner layer ids that are in the stackup; they get
-    `use`/`show` true.  A 2-layer board passes none.
+    `use`/`show` true.  `dielectrics` are the stack's SUBSTRATE layer ids,
+    361 upwards, one per dielectric -- a 4-layer board has three.  As in the
+    editor's own files, a SUBSTRATE layer is never `use`: it is a film, not a
+    layer anything is drawn on.
     """
     specs = list(_FIXED_LAYERS)
     for spec in inner_layer_specs():
@@ -207,33 +210,43 @@ def layer_specs(inner_used=()):
             spec = spec[:3] + (True, True) + spec[5:]
         specs.append(spec)
     specs.extend(_SPECIAL_LAYERS)
-    specs.append((SUBSTRATE_LAYER, "SUBSTRATE", "Dielectric1",
-                  False, False, False, "#000000"))
+    specs.extend((lid, "SUBSTRATE", f"Dielectric{lid - SUBSTRATE_LAYER + 1}",
+                  False, False, False, "#000000") for lid in dielectrics)
     return specs
 
 
 # --- the physical stackup ---------------------------------------------------
 class Stackup:
-    """A symmetric 2-layer stackup, stated in millimetres.
+    """The copper and dielectric stack, stated in millimetres, top to bottom.
 
-    `zIndex` orders the stack: 1,2,3 are the top non-copper layers, 1000 the
-    top copper, 1001 the dielectric, 9000 the bottom copper, 10000+ the bottom
-    non-copper layers.  Inner layers would take zIndex values between 1001 and
-    9000, which is why the numbering is so sparse.
+    Every board is 4-layer (owner, 2026-09-18).  The default is JLC's standard
+    4-layer 1.6 mm build, JLC04161H-7628 (jlcpcb.com/impedance): 1 oz outer
+    copper, 7628 prepreg, 0.5 oz inner copper, a 1.065 mm core -- the stack JLC
+    builds at no surcharge, 1.586 mm thick, inside the 1.6 mm that
+    `board_params.PCB_T` books.  Prepreg is `PP` and the core `FR4`, the
+    material names the editor writes.
 
-    Default is a 1.6 mm board in 1 oz copper -- the cheapest two-layer stack
-    every fab quotes, and what the enclosure's 1.6 mm card slots assume.
+    `copper_mm` lists every copper layer top to bottom; `dielectrics` lists
+    the (material, mm, permittivity) between each pair.  Inner coppers take
+    layer ids 15 upwards and dielectrics 361 upwards.
+
+    `zIndex` orders the stack: 1,2,3 are the top non-copper films, 1000 the
+    top copper, 1001 upwards the dielectrics and inner coppers in order, 9000
+    the bottom copper, 10000+ the bottom non-copper films.
     """
 
-    def __init__(self, copper_mm=0.035, dielectric_mm=1.51, mask_mm=0.01,
-                 dielectric_material="FR4", permittivity=4.5,
-                 loss_tangent=0.0, mask_permittivity=3.3,
+    def __init__(self, copper_mm=(0.035, 0.0152, 0.0152, 0.035),
+                 dielectrics=(("PP", 0.2104, 4.4), ("FR4", 1.065, 4.6),
+                              ("PP", 0.2104, 4.4)),
+                 mask_mm=0.01, loss_tangent=0.0, mask_permittivity=3.3,
                  mask_loss_tangent=0.02):
-        self.copper_mm = copper_mm            # 35 um == 1 oz
-        self.dielectric_mm = dielectric_mm    # core, between the two coppers
+        if len(copper_mm) < 2 or len(dielectrics) != len(copper_mm) - 1:
+            raise ValueError(f"{len(copper_mm)} copper layers need "
+                             f"{len(copper_mm) - 1} dielectric(s) between them, "
+                             f"not {len(dielectrics)}")
+        self.copper_mm = tuple(copper_mm)
+        self.dielectrics = tuple(dielectrics)
         self.mask_mm = mask_mm                # solder mask film
-        self.dielectric_material = dielectric_material
-        self.permittivity = permittivity
         self.loss_tangent = loss_tangent
         self.mask_permittivity = mask_permittivity
         self.mask_loss_tangent = mask_loss_tangent
@@ -241,11 +254,16 @@ class Stackup:
     @property
     def board_thickness_mm(self):
         """Copper + dielectric only: what a fab means by "1.6 mm board"."""
-        return 2 * self.copper_mm + self.dielectric_mm
+        return sum(self.copper_mm) + sum(mm for _, mm, _ in self.dielectrics)
+
+    def inner_layer_ids(self):
+        return tuple(FIRST_INNER_LAYER + i for i in range(len(self.copper_mm) - 2))
+
+    def dielectric_ids(self):
+        return tuple(SUBSTRATE_LAYER + i for i in range(len(self.dielectrics)))
 
     def entries(self):
         """(layerId, body) pairs in stack order, top of board downwards."""
-        cu = _u(self.copper_mm)
         mask = _u(self.mask_mm)
 
         def film(thickness, material=None, eps=None, tan=None, z=0):
@@ -253,18 +271,23 @@ class Stackup:
                     "permittivity": eps, "lossTangent": tan,
                     "isKeepIsland": True, "zIndex": z}
 
+        coppers = (TOP_COPPER,) + self.inner_layer_ids() + (BOTTOM_COPPER,)
+        stack, z = [], 1000
+        for i, (lid, mm) in enumerate(zip(coppers, self.copper_mm)):
+            stack.append((lid, film(_u(mm), z=9000 if lid == BOTTOM_COPPER else z)))
+            z += 1
+            if i < len(self.dielectrics):
+                material, d_mm, eps = self.dielectrics[i]
+                stack.append((SUBSTRATE_LAYER + i,
+                              film(_u(d_mm), material, eps, self.loss_tangent, z=z)))
+                z += 1
         return [
             # Silk and paste are screen/stencil layers with no thickness.
             (TOP_SILK,   film(0, z=1)),
             (TOP_PASTE,  film(0, z=2)),
             (TOP_MASK,   film(mask, "", self.mask_permittivity,
                               self.mask_loss_tangent, z=3)),
-            (TOP_COPPER, film(cu, z=1000)),
-            (SUBSTRATE_LAYER, film(_u(self.dielectric_mm),
-                                   self.dielectric_material,
-                                   self.permittivity, self.loss_tangent,
-                                   z=1001)),
-            (BOTTOM_COPPER, film(cu, z=9000)),
+            *stack,
             (BOT_MASK,   film(mask, "", self.mask_permittivity,
                               self.mask_loss_tangent, z=10000)),
             (BOT_PASTE,  film(0, z=10001)),
@@ -287,9 +310,11 @@ _SUPPRESS = -1000
 class DesignRules:
     """The board's rule set, every number stated in millimetres.
 
-    Defaults are the published two-layer capability of the fab this board is
-    quoted against; they are a design decision, not format boilerplate, and
-    changing one here changes it everywhere it is written.
+    Defaults are the fab's published TWO-layer capability, kept on the
+    4-layer boards because they are coarser than its multilayer minimums:
+    every number passes either.  They are a design decision, not format
+    boilerplate, and changing one here changes it everywhere it is written.
+    The template label names the multilayer template the editor offers.
     """
 
     def __init__(self, clearance_mm=0.2, hole_clearance_mm=0.3,
@@ -301,7 +326,7 @@ class DesignRules:
                  diff_pair_space_mm=0.1524, diff_pair_tolerance_mm=10.0,
                  net_length_tolerance_mm=25.4,
                  thermal_spoke_mm=0.254, solder_mask_expansion_mm=0.0508,
-                 template_name="JLCPCB Capability(Two Layers Board)"):
+                 template_name="JLCPCB Capability(Multiple Layers Board)"):
         self.clearance_mm = clearance_mm
         self.hole_clearance_mm = hole_clearance_mm
         self.track_min_mm = track_min_mm
@@ -397,7 +422,7 @@ class DesignRules:
               # other number in a ruleContext.
               "differPairLenTolerMax": _num(self.diff_pair_tolerance_mm),
               "toleranceUnit": "mm"}),
-            # No blind/buried vias on a 2-layer board.
+            # Through vias only: no blind or buried vias are used.
             ("BLIND", "blindVia", "DEFAULT", {"blinds": {"content": []}}),
             ("RADIUS", "viaSize", "DEFAULT",
              {"unit": "mm",
@@ -585,7 +610,9 @@ class Pcb:
             "gridType": "GRID", "multiGridType": "NONE", "multiGridRatio": 5,
             "highlightValue": 0.5, "layerBrightness": "NORMAL"}))
 
-        for (lid, ltype, lname, use, show, locked, colour) in layer_specs():
+        for (lid, ltype, lname, use, show, locked, colour) in layer_specs(
+                inner_used=self.stackup.inner_layer_ids(),
+                dielectrics=self.stackup.dielectric_ids()):
             out.append(("LAYER", _cid("LAYER", lid), {
                 "layerId": lid, "layerType": ltype, "layerName": lname,
                 "use": use, "show": show, "locked": locked,

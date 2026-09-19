@@ -136,6 +136,20 @@ def test_pcb_is_the_pcb_module_output(built):
         assert on_disk == board.pcb.document()
 
 
+def test_every_pcb_in_the_project_is_four_layer(built):
+    """Owner, 2026-09-18: all PCBs are 4-layer."""
+    for board in STACK_ORDER:
+        text = (built / NAME / "pcb" / f"{board}.epcb2").read_text(encoding="utf-8")
+        copper = set()
+        for line in text.split("|\n"):
+            head, _, body = line.partition("||")
+            if json.loads(head)["type"] == "LAYER":
+                b = json.loads(body)
+                if b["use"] and b["layerType"] in ("TOP", "BOTTOM", "SIGNAL", "PLANE"):
+                    copper.add(b["layerId"])
+        assert copper == {1, 2, 15, 16}, board
+
+
 # --- the zip ----------------------------------------------------------------
 def test_zip_holds_the_folder_itself(built):
     with zipfile.ZipFile(built / f"{NAME}.zip") as zf:
