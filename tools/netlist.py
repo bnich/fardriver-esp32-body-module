@@ -58,8 +58,10 @@ _DS_KXJ = "Chemi-Con KXJ series (kxj.pdf)"
 _DS_1N4007 = "Vishay 1N4001-1N4007 (1n4007.pdf)"
 _DS_1N4148 = "Vishay 1N4148 (1n4148.pdf)"
 _DS_SPT = "Schurter SPT 5x20 (spt.pdf)"
-_DS_PA = "JST PA catalogue (ePA.pdf)"
-_DS_VH = "JST VH catalogue (eVH.pdf)"
+_DS_KX381 = ("Kangnex WJ15EDGRM-3.81 and WJ15EDGKM-3.81 drawings rev A "
+             "(kangnex_15EDGRM-3.81.pdf, kangnex_15EDGKM-3.81.pdf)")
+_DS_KX508 = ("Kangnex WJ2EDGRM-5.08 and WJ2EDGKM-5.08 drawings rev A "
+             "(kangnex_2EDGRM-5.08.pdf, kangnex_2EDGKM-5.08.pdf)")
 _BRK = "brake-circuit.md"
 
 # ── generic chip packages: (footprint w × l, height). Heights are envelopes
@@ -941,7 +943,7 @@ _NETS_84V = (
 _NETS_RAILS = (
     Net("GND",
         # HVIN
-        _p("J101.3 J101.4 J102.3 D101.A D104.A Q105.S R113.2 D106.A C108.2 "
+        _p("J101.2 J101.3 J102.2 D101.A D104.A Q105.S R113.2 D106.A C108.2 "
            "R109.2 C109.2 L101.2 L102.2")
         # CONV
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
@@ -1374,18 +1376,45 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
     return ConnPin(pin, net, note)
 
 
-def _pa(refdes: str, board: Board, name: str, pins: tuple[ConnPin, ...],
-        parked: bool = False) -> Connector:
-    """JST PA side-entry header S0nB-PASK-2: 2.0 mm pitch, 3 A, real latch."""
+#: Every wire into the box lands on a pluggable screw terminal (owner,
+#: 2026-09-18): nothing to crimp, no housing to match.  (pitch mm, positions) ->
+#: (the right-angle header JLC places, the loose screw plug the owner wires).
+#: One maker's pair, so they mate by construction; the LOCKING version, whose
+#: plug screws to the header's flanges, because a bike vibrates.
+_TERMINALS = {
+    (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
+    (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
+    (3.81, 9): ("C489995", "C384932"),
+    (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
+}
+#: Per family, from its drawings: header height and depth, the length N x pitch +
+#: `extra` over both locking flanges, the hole, and what the plug takes.
+_TB_FAMILY = {
+    3.81: dict(ds=_DS_KX381, h=9.2, deep=7.25, extra=0.88 + 2 * 4.80, hole=1.40,
+               plug="28-16 AWG (1.5 mm²), strip 6-7 mm, 0.2 N·m",
+               rating="300 V UL / 160 V IEC, 8 A"),
+    5.08: dict(ds=_DS_KX508, h=12.2, deep=8.30, extra=10.16, hole=1.60,
+               plug="24-12 AWG (2.5 mm²), strip 7-8 mm, 0.4 N·m",
+               rating="300 V UL / 320 V IEC, 10 A"),
+}
+
+
+def _tb(refdes: str, board: Board, name: str, pins: tuple[ConnPin, ...],
+        parked: bool = False, pitch: float = 3.81, note: str = "") -> Connector:
+    """A pluggable screw terminal: a right-angle header at the board edge and a
+    screw plug, wired outside the box and pushed in from the side, where the
+    stack cannot block a screwdriver."""
+    f = _TB_FAMILY[pitch]
     n = len(pins)
-    return Connector(refdes, board, name, pins, 7.0, height_confirmed=True,
-                     footprint_mm=(2.0 * (n - 1) + 4.0, 8.2), pitch_mm=2.0,
-                     parked=parked,
-                     source=f"{_DS_PA} p.3: through-hole side-entry header, "
-                            f"mated with a standard housing, (7) mm above the "
-                            f"board and 8.2 deep; p.9: S{n:02d}B-PASK-2 is "
-                            f"{2.0 * (n - 1) + 4.0:g} mm wide. 3 A, latched, "
-                            f"-40…+105 °C")
+    length = round(n * pitch + f["extra"], 2)
+    return Connector(refdes, board, name, pins, f["h"], height_confirmed=True,
+                     footprint_mm=(length, f["deep"]), pitch_mm=pitch, parked=parked,
+                     source=f"{f['ds']} p.1: locking pluggable screw terminal, "
+                            f"right-angle header {f['h']:.2f} mm above the board "
+                            f"and {f['deep']:.2f} deep, N × {pitch} + {f['extra']:g} = "
+                            f"{length:g} mm long over its flanges, ø{f['hole']:.2f} "
+                            f"holes. The plug screws to the flanges and takes "
+                            f"{f['plug']}. {f['rating']}" + (f". {note}" if note else ""))
 
 
 def _bus(nets: tuple[str, ...]) -> tuple[ConnPin, ...]:
@@ -1410,26 +1439,19 @@ _INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board
 
 _CONNECTORS = (
     # ── HVIN ────────────────────────────────────────────────────────────────
-    Connector("J101", "HVIN", "B+ / B− harness. The KLKD002 in its FEB-11-11 "
-              "holder is UPSTREAM IN THE HARNESS, not a board part", (
-        _cp("1", "HV_BPLUS", "84 V tap, downstream of the XT90-S"),
-        _cp("3", "GND", "B− to the controller's stud. Position 2 has no post"),
-        _cp("4", "GND", "B−, second conductor: one open return cannot push "
-                        "the input current through a signal ground"),
-    ), 8.5, height_confirmed=True, footprint_mm=(15.78, 10.9), pitch_mm=7.92,
-        source=f"{_DS_VH} p.3: JST VH side-entry header B4PS-VH, 8.5 mm high, "
-               f"10.9 deep, 15.78 wide (header body; the mated housing's "
-               f"height was not read). 3.96 mm pitch, 10 A, 250 V. Four "
-               f"positions with the post beside B+ omitted (p.3 note 2), so "
-               f"84 V sits 7.92 mm from the return"),
-    Connector("J102", "HVIN", "Key tap: the key switch's OUTPUT and a return. "
-              "The switch, its 2 A fuse and the FarDriver KEY wire are harness", (
-        _cp("1", "KSW", "84 V with the key on; ~0.3 mA of gate drive and sense"),
-        _cp("3", "GND", "position 2 has no post"),
-    ), 8.5, height_confirmed=True, footprint_mm=(11.82, 10.9), pitch_mm=7.92,
-        source=f"{_DS_VH} p.3: JST VH side-entry header B3PS-VH, 8.5 mm high "
-               f"(header body), 11.82 wide. Three positions with the middle "
-               f"post omitted: 7.92 mm between KSW and GND"),
+    _tb("J101", "HVIN", "B+ / B− harness. The KLKD002 in its FEB-11-11 "
+        "holder is UPSTREAM IN THE HARNESS, not a board part", (
+            _cp("1", "HV_BPLUS", "84 V tap, downstream of the XT90-S"),
+            _cp("2", "GND", "B− to the controller's stud"),
+            _cp("3", "GND", "B−, second conductor: one open return cannot push "
+                            "the input current through a signal ground"),
+        ), pitch=5.08, note="Adjacent positions are rated for the pack, so 84 V "
+                            "sits one 5.08 mm pitch from the return (BD-4)"),
+    _tb("J102", "HVIN", "Key tap: the key switch's OUTPUT and a return. "
+        "The switch, its 2 A fuse and the FarDriver KEY wire are harness", (
+            _cp("1", "KSW", "84 V with the key on; ~0.3 mA of gate drive and sense"),
+            _cp("2", "GND"),
+        ), pitch=5.08, note="As J101: 5.08 mm between KSW and GND (BD-4)"),
     Connector("J104", "HVIN", "HV-LINK, HVIN side: a 2.54 mm header with "
               "alternate pins skipped, 5.08 mm effective (BD-4)",
               _bus(_HVLINK_NETS), 8.5, footprint_mm=(33.0, 2.54),
@@ -1443,38 +1465,38 @@ _CONNECTORS = (
               "KEY_SENSE", _bus(_PWRUP_NETS), 8.5, footprint_mm=(22.86, 2.54),
               leaves_box=False, interface="PWR-UP", source=_INTERBOARD),
     # ── DRV ─────────────────────────────────────────────────────────────────
-    _pa("J301", "DRV", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
+    _tb("J301", "DRV", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
         "do not land it", (
             _cp("1", "GND", "black — lamp common (M4)"),
             _cp("2", "HL_HIGH", "green — HIGH beam"),
             _cp("3", "HL_LOW", "blue — LOW beam"),
             _cp("4", "HL_DRL", "yellow — DRL"),
         )),
-    _pa("J302", "DRV", "Tail + rear signals (M5/M6)", (
+    _tb("J302", "DRV", "Tail + rear signals (M5/M6)", (
         _cp("1", "GND", "black — lamp common (M5)"),
         _cp("2", "TAIL_RUN", "yellow — running, 0.05 A"),
         _cp("3", "TAIL_STOP", "red — STOP, 0.12 A, switched by Q1 in hardware"),
         _cp("4", "TURN_L", "blue — rear LEFT (M6)"),
         _cp("5", "TURN_R", "green — rear RIGHT (M6)"),
     )),
-    _pa("J303", "DRV", "Front turn L/R, two isolated 2-wire pairs", (
+    _tb("J303", "DRV", "Front turn L/R, two isolated 2-wire pairs", (
         _cp("1", "TURN_L", "front LEFT feed"),
         _cp("2", "GND", "front LEFT return. ⬜ M6: confirm the front pair may "
                         "share the tail common"),
         _cp("3", "TURN_R", "front RIGHT feed"),
         _cp("4", "GND", "front RIGHT return"),
     )),
-    _pa("J304", "DRV", "Horn (M7)", (
+    _tb("J304", "DRV", "Horn (M7)", (
         _cp("1", "V12", "⛔ BLUE IS THE POSITIVE"),
         _cp("2", "HORN_N", "black = '-'. ⛔ Red is not the positive"),
     )),
-    _pa("J305", "DRV", "Fan + buzzer", (
+    _tb("J305", "DRV", "Fan + buzzer", (
         _cp("1", "V12", "fan +"),
         _cp("2", "FAN_RTN", "fan -, flyback D307"),
         _cp("3", "V12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
-    _pa("J306", "DRV", "Brake levers. ⬜ GATED ON M3", (
+    _tb("J306", "DRV", "Brake levers. ⬜ GATED ON M3", (
         _cp("1", "LEVER_L", "⬜ M2 identifies the wires in loom '1T3 10'"),
         _cp("2", "GND", "left lever return"),
         _cp("3", "LEVER_R"),
@@ -1487,7 +1509,7 @@ _CONNECTORS = (
     Connector("J308", "DRV", "STACK, DRV side: 2 × 25, alternating grounds",
               _stack_pins(), 4.06, footprint_mm=(63.5, 5.08),
               leaves_box=False, interface="STACK", source=_INTERBOARD),
-    _pa("J309", "DRV", "FarDriver brake/kill: the D23 hardware's own exit, so "
+    _tb("J309", "DRV", "FarDriver brake/kill: the D23 hardware's own exit, so "
         "BL never passes through BRAIN", (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
                            "stays capped"),
@@ -1495,12 +1517,12 @@ _CONNECTORS = (
                                  "source"),
             _cp("3", "GND"),
         )),
-    _pa("J310", "DRV", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
+    _tb("J310", "DRV", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
         "with the display (D19)", (
             _cp("1", "FD_ONELINE", "brown, 0-15 V"),
             _cp("2", "GND"),
         ), parked=True),
-    _pa("J405", "DRV", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
+    _tb("J405", "DRV", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
         _cp("1", "TT_L", "telltale LEFT, 0-15 V in"),
         _cp("2", "", "display supply. ⏸️ D11 parked: under D19 the dash feeds "
                      "from switched B+ in the harness"),
@@ -1527,7 +1549,7 @@ _CONNECTORS = (
     ), 3.3, footprint_mm=(9.0, 7.5), leaves_box=False, pitch_mm=0.5,
         source="⬜ Receptacle unchosen: 3.3 mm is the usual 16-pin top-mount "
                "USB-C envelope, unconfirmed. Contacts are listed by function"),
-    _pa("J402", "BRAIN", "Left pod: 9-way shell, 8 conductors. The module "
+    _tb("J402", "BRAIN", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
             _cp("1", "GND", "thick green ← the pod's ground bundle (6 wires)"),
             _cp("2", "", "thin green — spare conductor, not connected as built"),
@@ -1545,7 +1567,7 @@ _CONNECTORS = (
                 "indicators flash continuously — a loud failure instead of a "
                 "silent dead control"),
         )),
-    _pa("J403", "BRAIN", "Right pod, 5 conductors. The slider is OFF / A / "
+    _tb("J403", "BRAIN", "Right pod, 5 conductors. The slider is OFF / A / "
         "A+B, so headlight implies running IN HARDWARE", (
             _cp("1", "GND", "blue — ⛔ GROUND FOR ALL THREE CONTROLS"),
             _cp("2", "IN08A_RUNNING_WIRE", "black — running (IN-08a), closed "
@@ -1556,7 +1578,7 @@ _CONNECTORS = (
                             "(BD-7)"),
             _cp("5", "START", "green — start button, a spare sensed input"),
         )),
-    _pa("J404", "BRAIN", "FarDriver serial + boost, 5 conductors", (
+    _tb("J404", "BRAIN", "FarDriver serial + boost, 5 conductors", (
         _cp("1", "UART1_RX_WIRE", "brown/blue, labelled 'TXD' — ⬜ M9, measure"),
         _cp("2", "UART1_TX_WIRE", "red/black, labelled 'RXD' — ⬜ M9"),
         _cp("3", "", "brown/green = BW5V, 5 V OUT of the controller; unused. "
@@ -1676,24 +1698,6 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
 #: inter-board connectors are absent on purpose: their family is the owner's
 #: open decision (docs/esp32-needed-from-owner.md item 6).
 _FAB_CONN = {
-    "J101": ("hand", "LCSC has no side-entry VH header with post 2 factory-omitted: "
-                     "pull post 2 from a JST B4PS-VH(LF)(SN), LCSC C157996, and solder "
-                     "it. A stock header with post 2 fitted puts floating metal "
-                     "between 84 V and the return"),
-    "J102": ("C41793313", "DLL VHH-3AWT2-750", "VH-compatible, middle post omitted at "
-                                               "the factory, 7 A 250 V"),
-    "J301": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J302": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J303": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J304": ("C265094", "JST S02B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J305": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J306": ("C265096", "JST S04B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J309": ("C265095", "JST S03B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J310": ("C265094", "JST S02B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J402": ("C491712", "JST S09B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J403": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J404": ("C489718", "JST S05B-PASK-2(LF)(SN)", "genuine JST PA"),
-    "J405": ("C491712", "JST S09B-PASK-2(LF)(SN)", "genuine JST PA"),
     "J401": ("C2988369", "G-Switch GT-USB-7010ASV", "USB-C 2.0, 16-pin top mount, "
                                                     "-40…+85 °C"),
     "J408": ("C32713265", "hanxia HX PZ2.54-1x6P WZ", "1 × 6 right-angle, gold"),
@@ -1704,7 +1708,12 @@ def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
     out = []
     for c in connectors:
         fab = _FAB_CONN.get(c.refdes)
-        if fab and fab[0] == "hand":
+        if c.leaves_box:
+            header, plug = _TERMINALS[(c.pitch_mm, len(c.pins))]
+            c = replace(c, lcsc=header, plug=plug, assembly="jlc",
+                        source=f"{c.source}. LCSC {header}: the Kangnex header, JLC "
+                               f"Extended; plug LCSC {plug}, ordered loose")
+        elif fab and fab[0] == "hand":
             c = replace(c, assembly="hand", source=f"{c.source}. HAND-SOLDERED: {fab[1]}")
         elif fab:
             lcsc, maker, note = fab

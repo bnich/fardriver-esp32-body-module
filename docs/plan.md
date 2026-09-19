@@ -46,7 +46,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time.
 - **M3** — the brake-lever switch type gates the brake circuit build (`brake-circuit.md` §4).
 - **M18** — the enclosure cavity. Gates every board outline and the enclosure model (§9.7).
-- **The custom stack's height does not yet close:** 71.1 mm derived from the netlist's part heights
+- **The custom stack's height does not yet close:** 74.0 mm derived from the netlist's part heights
   against 64.0 mm available at the *estimated* cavity — provisional until M18 and the enclosure land,
   binding after. The inter-board connector family (M19) sets two of the gaps (§9.2).
 - **DC-DC #1's dissipation at the real 31 W load** — unverified; measure it before any thermal
@@ -806,7 +806,7 @@ brake circuit build** (`brake-circuit.md` §4).
 | M16 | ⏸️ **Answered, then parked (D19).** The Chaojie never ACKs: 17 bitrates (10K–1M), standard and extended IDs, TEC pinned at 128, 0 ACKs, panel silent — with the bus proven one node at **68 Ω** at the breakout, grounds bonded, the display's transceiver proven live, and the rig validated (loopback 8/8 correct · 0/8 disconnected · 0/8 reversed). The vendor says the panel speaks **FarDriver CAN 18** by default, so it reads as a **receive-only node** (confidence MEDIUM): the module transmits in `TWAI_MODE_NO_ACK` and the remaining gap is the **CAN 18 byte map (D8)**. 📄 `can18-investigation.md` — ⛔ its §4.1 pre-flight gate is mandatory before any CAN bench work | MSO5074 + ohmmeter + a CAN node | ⏸️ parked |
 | M17 | **Transients on the 84 V node.** MSO5074 on the module's B+ tap, referenced to controller B−. Capture (i) hard acceleration at the 80 A cap, (ii) a deliberate key-off under load, (iii) XT90-S mate/unmate with the key OFF. Record worst peak voltage, current into the clamp, duration. Expectation (§3.2.1): nothing near the `SMCJ90A`'s 13.4 A / 160 V limit. Does not block ordering | MSO5074 + current probe | ⬜ |
 | M18 | **The enclosure cavity** — the old-controller cavity under the battery compartment, where the four-board stack lives (§9.2). Usable length; width **at the narrowest point along the run**; clear height **along the whole run**, floor to the underside of the battery tray; what the floor is made of and whether it sees moving air; where cables can exit; any intrusion partway along. Working figure until measured: **200 × 50 × 70 mm — an estimate.** Gates every board outline and the enclosure-material decision (§9.7) | tape + calipers | ⬜ |
-| M19 | **Part heights that set each gap in the stack** (§9.2) — **the inter-board connector family first: its mated height sets two of the gaps**; then every part not yet read from a manufacturer drawing. Read so far: CM choke `7448022010` **22.0 mm** tall (18.0 × 14.0 mm footprint); `IXTP26P20P` upright 17.5–21.8 mm and the Y2 discs upright 15.5–16.5 mm, so both lie **flat**; JST PA right-angle (latched, 3 A) 7.0 mm; the Schurter `FAC 0031.3803` holder is a **47.5 mm vertical** part and cannot go in the stack (§9.5.2) | datasheets + calipers | ◐ |
+| M19 | **Part heights that set each gap in the stack** (§9.2) — **the inter-board connector family first: its mated height sets two of the gaps**; then every part not yet read from a manufacturer drawing. Read so far: CM choke `7448022010` **22.0 mm** tall (18.0 × 14.0 mm footprint); `IXTP26P20P` upright 17.5–21.8 mm and the Y2 discs upright 15.5–16.5 mm, so both lie **flat**; the Kangnex locking screw-terminal headers 9.2 mm (3.81 mm) and 12.2 mm (5.08 mm); the Schurter `FAC 0031.3803` holder is a **47.5 mm vertical** part and cannot go in the stack (§9.5.2) | datasheets + calipers | ◐ |
 
 ## 6. Outputs
 
@@ -1358,9 +1358,9 @@ pcb and breadboard."*):
   brake inputs, the 12 V sense, `RUN`, CAN, 3.3 V, and a 100 kΩ-isolated copy of `BL` for firmware.
 
 ⚠️ **The stack's height is derived, never typed — and at the estimated cavity it does not yet close.**
-`python3 -m tools.board_fit` works it out from the netlist's own part and connector heights: **71.1 mm,
+`python3 -m tools.board_fit` works it out from the netlist's own part and connector heights: **74.0 mm,
 against 64.0 mm available** inside the 70 mm estimate (3 mm allowed for a floor, 3 mm for a lid) — over
-by 7.1 mm. ⚠️ **Provisional on both sides** until M18 is measured and the enclosure chosen (§9.7);
+by 10.0 mm. ⚠️ **Provisional on both sides** until M18 is measured and the enclosure chosen (§9.7);
 binding the moment both are. With 1.6 mm boards, 1.0 mm of clearance and 1.5 mm for solder tails:
 
 | Gap | mm | What sets it |
@@ -1368,12 +1368,12 @@ binding the moment both are. With 1.6 mm boards, 1.0 mm of clearance and 1.5 mm 
 | floor → HVIN | 3.0 | the floor standoff, over HVIN's solder tails |
 | HVIN → CONV | 24.5 | the 22.0 mm CM chokes standing on HVIN. C1 and C2 hang 18.5 mm under CONV beside them, so nothing on HVIN taller than 5.0 mm may sit beneath the cans |
 | CONV → DRV | 18.2 | the 12.7 mm brick, the 3.0 mm thermal-interface plate bolted to it (§3.2.3), and DRV's solder tails |
-| DRV → BRAIN | 11.0 | ⬜ the mated height of a generic 2.54 mm header pair — unconfirmed. The parts need only 9.5 mm (the 7.0 mm JST PA connectors) |
-| BRAIN → lid | 8.0 | the 7.0 mm JST PA connectors |
+| DRV → BRAIN | 11.7 | DRV's 9.2 mm harness terminals and BRAIN's solder tails. The inter-board header pair chosen has to mate at this gap |
+| BRAIN → lid | 10.2 | BRAIN's 9.2 mm harness terminals |
 
 ⬜ **The inter-board connector family is unchosen, and once chosen its mated height *is* the gap** — so it
-is picked before layout (M19). A family that mates lower returns at most 1.5 mm of the 7.1 mm, because
-the parts in that gap need 9.5 mm; the rest waits on the measured cavity and the enclosure. ⬜ Nothing
+is picked before layout (M19). The harness terminals set the DRV → BRAIN gap, so a family that mates
+lower returns nothing there; the rest waits on the measured cavity and the enclosure. ⬜ Nothing
 in the design yet carries PWR-UP down from DRV to CONV across the 18.2 mm gap.
 
 ⚠️ **D23's hardware is complete on DRV alone.** The levers, `BL` out and `ACC+` in all land on DRV's

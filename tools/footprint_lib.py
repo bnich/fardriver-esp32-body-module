@@ -106,27 +106,18 @@ def _parse(rec):
 
 def fit(records, item):
     """Library footprint records -> the same footprint with its pads renamed
-    to `item`'s pins and the design's omitted pads (and any FILL tied to one)
-    removed.  Refuses a pad the map does not account for: an unmapped pad is
-    how a wrong footprint gets through."""
+    to `item`'s pins.  Refuses a pad the map does not account for: an unmapped
+    pad is how a wrong footprint gets through."""
     mapping = padmap.pad_map(item)
-    dropped = padmap.dropped_pads(item)
-    parsed = [_parse(r) for r in records]
-    gone = {h["id"] for h, p in parsed
-            if h["type"] == "PAD" and str(p["num"]) in dropped}
     out = []
-    for head, payload in parsed:
+    for head, payload in (_parse(r) for r in records):
         if head["type"] == "PAD":
             num = str(payload["num"])
-            if num in dropped:
-                continue
             if num not in mapping:
                 raise ValueError(f"{item.refdes}: library pad {num!r} is in no pad "
                                  f"map (the map covers {sorted(mapping)})")
             if mapping[num] is not None:
                 payload = {**payload, "num": mapping[num]}
-        elif head["type"] == "FILL" and set(payload.get("refs") or ()) & gone:
-            continue
         out.append(serialize_record(head, payload))
     return out
 

@@ -1,10 +1,9 @@
 """Library footprints bound to devices, their pads renamed to our pins.
 
 A fake library stands in for EasyEDA's: a SOT-23 footprint whose pads are
-numbered 1-3 as every SOT-23 is, and a 4-post VH header.  What must hold: the
-bound footprint's pads carry our pin names by the pad map, the post the
-design omits is gone, one footprint per device, and nothing is bound without a
-library.
+numbered 1-3 as every SOT-23 is, and a 3-position screw terminal.  What must
+hold: the bound footprint's pads carry our pin names by the pad map, one
+footprint per device, and nothing is bound without a library.
 """
 import json
 
@@ -28,7 +27,7 @@ def _v2(pads):
 
 
 SOT23 = _v2([_pad("e1", "1", -40), _pad("e2", "2", 40), _pad("e3", "3", 0)])
-VH4 = _v2([_pad(f"e{i}", str(i), i * 156) for i in range(1, 5)])
+TB3 = _v2([_pad(f"e{i}", str(i), i * 200) for i in range(1, 4)])
 
 
 def _docs(sheet):
@@ -66,10 +65,12 @@ def test_a_fets_footprint_pads_become_gate_source_drain():
     assert set(r for r in bs.footprints_bound) >= {"Q301", "Q302"}
 
 
-def test_the_vh_header_loses_its_second_post():
-    design, sheet, bs = _emit("HVIN", {"C157996": ("VH4", VH4)})
-    fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "VH4")
-    assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == ["1", "3", "4"]
+def test_the_b_plus_terminal_binds_its_library_footprint_pad_for_pin():
+    """J101 is a 3-position 5.08 mm screw terminal: B+, B−, B−."""
+    code = netlist.current().connector("J101").lcsc
+    design, sheet, bs = _emit("HVIN", {code: ("TB3", TB3)})
+    fp = next(d for d in _docs(sheet)["FOOTPRINT"] if d[1][1]["title"] == "TB3")
+    assert sorted(p["num"] for h, p in fp if h["type"] == "PAD") == ["1", "2", "3"]
     assert "J101" in bs.footprints_bound
 
 

@@ -68,11 +68,6 @@ def test_the_tlv767_matches_its_source(d):
     assert [m[str(n)] for n in range(1, 10)] == ["OUT", "SNS", "NC", "GND", "EN", "GND", "NC", "IN", "PAD"]
 
 
-def test_the_vh_headers_lose_the_post_the_design_omits(d):
-    for ref in ("J101", "J102"):
-        assert "2" in padmap.dropped_pads(d.connector(ref))
-
-
 # --- the independent check: EasyEDA's library symbol --------------------------------
 def _library():
     try:

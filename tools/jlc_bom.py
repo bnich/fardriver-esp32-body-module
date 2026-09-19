@@ -69,6 +69,21 @@ def hand_list(d: Design) -> str:
     return "\n".join(lines)
 
 
+def plug_list(d: Design) -> str:
+    """The loose screw plugs: ordered with the boards, not placed, wired by
+    the owner.  One line per plug part."""
+    by_plug = {}
+    for c in d.connectors:
+        if c.plug:
+            by_plug.setdefault(c.plug, []).append(c)
+    lines = []
+    for plug, cs in sorted(by_plug.items(), key=lambda kv: _refkey(kv[1][0].refdes)):
+        refs = " ".join(c.refdes for c in sorted(cs, key=lambda c: _refkey(c.refdes)))
+        lines.append(f"{plug:8} x{len(cs)} {len(cs[0].pins)}-position "
+                     f"{cs[0].pitch_mm} mm screw plug, for {refs}")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", help="write the BOM CSV here")
@@ -83,6 +98,7 @@ def main(argv=None):
         print(text, end="")
     pending = [x.refdes for x in _items(d) if not x.lcsc and x.assembly != "hand"
                and getattr(x, "mpn", "") != "NET-TIE"]
+    print("\nLOOSE, order with the boards (not placed; you wire them):\n" + plug_list(d))
     print("\nHAND-SOLDERED by the owner:\n" + hand_list(d))
     if pending:
         print(f"\n⚠️ NOT YET CHOSEN (no LCSC part, not hand-soldered): {' '.join(pending)}")

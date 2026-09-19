@@ -12,8 +12,7 @@ and tests/test_padmap.py checks them against EasyEDA's library symbols, which
 are an independent reading of the same datasheets.
 
 `pad_map(item)` returns {pad number: pin name}.  A pad mapped to None is left
-unconnected on purpose (a USB-C SBU contact).  `dropped_pads(item)` are pads the
-design removes from the library footprint (a VH post the design omits).
+unconnected on purpose (a USB-C SBU contact).
 """
 import json
 import re
@@ -25,10 +24,6 @@ from .model import Connector, Part
 #: Where a part's footprint comes from when it is not its own LCSC part:
 #: hand-soldered parts, and LCSC parts EasyEDA's library has no device for.
 #: None means the footprint is generated here, from the part's datasheet.
-FOOTPRINT_FROM_REF = {
-    "J101": "C157996",   # JST B4PS-VH(LF)(SN), post 2 pulled (see dropped_pads)
-    "J102": "C131336",   # JST B3PS-VH(LF)(SN): the DLL part's own layout, middle omitted
-}
 FOOTPRINT_FROM_MPN = {
     "VY2472M49Y5US6": "C1620119",   # the same Vishay part on another reel: same leads
     "CN150B110-12/CO": None,        # no library device: generated from TDK's drawing
@@ -97,17 +92,10 @@ def footprint_source(x):
     """The LCSC part whose library footprint `x` uses, or None when its
     footprint is generated here (or, for an inter-board connector, not yet
     chosen)."""
-    if x.refdes in FOOTPRINT_FROM_REF:
-        return FOOTPRINT_FROM_REF[x.refdes]
     mpn = getattr(x, "mpn", "")
     if mpn in FOOTPRINT_FROM_MPN:
         return FOOTPRINT_FROM_MPN[mpn]
     return x.lcsc or None
-
-
-def dropped_pads(x):
-    """Pads the design removes from the library footprint."""
-    return {"2"} if x.refdes in ("J101", "J102") else set()
 
 
 def pad_map(x):

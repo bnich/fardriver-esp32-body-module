@@ -112,6 +112,9 @@ class Connector:
     #: As on Part: the LCSC part, and who fits it.
     lcsc: str = ""
     assembly: Assembly = ""
+    #: The LCSC part of the loose mating half the owner wires and plugs in (a
+    #: screw plug), or "" when there is none.  Ordered with the boards, not placed.
+    plug: str = ""
 
 
 @dataclass(frozen=True)

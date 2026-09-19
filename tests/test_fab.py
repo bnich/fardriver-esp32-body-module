@@ -53,3 +53,40 @@ def test_one_value_one_part(d):
         if p.lcsc and p.kind in ("R", "C"):
             key = (p.kind, p.value, p.package)
             assert seen.setdefault(key, p.lcsc) == p.lcsc, f"{key}: {seen[key]} and {p.lcsc}"
+
+
+# --- every wire into the box lands on a pluggable screw terminal ---------------------
+#: Kangnex LOCKING pluggable terminal blocks (the RM header's flanges carry the nuts
+#: the KM plug's two screws draw into), (pitch mm, positions) -> (the right-angle
+#: header JLC places, the loose screw plug the owner wires).  Typed from LCSC.
+TERMINALS = {
+    (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
+    (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
+    (3.81, 9): ("C489995", "C384932"),
+    (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
+}
+
+
+def test_every_wire_into_the_box_lands_on_a_pluggable_screw_terminal(d):
+    """Owner, 2026-09-18: screw terminals for every connection onto the boards,
+    so nothing is crimped and no mating housing has to be matched.  The plug is
+    wired outside the box and pushed in from the board edge, where the stack
+    cannot block a screwdriver.  The plug screws to the header's flanges:
+    retention under vibration, as the plan's vibration rule asks."""
+    harness = [c for c in d.connectors if c.leaves_box]
+    assert len(harness) == 14
+    for c in harness:
+        assert TERMINALS.get((c.pitch_mm, len(c.pins))) == (c.lcsc, c.plug), c.refdes
+        assert c.assembly == "jlc" and c.height_confirmed, c.refdes
+
+
+def test_the_84_v_terminals_are_the_5_08_mm_family(d):
+    """The 3.81 mm family is rated 160 V IEC; the 5.08 mm one 320 V, and BD-4
+    asks 5.08 mm of any connector carrying pack voltage."""
+    for c in d.connectors:
+        if c.leaves_box:
+            assert c.pitch_mm == (5.08 if c.refdes in ("J101", "J102") else 3.81), c.refdes
+
+
+def test_nothing_but_a_harness_terminal_has_a_plug(d):
+    assert all(not c.plug for c in d.connectors if not c.leaves_box)

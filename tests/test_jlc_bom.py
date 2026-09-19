@@ -38,3 +38,18 @@ def test_hand_list_names_every_hand_soldered_item():
     for x in list(d.parts) + list(d.connectors):
         if x.assembly == "hand":
             assert x.refdes in text
+
+
+def test_the_loose_plugs_are_listed_by_part_with_their_count():
+    """The screw plugs are not placed: they are ordered with the boards and
+    wired by the owner.  One line per plug part, with every terminal it fits."""
+    d = netlist.current()
+    lines = jlc_bom.plug_list(d).splitlines()
+    by_part = {}
+    for c in d.connectors:
+        if c.plug:
+            by_part.setdefault(c.plug, []).append(c.refdes)
+    assert len(lines) == len(by_part)
+    for plug, refs in by_part.items():
+        line = next(l for l in lines if l.startswith(plug))
+        assert f" x{len(refs)} " in line and all(r in line for r in refs)
