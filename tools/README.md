@@ -134,8 +134,9 @@ python3 tools/soft_start.py
 A fixed-step simulation of Q101's gate network (R110, R101A+B, C105, C107, D102) charging 440 µF
 with the converters' load, at 84 V and 60 V across the FET's threshold spread. **The load is the
 LVC tap current `power_budget` derives** (`tap_current_a()`), not a typed figure: Q101 sits upstream
-of both converters, so a new aux output moves the ramp and the SOA verdict with nothing retyped. The
-network is
+of both converters, so a new aux output moves the ramp and the SOA verdict with nothing retyped.
+Key-on, the ramp and the plug-in use that whole tap; **key-off uses the shed tap**
+(`shed_tap_current_a()`) — see below. The network is
 **read off the netlist** by following the copper round Q101 (`circuit_from(design)`), so a changed
 resistor is the one simulated and a pull-down path that reaches no ground is reported as a switch
 that never turns on; the run prints where the netlist differs from the specified values. Reports turn-on
@@ -148,11 +149,18 @@ PASS or FAIL.
 **Key-off is a gated criterion, not a printed remark** (`key_off()`, in `assess()`): Q101 holds on
 for ~0.8 s after the key opens while C107 bleeds through R110, and what it dissipates during the
 decay is held to the **derated DC SOA line**. ⚠️ The gated power figure is an upper **bound** —
-`I_LOAD_MAX × V_pack`, the LVC tap current across the whole pack. `key_off_decay()` integrates the
-decay beside it, which lands a little under the bound and puts the equal-energy pulse **past the
-SOA table's 100 ms row**, so the DC line is the right row and not a stand-in for a missing one. The
-`KeyOff` docstring says what a further refinement would take: a converter under-voltage shutdown
-threshold, which TDK does not publish for the CN-B110.
+`I_LOAD_SHED × V_pack`, the **shed** LVC tap current across the whole pack. ⚠️ **FIRMWARE
+CONTRACT (IO-16):** the firmware releases every aux output when `KEY_SENSE` goes inactive, inside
+that hold, so the decay carries the base load plus the 5 V buck's standing draw — which its
+`EN`-to-`PVIN` tie makes unsheddable — and **this part's SOA margin depends on that firmware
+behaviour**. The un-shed case is printed beside the gate as the **residual risk** it is: hold the
+outputs on through the decay and the bound is over the line again. A reset is not that exposure —
+every driver enable comes out of reset pulled down, so a restart sheds the load by itself; a hang
+that holds the outputs on without tripping the watchdog is what is left. `key_off_decay()`
+integrates the decay beside the bound, which lands a little under it and puts the equal-energy pulse
+**past the SOA table's 100 ms row**, so the DC line is the right row and not a stand-in for a
+missing one. The `KeyOff` docstring says what a further refinement would take: a converter
+under-voltage shutdown threshold, which TDK does not publish for the CN-B110.
 
 ### `layout_rules.py` — the HV net class and the land keep-outs
 

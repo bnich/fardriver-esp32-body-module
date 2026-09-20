@@ -102,6 +102,45 @@ def test_the_five_volt_buck_itself_sits_on_the_12_v_budget():
     assert r.load_12v_a == pytest.approx(switched + r.buck_standing_a)
 
 
+# --- the SHED case: what is left when the firmware releases the outputs -----------------
+def test_the_shed_case_is_the_load_minus_exactly_the_aux_channels():
+    """IO-16: at key-off the firmware releases all eight aux channels, and
+    `tools/soft_start.py` holds Q101's key-off SOA to what is left.  It is
+    this sum minus `aux12_a` and `aux5_a` -- so it follows the base by
+    construction and nobody retypes 2.62."""
+    r = pb.budget(D)
+    assert r.load_12v_a - r.shed_load_12v_a == pytest.approx(r.aux12_a + r.aux5_a)
+    assert r.shed_conv_in_a == pytest.approx(r.shed_load_12v_a * pb.V12
+                                             / pb.CONV_EFF / pb.LVC_V)
+    assert r.shed_tap_a == pytest.approx(r.shed_conv_in_a
+                                         + pb.LOGIC_IN_W / pb.LVC_V)
+    assert r.shed_tap_a == pytest.approx(0.632, abs=0.002)
+
+
+def test_the_shed_case_keeps_the_buck_the_firmware_cannot_release():
+    """⛔ THE OMISSION THAT WOULD PASS SILENTLY.  U305's EN is tied to its own
+    PVIN, so the 5 V aux rail is live whenever the 12 V rail is: no firmware
+    releases it, and dropping it here would understate the load a PART's SOA
+    margin now rests on -- in the direction that passes."""
+    r = pb.budget(D)
+    assert r.shed_load_12v_a == pytest.approx(pb.BASE_12V_A + r.buck_standing_a)
+    assert r.shed_load_12v_a > pb.BASE_12V_A
+
+
+def test_the_shed_case_follows_the_base_and_not_the_aux_block(monkeypatch):
+    """Two mutations, opposite ways round.  A ninth aux channel moves the
+    nominal load and NOT the shed one -- it is shed.  A heavier base moves
+    both."""
+    more = D.with_net(Net("AUX12V_5", (), domain="12V",
+                          source="fixture: a fifth 12 V aux channel"))
+    assert pb.budget(more).load_12v_a > pb.budget(D).load_12v_a
+    assert pb.budget(more).shed_tap_a == pytest.approx(pb.budget(D).shed_tap_a)
+    monkeypatch.setattr(pb, "BASE_12V_A", pb.BASE_12V_A + 1.0)
+    assert pb.budget(D).shed_tap_a == pytest.approx(
+        pb.budget(D).shed_conv_in_a + pb.LOGIC_IN_W / pb.LVC_V)
+    assert pb.budget(D).shed_load_12v_a > 3.6
+
+
 # --- the mutations ----------------------------------------------------------------------
 def test_a_2_a_choke_fails():
     bad = D.replace_part("L101", value="10 mH · 2 A @ 70 °C · 300 V AC")
@@ -291,6 +330,7 @@ def test_the_printed_line_names_the_case_it_is_quoting(capsys):
     assert "worst case" not in out
     assert "12 V nominal load 8.47 A" in out
     assert "LIMITED 11.39 A" in out and "converter input" in out
+    assert "SHED 2.62 A" in out and "tap 0.63 A" in out and "IO-16" in out
     assert "TDK" not in out, "the module does not name the brick's maker"
 
 

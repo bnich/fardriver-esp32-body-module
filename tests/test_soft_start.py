@@ -12,6 +12,15 @@ soft start on paper: a gate with NO pull-down path (it never turns on),
 and a 100 k pull-down with the 68 nF Miller capacitor -- which is what sizing
 C105 from the current in R110, the resistor that OPPOSES the pull-down, gives.
 That one ramps in ~8 ms at ~450 W.
+
+⚠️ TWO loads, and the tests hold each to its own event (IO-16, 2026-09-20):
+KEY ON charges 440 µF against `I_LOAD_MAX`, the whole tap, while the key-off
+decay carries `I_LOAD_SHED`, because the firmware releases every aux output
+when `KEY_SENSE` goes inactive. That makes a PART's SOA margin depend on a
+FIRMWARE behaviour, so three things are pinned here and not left to prose: the
+shed figure keeps the 5 V buck's unsheddable standing draw, the key-off gate
+still FIRES on a heavier shed load, and the un-shed case is still over the
+line and still in the report.
 """
 import math
 from dataclasses import replace
@@ -48,16 +57,14 @@ def test_every_corner_turns_on_inside_the_soa_target():
             assert r.soa_ok, (v, fet, r.p_peak_w, r.soa_limit_w)
 
 
-def test_the_spec_circuit_fails_on_the_key_off_line_and_nothing_else(capsys):
-    # ⛔ The design does NOT pass at the load the aux block put on the tap. The
-    # key-off decay is over the derated DC SOA line at 84 V, and that is the
-    # whole of the verdict: every KEY ON corner is still inside its own line.
-    fails = ss.assess()
-    assert [f for f in fails if not f.startswith("key off")] == []
-    assert [f for f in fails if f.startswith("key off, 84 V")] != []
-    assert ss.main([], ss.SPEC) == 1
+def test_the_spec_circuit_passes_every_criterion(capsys):
+    # Every KEY ON corner is inside its own SOA line, and the key-off decay
+    # clears the DC line on the SHED tap (IO-16). ⚠️ The report still carries
+    # the un-shed figure beside it as the residual risk -- pinned below.
+    assert ss.assess() == []
+    assert ss.main([], ss.SPEC) == 0
     out = capsys.readouterr().out
-    assert "⛔ FAIL" in out and "✅ PASS" not in out
+    assert "✅ PASS" in out and "⛔ FAIL" not in out
 
 
 def test_settled_gate_drive_is_the_divider_and_inside_the_gate_rating():
@@ -110,15 +117,27 @@ def test_one_more_aux_channel_moves_the_load_the_soft_start_carries():
 
 
 def test_a_heavier_tap_is_a_hotter_switch(monkeypatch):
-    """And the number reaches the simulation, not just the report's header."""
+    """And the number reaches the simulation, not just the report's header.
+
+    ⚠️ Each load moves its OWN event and not the other's. A ninth aux channel
+    is on the tap at key-on, so it makes the ramp hotter; by the time the
+    key-off decay starts the firmware has released it (IO-16), so it must not
+    move that one -- and a heavier SHED load must move key-off alone.
+    """
     from tools import netlist
     heavier = ss.tap_current_a(one_more_aux_channel(netlist.current()))
     base_on, base_off = ss.simulate_key_on(84.0), ss.key_off(84.0)
-    monkeypatch.setattr(ss, "I_LOAD_MAX", heavier)
-    monkeypatch.setattr(ss, "P_LOAD", heavier * ss.V_LVC)
-    assert ss.simulate_key_on(84.0).i_peak_a > base_on.i_peak_a
-    assert ss.simulate_key_on(84.0).p_peak_w > base_on.p_peak_w
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "I_LOAD_MAX", heavier)
+        mp.setattr(ss, "P_LOAD", heavier * ss.V_LVC)
+        assert ss.simulate_key_on(84.0).i_peak_a > base_on.i_peak_a
+        assert ss.simulate_key_on(84.0).p_peak_w > base_on.p_peak_w
+        assert ss.key_off(84.0).p_max_w == pytest.approx(base_off.p_max_w)
+    shed = ss.I_LOAD_SHED * 1.5
+    monkeypatch.setattr(ss, "I_LOAD_SHED", shed)
+    monkeypatch.setattr(ss, "P_LOAD_SHED", shed * ss.V_LVC)
     assert ss.key_off(84.0).p_max_w > base_off.p_max_w
+    assert ss.simulate_key_on(84.0).p_peak_w == pytest.approx(base_on.p_peak_w)
 
 
 # --- the physics, checked from outside the integrator ---------------------------
@@ -157,7 +176,7 @@ def test_the_ramp_scales_with_the_miller_capacitor():
 
 
 def test_with_no_load_the_fet_absorbs_half_c_v_squared(monkeypatch):
-    monkeypatch.setattr(ss, "load_current", lambda v_d: 0.0)
+    monkeypatch.setattr(ss, "load_current", lambda v_d, i_load_a=None: 0.0)
     for c in (ss.SPEC, WRONG_100K):
         r = ss.simulate_key_on(84.0, c)
         assert r.energy_j == pytest.approx(0.5 * 440e-6 * 84.0 ** 2, rel=0.01)
@@ -224,44 +243,92 @@ def test_without_c107_a_plug_in_turns_the_fet_on_with_the_key_off():
 
 def test_key_off_delay_is_c107_through_r110():
     # 13.13 V (84 x 100/640) decaying to the plateau of a minimum-threshold FET
-    # at the derived load.
+    # at the SHED load, which is what key-off carries (IO-16).
     tau = 100e3 * (4.7e-6 + 68e-9 + ss.C_ISS)
-    v_pl = 2.0 + math.sqrt(ss.I_LOAD_MAX / ss.FAST.k)
+    v_pl = 2.0 + math.sqrt(ss.I_LOAD_SHED / ss.FAST.k)
     assert ss.key_off_delay_s(84.0) == pytest.approx(
         tau * math.log((84.0 * 100 / 640) / v_pl))
+    # ⚠️ A LIGHTER load holds on LONGER -- it pinches off at a lower gate
+    # drive -- so the un-shed hold is the SHORTER of the two. That shorter one
+    # is the window the firmware has to release the outputs in, which is the
+    # conservative way round to quote it.
+    un_shed = ss.key_off_delay_s(84.0, i_load_a=ss.I_LOAD_MAX)
+    assert un_shed < ss.key_off_delay_s(84.0)
+    assert 0.7 < un_shed < 0.9
     assert ss.key_off_delay_s(84.0, ss.Circuit(c_gs=0.0)) < 0.02
 
 
 # --- key OFF: the criterion that is IN the verdict ---------------------------------
-def test_the_key_off_soa_line_is_in_the_verdict_and_bites_today():
-    # ⛔ This is the defect the check was written for, and it is the CURRENT
-    # design: the tool used to print this ⛔ inline and exit 0 because assess()
-    # never looked at it.
+def test_the_key_off_line_is_in_the_verdict_and_clears_on_the_shed_load():
+    # IO-16: the firmware releases every aux output on KEY_SENSE going
+    # inactive, inside Q101's key-off hold, so the decay carries the SHED tap
+    # and the FET clears its derated DC line with 2.6x in hand.
     hot = ss.key_off(84.0)
-    assert not hot.ok
-    assert hot.p_max_w == pytest.approx(ss.I_LOAD_MAX * 84.0)
+    assert hot.i_load_a == pytest.approx(ss.I_LOAD_SHED)
+    assert hot.p_max_w == pytest.approx(ss.I_LOAD_SHED * 84.0)
     assert hot.soa_limit_w == pytest.approx(ss.SOA_DC_84V_TC70 * ss.SOA_DERATE)
-    assert [f for f in ss.assess() if f.startswith("key off, 84 V")] != []
-    assert ss.main([], ss.SPEC) == 1
-
-
-def test_the_key_off_verdict_follows_the_load_it_is_not_always_on(monkeypatch):
-    # At the 0.62 A that predated the aux block, the same criterion clears --
-    # so what fails is the load, not a check that can only ever say no.
-    monkeypatch.setattr(ss, "I_LOAD_MAX", 0.62)
-    monkeypatch.setattr(ss, "P_LOAD", 0.62 * ss.V_LVC)
-    hot = ss.key_off(84.0)
     assert hot.ok and hot.sim_ok
-    assert ss.assess() == []
+    assert hot.soa_limit_w / hot.p_max_w > 2.5
+    assert [f for f in ss.assess() if f.startswith("key off")] == []
+    assert ss.main([], ss.SPEC) == 0
 
 
-def test_the_integrated_decay_is_under_the_bound_and_still_over_the_line():
-    # Refining the bound into a simulation does NOT rescue the design: it
-    # takes 162 W down to ~147 W, and the line is 138 W.
-    hot = ss.key_off(84.0)
-    assert hot.p_sim_w < hot.p_max_w        # so the bound is the stricter test
-    assert not hot.sim_ok
-    assert hot.energy_j > 15.0              # ~21 J, mostly after the hold
+def test_the_shed_load_is_the_base_plus_the_buck_and_never_the_base_alone():
+    """⛔ The omission this test exists to stop, because it passes silently.
+
+    U305's EN is tied to its own PVIN, so the 5 V aux rail is live whenever
+    the 12 V rail is: firmware cannot release it, and it stays inside the
+    figure Q101's SOA margin now rests on. What the firmware DOES take off is
+    the aux channels, and exactly them.
+    """
+    from tools import power_budget as pb
+    r = pb.budget()
+    assert ss.I_LOAD_SHED == pytest.approx(r.shed_tap_a)
+    assert ss.I_LOAD_SHED == pytest.approx(ss.shed_tap_current_a())
+    assert ss.P_LOAD_SHED == pytest.approx(ss.I_LOAD_SHED * ss.V_LVC)
+    assert r.shed_load_12v_a == pytest.approx(pb.BASE_12V_A + r.buck_standing_a)
+    assert r.shed_load_12v_a > pb.BASE_12V_A
+    assert r.load_12v_a - r.shed_load_12v_a == pytest.approx(r.aux12_a + r.aux5_a)
+    # the whole tap, both converters, at the LVC -- the Cincon is not shed either
+    assert ss.I_LOAD_SHED == pytest.approx(
+        r.shed_conv_in_a + pb.LOGIC_IN_W / pb.LVC_V)
+    assert ss.I_LOAD_SHED == pytest.approx(0.63, abs=0.005)
+    assert ss.I_LOAD_SHED < ss.I_LOAD_MAX / 3
+
+
+def test_the_key_off_gate_still_bites_at_a_heavier_shed_load():
+    """⛔ A criterion that can no longer say no is not a criterion.
+
+    138 W / 84 V = 1.64 A. A shed tap above that puts the bound back over the
+    derated DC line, wherever the extra current came from.
+    """
+    assert ss.SOA_DC_84V_TC70 * ss.SOA_DERATE / 84.0 == pytest.approx(
+        1.637, abs=0.002)
+    assert ss.key_off(84.0, i_load_a=1.60).ok
+    assert not ss.key_off(84.0, i_load_a=1.70).ok
+
+
+def test_a_heavier_base_12_v_load_fails_the_key_off_gate(monkeypatch, capsys):
+    """The same mutation end to end, through the number's own home.
+
+    Nothing about the aux block changes and the firmware still sheds all
+    eight channels: the BASE 12 V load alone goes to 7.6 A, which lands the
+    shed tap at ~1.74 A -- over the 1.64 A the line allows. The gate fires,
+    names the shed case, and the tool exits 1.
+    """
+    from tools import power_budget as pb
+    monkeypatch.setattr(pb, "BASE_12V_A", 7.6)
+    heavier = ss.shed_tap_current_a()
+    assert heavier > 1.64
+    monkeypatch.setattr(ss, "I_LOAD_SHED", heavier)
+    monkeypatch.setattr(ss, "P_LOAD_SHED", heavier * ss.V_LVC)
+    assert not ss.key_off(84.0).ok
+    fails = [f for f in ss.assess() if f.startswith("key off, 84 V")]
+    assert fails and "SHED" in fails[0]
+    # and nothing else broke: KEY ON still follows the un-shed tap
+    assert [f for f in ss.assess() if not f.startswith("key off")] == []
+    assert ss.main([], ss.SPEC) == 1
+    assert "⛔ FAIL" in capsys.readouterr().out
 
 
 def test_the_decay_is_not_a_short_pulse_so_the_dc_line_is_the_right_row():
@@ -269,8 +336,10 @@ def test_the_decay_is_not_a_short_pulse_so_the_dc_line_is_the_right_row():
     assert hot.pulse_s > 0.100                                  # past the last row
     assert hot.soa_at_pulse_w == pytest.approx(hot.soa_limit_w)
     # ⚠️ What makes it slow is the GATE's RC, not the 440 µF: the caps alone
-    # would be emptied in ~19 ms at this load.
-    assert hot.pulse_s > 5 * (ss.C_LOAD * 84.0 / ss.I_LOAD_MAX)
+    # would be emptied in ~58 ms at the shed load, while the gate bleeds with
+    # R110 x (C107 + C105 + C_ISS) = 0.48 s. The pulse sits between the two.
+    assert hot.pulse_s > 2 * (ss.C_LOAD * 84.0 / ss.I_LOAD_SHED)
+    assert hot.pulse_s < 100e3 * (4.7e-6 + 68e-9 + ss.C_ISS)
 
 
 def test_the_decay_integration_step_is_fine_enough():
@@ -279,21 +348,60 @@ def test_the_decay_integration_step_is_fine_enough():
     assert coarse[1] == pytest.approx(fine[1], rel=1e-3)     # energy
 
 
-def test_the_60_v_corner_is_under_the_line_so_the_check_discriminates():
-    assert ss.key_off(60.0).ok
-    assert [f for f in ss.assess() if f.startswith("key off, 60 V")] == []
+def test_the_60_v_corner_was_never_the_one_that_failed():
+    # 84 V is the corner the shed load rescued; 60 V was under the line even
+    # un-shed, so a check that only ever looked here would have said nothing.
+    assert ss.key_off(60.0).ok and ss.key_off(60.0, i_load_a=ss.I_LOAD_MAX).ok
+    assert not ss.key_off(84.0, i_load_a=ss.I_LOAD_MAX).ok
+    assert [f for f in ss.assess() if f.startswith("key off")] == []
 
 
-def test_the_key_off_figure_is_stated_as_a_bound_with_its_alternative():
+def test_the_key_off_figure_is_stated_as_a_bound_with_its_alternative(capsys):
     hot = ss.key_off(84.0)
-    # The bound is I_LOAD_MAX x V_pack; the constant-power case held to the
-    # converters' stated 43 V input floor is lower, and the verdict text says
-    # which is which rather than quietly using the kinder one.
+    # The bound is the shed tap x V_pack; the constant-power case held to the
+    # converters' stated 43 V input floor is lower, and the report says which
+    # is which rather than quietly using the kinder one.
     assert hot.dropout_case_w < hot.p_max_w
     assert hot.dropout_case_w == pytest.approx(
-        ss.P_LOAD * (84.0 / ss.V_CONVERTER_MIN - 1.0))
-    text = " ".join(ss.assess())
-    assert "BOUND" in text and f"{ss.V_CONVERTER_MIN:.0f} V" in text
+        hot.i_load_a * ss.V_LVC * (84.0 / ss.V_CONVERTER_MIN - 1.0))
+    ss.main([], ss.SPEC)
+    out = capsys.readouterr().out
+    assert "BOUND" in out and f"{ss.V_CONVERTER_MIN:.0f} V" in out
+
+
+# --- key OFF: the residual risk the shed case does NOT erase -----------------------
+def test_the_un_shed_case_is_still_over_the_line():
+    """⚠️ RESIDUAL RISK, not a gate, and not deleted.
+
+    Hold the outputs on through the decay and Q101 is back where it was:
+    162 W against a 138 W line, 147 W and 21.3 J once the decay is integrated,
+    over a pulse past the 100 ms row. Refining the bound into a simulation
+    does not rescue it -- which is why the shed is the thing that had to
+    change, not the arithmetic.
+    """
+    risk = ss.key_off(84.0, i_load_a=ss.I_LOAD_MAX)
+    assert risk.p_max_w == pytest.approx(ss.I_LOAD_MAX * 84.0)
+    assert risk.p_max_w > 160.0 and risk.soa_limit_w < 140.0
+    assert not risk.ok
+    assert risk.p_sim_w < risk.p_max_w      # so the bound is the stricter test
+    assert not risk.sim_ok
+    assert risk.energy_j > 15.0             # ~21 J, mostly after the hold
+    assert risk.pulse_s > 0.100
+    assert risk.p_max_w > 3 * ss.key_off(84.0).p_max_w
+
+
+def test_the_report_keeps_the_un_shed_figure_beside_the_gate(capsys):
+    """⛔ Do not delete the 162 W. Whoever reads the PASS has to see what the
+    pass depends on, and how narrow the exposure actually is: a reset sheds
+    the load by ITSELF (every driver enable comes out of reset pulled down),
+    so what is left is a hang that holds the outputs on without tripping the
+    watchdog, through the decay. Not a blanket "firmware might fail"."""
+    assert ss.main([], ss.SPEC) == 0
+    out = capsys.readouterr().out
+    assert "RESIDUAL RISK" in out
+    assert "162 W" in out and "138 W" in out and "53 W" in out
+    assert "IO-16" in out and "KEY_SENSE" in out
+    assert "RESET is NOT the exposure" in out and "HANG" in out
 
 
 # --- solving for the resistor ----------------------------------------------------
@@ -391,18 +499,17 @@ def test_an_unreadable_value_is_an_error_not_a_zero():
         ss._value(Part("R9", "X", "0805", "POWER", "R", ("1", "2"), 1.0, value="TBD"))
 
 
-def test_the_real_netlists_gate_network_fails_only_on_the_key_off_line(capsys):
+def test_the_real_netlists_gate_network_passes_every_criterion(capsys):
     try:
         from tools import netlist
         design = netlist.current()
     except Exception as exc:                  # the netlist is its own test's job
         pytest.skip(f"tools.netlist does not build a Design: {type(exc).__name__}: {exc}")
     c = ss.circuit_from(design)
-    assert [f for f in ss.assess(c) if not f.startswith("key off")] == []
-    assert [f for f in ss.assess(c) if f.startswith("key off, 84 V")] != []
+    assert ss.assess(c) == []
     # The same design as the specified one, to within a 5 % resistor.
     assert ss.differences(c, ss.SPEC, rel=0.05) == []
-    assert ss.main([]) == 1
+    assert ss.main([]) == 0
     assert "read off tools/netlist.py" in capsys.readouterr().out
 
 

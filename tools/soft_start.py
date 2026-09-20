@@ -40,6 +40,25 @@ The LOAD is not typed here either: `tap_current_a()` takes it from
 sits on the fused B+ tap upstream of BOTH converters, so it carries the whole
 tap current.
 
+⚠️ TWO loads, and which event gets which is the design decision IO-16
+(2026-09-20), not a modelling convenience:
+
+  * KEY ON, the ramp and the key-off plug-in use `I_LOAD_MAX`, the WHOLE tap.
+    At key-on the aux channels come up behind the ramp, so the switch has to
+    be able to charge 440 µF with all of them on it.
+  * KEY OFF uses `I_LOAD_SHED`. ⚠️ FIRMWARE CONTRACT: on `KEY_SENSE` going
+    inactive the firmware RELEASES EVERY AUX OUTPUT, within Q101's key-off
+    hold, and Q101's SOA margin on the decay depends on it. The tap then falls
+    to the base load plus the one term firmware cannot release -- U305's
+    standing draw, its EN being tied to its own PVIN -- and the decay costs the
+    FET about a third of what the un-shed load would. `tools.power_budget`
+    owns both figures; neither is typed here.
+
+The un-shed case has not gone away: it is printed beside the gate as the
+residual risk it now is, because a firmware hang that holds the outputs on
+through the decay is still over the line. A RESET is not that exposure -- every
+driver's enable comes out of reset pulled down.
+
     python3 tools/soft_start.py          # report; exit 1 on any FAIL
 
 The run reads the gate network OFF THE NETLIST (`circuit_from`), by following
@@ -115,11 +134,37 @@ def tap_current_a(d=None) -> float:
     return power_budget.budget(d).tap_a
 
 
+def shed_tap_current_a(d=None) -> float:
+    """The same tap once the firmware has RELEASED every aux output, in amps.
+
+    ⚠️ FIRMWARE CONTRACT (IO-16, 2026-09-20). The firmware releases all eight
+    aux channels when `KEY_SENSE` goes inactive, well inside Q101's key-off
+    hold, and that is what puts the key-off decay inside the FET's SOA. It is a
+    firmware behaviour a PART RATING now depends on: break it and Q101 is over
+    its derated DC line again, which is what the residual-risk figure in the
+    report and in `KeyOff` is there to keep visible.
+
+    ⛔ It is NOT the base load. `power_budget.Result.shed_load_12v_a` keeps the
+    5 V buck's standing draw in the sum, because U305's EN is tied to its own
+    PVIN (TI SNVSAH5A p.4): the 5 V aux rail is live whenever the 12 V rail is,
+    so no firmware can shed it. Dropping it would understate the switch's load
+    by omission -- silently, in the direction that passes.
+
+    ⛔ `tools.power_budget` owns this number and the arithmetic behind it, the
+    same as `tap_current_a` -- see there.
+    """
+    return power_budget.budget(d).shed_tap_a
+
+
 #: What Q101 carries at the 60 V cutoff -- DERIVED from the netlist through
-#: power_budget, never typed. Everything in this file that says "the load"
-#: means this current.
+#: power_budget, never typed. KEY ON, the ramp and the plug-in mean THIS
+#: current: at key-on the aux channels come up behind the ramp.
 I_LOAD_MAX = tap_current_a()
-P_LOAD = I_LOAD_MAX * V_LVC    # the converters are constant-power above it
+P_LOAD = I_LOAD_MAX * V_LVC
+#: What Q101 carries on the way OUT, with the aux outputs shed (IO-16) --
+#: derived the same way. The key-off criterion means THIS current, and only it.
+I_LOAD_SHED = shed_tap_current_a()
+P_LOAD_SHED = I_LOAD_SHED * V_LVC    # the converters are constant-power above it
 #: SMCJ90A maximum clamping voltage at I_PP (Littelfuse SMCJ series table).
 #: The most the source node can reach while D101 stands.
 V_TVS_CLAMP = 146.0
@@ -254,24 +299,28 @@ def differences(a: Circuit, b: Circuit, rel: float = 1e-9) -> list[str]:
     return out
 
 
-def load_current(v_d: float) -> float:
+def load_current(v_d: float, i_load_a: float | None = None) -> float:
     """Converter draw at an input voltage of `v_d`.
 
-    Constant power above the cutoff voltage, capped at `I_LOAD_MAX` -- the
-    derived LVC tap current -- below it. ⚠️ Deliberately pessimistic on the way
-    UP: the real converters sit in under-voltage lock-out for the first part of
-    the ramp and draw nothing, while this model has them pulling the full LVC
-    current from a node at 1 V.
+    Constant power above the cutoff voltage, capped at the LVC tap current
+    below it. `i_load_a` says WHICH tap current: `I_LOAD_MAX` by default, which
+    is every event but the key-off decay; that one passes `I_LOAD_SHED`,
+    because the firmware has released the aux outputs by then (IO-16).
+
+    ⚠️ Deliberately pessimistic on the way UP: the real converters sit in
+    under-voltage lock-out for the first part of the ramp and draw nothing,
+    while this model has them pulling the full LVC current from a node at 1 V.
     ⚠️ And deliberately OPTIMISTIC on the way down, where the cap is what stops
     a constant-power load drawing ever more current as its input falls. See
     `key_off` for why that direction is not modelled: the voltage at which the
     converters quit is not published.
     """
+    i_max = I_LOAD_MAX if i_load_a is None else i_load_a
     if v_d <= 0.0:
         return 0.0
     if v_d < 1.0:
-        return I_LOAD_MAX * v_d          # no draw from a node that is at 0 V
-    return min(I_LOAD_MAX, P_LOAD / v_d)
+        return i_max * v_d               # no draw from a node that is at 0 V
+    return min(i_max, i_max * V_LVC / v_d)
 
 
 def soa_limit_w(pulse_s: float) -> float:
@@ -426,7 +475,7 @@ class KeyOn:
 
 
 def _step(c: Circuit, fet: Fet, pulled_down: bool, v_s: float, dv_s: float,
-          v_g: float, v_d: float, dt: float):
+          v_g: float, v_d: float, dt: float, i_load_a: float | None = None):
     """Advance gate and drain by `dt`. Returns (v_g, v_d, i_fet, p_fet).
 
     The drain uses an exponential step on the FET's secant conductance, so the
@@ -437,7 +486,7 @@ def _step(c: Circuit, fet: Fet, pulled_down: bool, v_s: float, dv_s: float,
     c_gs, c_gd = c.c_gs + (C_ISS - C_RSS), c.c_gd + C_RSS
     v_sd = v_s - v_d
     i_f = fet.current(v_s - v_g, v_sd)
-    i_l = load_current(v_d)
+    i_l = load_current(v_d, i_load_a)
     if i_f > 0.0:
         g = i_f / v_sd
         v_inf = v_s - i_l / g
@@ -539,18 +588,26 @@ def plug_in(v_step: float = V_PACK_FULL, c: Circuit = SPEC,
 
 
 def key_off_delay_s(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
-                    fet: Fet = FAST) -> float:
+                    fet: Fet = FAST, i_load_a: float | None = None) -> float:
     """Key off -> Q101 starting to pinch off: C107 discharging through R110.
     Longest for the lowest-threshold FET, which is the default.
 
-    The price of C107, and nothing asks for the hold itself: C107 is sized by
-    the key-off plug-in (`plug_in`), where it divides C105's coupled edge down
-    to ~1.2 V. The ~0.8 s hold is what that capacitance costs on the way out --
-    §3.2.2 counts it as ride-out the design does not lean on, and IN-12 senses
-    the key wire itself, so the firmware sees key-off at once whatever Q101 is
-    doing.
+    C107 is sized by the key-off plug-in (`plug_in`), where it divides C105's
+    coupled edge down to ~1.2 V; the ~0.8 s hold is what that capacitance costs
+    on the way out. §3.2.2 counts it as ride-out the design does not lean on --
+    but IO-16 does lean on it in one direction only: IN-12 senses the key wire
+    itself, so the firmware sees key-off at once whatever Q101 is doing, and
+    the hold is the window it has to release the aux outputs in. Milliseconds
+    of work against most of a second.
+
+    ⚠️ The hold gets LONGER as the load gets lighter, not shorter: a smaller
+    current pinches off at a lower gate drive, so the shed case holds on past
+    the un-shed one. `i_load_a` says which load, and it DEFAULTS TO
+    `I_LOAD_SHED` -- this is a key-off figure, and by then the outputs are
+    released (IO-16).
     """
-    v_pl = fet.v_th + math.sqrt(I_LOAD_MAX / fet.k)
+    i_load = I_LOAD_SHED if i_load_a is None else i_load_a
+    v_pl = fet.v_th + math.sqrt(i_load / fet.k)
     v_on = static_v_sg(v_pack, c)
     if v_on <= v_pl:
         return 0.0
@@ -565,7 +622,8 @@ V_CONVERTER_MIN = 43.0
 
 def key_off_decay(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
                   fet: Fet = FAST, dt: float = 20e-6,
-                  give_up_s: float = 5.0) -> tuple[float, float, float]:
+                  give_up_s: float = 5.0,
+                  i_load_a: float | None = None) -> tuple[float, float, float]:
     """Integrate the decay after the hold: (peak W, energy J, pulse width s).
 
     Q105 is open, so the gate is NOT pulled down: it charges back toward the
@@ -576,15 +634,20 @@ def key_off_decay(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
     is what lets the verdict sit on the bound and still be the stricter test.
 
     ⚠️ It uses `load_current`, so the converters are modelled as pulling their
-    LVC current all the way down: NO dropout. The third figure is the
-    equal-energy pulse width, for the same SOA lookup the KEY ON corners use.
+    LVC current all the way down: NO dropout. `i_load_a` says which LVC
+    current, and it DEFAULTS TO `I_LOAD_SHED` -- this is a key-off function and
+    IO-16 says the outputs are released by now. `I_LOAD_MAX` is passed in for
+    the residual-risk case. The third figure is the equal-energy pulse width,
+    for the same SOA lookup the KEY ON corners use.
 
     The step is stable: the peak moves by under 0.01 % between 50 µs and 2 µs.
     """
+    i_load = I_LOAD_SHED if i_load_a is None else i_load_a
     v_g, v_d = v_pack - static_v_sg(v_pack, c), v_pack
     t, energy, p_peak = 0.0, 0.0, 0.0
     while t < give_up_s:
-        v_g, v_d, _i_f, p_f = _step(c, fet, False, v_pack, 0.0, v_g, v_d, dt)
+        v_g, v_d, _i_f, p_f = _step(c, fet, False, v_pack, 0.0, v_g, v_d, dt,
+                                    i_load)
         t += dt
         energy += p_f * dt
         p_peak = max(p_peak, p_f)
@@ -597,15 +660,23 @@ def key_off_decay(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
 class KeyOff:
     """The key going off with Q101 on: the hold, then what it costs the FET.
 
-    `p_max_w`, which the verdict sits on, is `I_LOAD_MAX × v_pack`: the load
+    ⚠️ FIRMWARE CONTRACT (IO-16, 2026-09-20). `i_load_a` is the tap current the
+    decay is charged with, and the gated case is the SHED one: the firmware
+    releases every aux output when `KEY_SENSE` goes inactive, inside the
+    `hold_s` window, leaving the base load plus the 5 V buck's standing draw.
+    Q101's SOA margin on this event depends on that firmware behaviour. The
+    un-shed case is not deleted -- `main` prints it beside this one as the
+    residual risk, and it is still over the line.
+
+    `p_max_w`, which the verdict sits on, is `i_load_a × v_pack`: the load
     still pulling its LVC current with the whole pack across the FET. ⚠️ It is
     a BOUND, not an expectation, and the two reasons do not cancel:
 
       * The converters are constant-power, so with the pack at `v_pack` they
-        draw P_LOAD / v_pack, not the LVC current -- V_LVC/v_pack of it, 71 %
-        at 84 V. While HV_SW decays the real cost is
-        P_LOAD × (v_pack / V_d − 1), which reaches this bound only if the load
-        were still pulling I_LOAD_MAX with its input near zero.
+        draw i_load_a × V_LVC / v_pack, not the LVC current -- V_LVC/v_pack of
+        it, 71 % at 84 V. While HV_SW decays the real cost is
+        P × (v_pack / V_d − 1), which reaches this bound only if the load were
+        still pulling its LVC current with its input near zero.
       * What ends the decay is the converters quitting, and that voltage is
         NOT PUBLISHED. TDK gives the CN-B110 an input RANGE of 43-160 V
         (tdk_cn-b_e.pdf p.1) and says the input waveform must not leave it
@@ -616,8 +687,7 @@ class KeyOff:
         less -- so that refinement needs a number from the vendor, not a guess.
 
     How much of the bound is real is not left to prose: `p_sim_w` integrates
-    the decay (`key_off_decay`) and lands a little under it -- still over the
-    line at 84 V.
+    the decay (`key_off_decay`) and lands a little under it.
 
     ⛔ And the line is the DC one because the same integration says so:
     `pulse_s` comes out PAST the 100 ms row, so the DC figure is the row this
@@ -627,6 +697,7 @@ class KeyOff:
     ⬜ M17 scopes a deliberate key-off under load; none of this is measured.
     """
     v_pack: float
+    i_load_a: float
     hold_s: float
     p_max_w: float
     p_sim_w: float
@@ -654,15 +725,21 @@ class KeyOff:
     @property
     def dropout_case_w(self) -> float:
         """The same decay if the converters quit at their stated input floor."""
-        return P_LOAD * (self.v_pack / V_CONVERTER_MIN - 1.0)
+        return self.i_load_a * V_LVC * (self.v_pack / V_CONVERTER_MIN - 1.0)
 
 
 def key_off(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
-            fet: Fet = FAST) -> KeyOff:
-    """The key-off event at one pack voltage -- read `KeyOff` before quoting it."""
-    peak, energy, pulse = key_off_decay(v_pack, c, fet)
-    return KeyOff(v_pack, key_off_delay_s(v_pack, c, fet), I_LOAD_MAX * v_pack,
-                  peak, energy, pulse)
+            fet: Fet = FAST, i_load_a: float | None = None) -> KeyOff:
+    """The key-off event at one pack voltage -- read `KeyOff` before quoting it.
+
+    The default load is `I_LOAD_SHED`, the tap with the aux outputs released,
+    because that is what IO-16 says Q101 carries here. Pass `I_LOAD_MAX` for
+    the residual-risk case where the firmware hangs with them still on.
+    """
+    i_load = I_LOAD_SHED if i_load_a is None else i_load_a
+    peak, energy, pulse = key_off_decay(v_pack, c, fet, i_load_a=i_load)
+    return KeyOff(v_pack, i_load, key_off_delay_s(v_pack, c, fet, i_load),
+                  i_load * v_pack, peak, energy, pulse)
 
 
 def solve_r_pd(target_ramp_s: float, v_pack: float = V_PACK_FULL,
@@ -741,6 +818,13 @@ def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
     # ⛔ The key-off line used to be PRINTED with its own ⛔ and collected by
     # nobody, so the tool stated this violation and still exited 0. A criterion
     # that is not in the verdict is not a criterion.
+    #
+    # The load here is the SHED tap (IO-16): the firmware releases the aux
+    # outputs on key-off, inside the hold. ⚠️ The gate therefore stands on a
+    # firmware behaviour -- `main` prints the un-shed case beside it as the
+    # residual risk, and `shed_tap_current_a` states the contract. It is still
+    # a criterion that bites: at a shed tap over ~1.64 A the bound passes
+    # 138 W and this fires, which tests/test_soft_start.py proves both ways.
     for v in (V_PACK_FULL, V_LVC):
         k = key_off(v, c)
         if not k.ok:
@@ -749,9 +833,9 @@ def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
                 f"{k.hold_s*1e3:.0f} ms (C107 through R110) and then carries as much "
                 f"as {k.p_max_w:.0f} W while HV_SW decays -- over the "
                 f"{k.soa_limit_w:.0f} W derated DC SOA line. The {k.p_max_w:.0f} W is "
-                f"a BOUND: the {I_LOAD_MAX:.2f} A LVC tap current across the whole "
-                f"pack voltage. Integrating the decay instead gives "
-                f"{k.p_sim_w:.0f} W over {k.energy_j:.1f} J, "
+                f"a BOUND: the {k.i_load_a:.2f} A LVC tap current across the whole "
+                f"pack voltage, with the aux outputs already SHED. Integrating the "
+                f"decay instead gives {k.p_sim_w:.0f} W over {k.energy_j:.1f} J, "
                 f"{'still over' if not k.sim_ok else 'under'} it, and a "
                 f"{k.pulse_s*1e3:.0f} ms equal-energy pulse -- past the 100 ms row, so "
                 f"the DC line is the right one. If the converters quit at their "
@@ -833,28 +917,51 @@ def main(argv=None, c: Circuit | None = None) -> int:
               f"{leak*1e3:.0f} mA through a minimum-threshold Q101 while the clamp lasts.")
     print("  ✔ Scope HV_SW and HV_BPLUS during a key-off plug-in.\n")
 
-    print("KEY OFF")
+    print("KEY OFF -- the firmware sheds the aux outputs (IO-16, 2026-09-20)")
+    risk = key_off(V_PACK_FULL, c, i_load_a=I_LOAD_MAX)
+    risk_hold = risk.hold_s
+    print(f"  the load on the way down is the SHED tap, {I_LOAD_SHED:.2f} A at the "
+          f"{V_LVC:.0f} V LVC: tools.power_budget's base 12 V load plus the 5 V "
+          f"buck's\n     standing draw. ⚠️ That buck is NOT shed -- U305's EN is "
+          f"tied to its own PVIN, so the 5 V rail is live whenever the 12 V rail "
+          f"is.\n     The hold is LONGER here than un-shed ({risk_hold*1e3:.0f} ms): "
+          f"a lighter load pinches off at a lower gate drive.")
     offs = [key_off(v, c) for v in (V_PACK_FULL, V_LVC)]
     for k in offs:
         print(f"  {k.v_pack:.0f} V: Q101 holds on for up to {k.hold_s*1e3:.0f} ms "
               f"(C107 through R110), then carries at most "
               f"{k.p_max_w:.0f} W on the way down -- "
               f"{'under' if k.ok else '⛔ OVER'} the "
-              f"derated DC line, {k.soa_limit_w:.0f} W.")
+              f"derated DC line, {k.soa_limit_w:.0f} W"
+              f"{f' (×{k.soa_limit_w/k.p_max_w:.1f})' if k.ok else ''}.")
         print(f"         decay integrated: {k.p_sim_w:.0f} W peak, {k.energy_j:.1f} J, "
               f"a {k.pulse_s*1e3:.0f} ms equal-energy pulse ({k.soa_at_pulse_w:.0f} W "
               f"allowed there) -- {'under' if k.sim_ok else '⛔ OVER'}.")
     hot = offs[0]
-    print(f"  ⚠️ {hot.p_max_w:.0f} W is a BOUND: {I_LOAD_MAX:.2f} A, the LVC tap "
-          f"current, across the WHOLE pack. The converters are constant power\n"
-          f"     ({P_LOAD/V_PACK_FULL:.2f} A at 84 V), so the decay really costs "
-          f"P_LOAD × (V_pack/V_d − 1) -- {hot.dropout_case_w:.0f} W at 84 V IF they "
-          f"quit at their {V_CONVERTER_MIN:.0f} V input floor.\n"
+    print(f"  ⚠️ {hot.p_max_w:.0f} W is a BOUND: {hot.i_load_a:.2f} A, the shed LVC "
+          f"tap current, across the WHOLE pack. The converters are constant power\n"
+          f"     ({hot.i_load_a*V_LVC/V_PACK_FULL:.2f} A at 84 V), so the decay "
+          f"really costs P × (V_pack/V_d − 1) -- {hot.dropout_case_w:.0f} W at 84 V "
+          f"IF they quit at their {V_CONVERTER_MIN:.0f} V input floor.\n"
           f"     ⬜ TDK publishes no under-voltage shutdown for the CN-B110, only a "
           f"43-160 V input RANGE, so that floor is an assumption, not a rating --\n"
           f"     and a brick still converting below it draws MORE, not less. The "
           f"equal-energy pulse is past the 100 ms row, so the DC line is the right "
-          f"one.\n"
+          f"one.")
+    print(f"  ⚠️ RESIDUAL RISK, the outputs NOT shed -- this is the figure the shed "
+          f"one replaces, not one that went away:\n"
+          f"     {risk.i_load_a:.2f} A across the whole pack is {risk.p_max_w:.0f} W, "
+          f"over the {risk.soa_limit_w:.0f} W line; integrating the decay gives "
+          f"{risk.p_sim_w:.0f} W over {risk.energy_j:.1f} J,\n"
+          f"     a {risk.pulse_s*1e3:.0f} ms equal-energy pulse. ⛔ FIRMWARE "
+          f"CONTRACT: the aux outputs are released on KEY_SENSE going inactive, "
+          f"inside the {risk.hold_s*1e3:.0f} ms hold.\n"
+          f"     A RESET is NOT the exposure: expander #3's pins come out of reset "
+          f"as inputs, the TPS4H160B INx pull-downs are internal and the TPS2553\n"
+          f"     enables are pulled to GND, so a watchdog reset or any restart "
+          f"sheds the load by itself (D14: all lights OFF at key-on, every gate\n"
+          f"     biases OFF). The exposure is a HANG that holds the outputs ON and "
+          f"does not trip the watchdog, through the whole decay.\n"
           f"  ✔ M17: scope a deliberate key-off under load.")
     print()
 
@@ -870,7 +977,10 @@ def main(argv=None, c: Circuit | None = None) -> int:
             print("  -", f)
         return 1
     print("✅ PASS -- turns on at every corner, inside the SOA target, ramp on "
-          "target, and stays off when plugged in with the key off.")
+          "target, stays off when plugged in with the key off, and clears the "
+          "DC line\n   on the way out at the SHED tap. ⚠️ That last one is a "
+          "criterion a FIRMWARE behaviour has to keep true: see RESIDUAL RISK "
+          "above.")
     return 0
 
 

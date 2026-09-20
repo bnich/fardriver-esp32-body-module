@@ -30,7 +30,13 @@ case", because it is not the ceiling:
     EN is tied to its own PVIN (TI SNVSAH5A p.4, "Can be tied to PVIN"), so
     the 5 V aux rail is live whenever the 12 V rail is -- before the firmware
     boots, with the expander in reset, with every enable pulled low. Its
-    standing draw therefore sits on the 12 V budget permanently.
+    standing draw therefore sits on the 12 V budget permanently, and it is
+    the one term the SHED case below cannot drop.
+  * `Result.shed_*` is the load with every aux channel RELEASED: what is left
+    on the tap after the firmware sheds the outputs at key-off (IO-16), which
+    is the load `tools/soft_start.py` charges Q101's key-off decay with. It is
+    this sum minus `aux12_a` and `aux5_a` exactly -- so it follows the base,
+    and it keeps `buck_standing_a`, which no firmware can release.
   * The 12 V converter and its input choke are found through the COPPER,
     never by refdes: the brick whose output is a 12 V net, and the
     common-mode choke on that brick's 84 V input nets. A check that names
@@ -138,6 +144,25 @@ _LIMITERS = {
 }
 
 
+def _conv_in_a(load_12v_a: float) -> float:
+    """A 12 V load -> the brick's input current at the LVC.
+
+    One home for the arithmetic: the nominal case, the LIMITED case and the
+    SHED case are the same three multiplications over three different loads,
+    and a second copy of them is a second place to fix an efficiency.
+    """
+    return load_12v_a * V12 / CONV_EFF / LVC_V
+
+
+def _tap_a(conv_in_a: float) -> float:
+    """The brick's input current -> the whole B+ tap at the LVC.
+
+    Q101 sits upstream of BOTH converters, so the Cincon's logic rail is on
+    the tap whatever the 12 V side is doing.
+    """
+    return conv_in_a + LOGIC_IN_W / LVC_V
+
+
 @dataclass
 class Limit:
     """What the limiters let through, as opposed to what the design asks for."""
@@ -165,6 +190,35 @@ class Result:
     choke_rated_a: float | None = None
     limit: Limit = field(default_factory=Limit)
     problems: list[str] = field(default_factory=list)
+
+    @property
+    def shed_load_12v_a(self) -> float:
+        """The 12 V load left when the firmware releases every aux output.
+
+        IO-16 (2026-09-20): `KEY_SENSE` going inactive makes the firmware drop
+        all eight aux channels, so Q101's key-off decay carries THIS and not
+        `load_12v_a`. It is the same sum minus exactly the terms that are
+        released -- `aux12_a` and `aux5_a` -- so a change to the base moves it
+        and nobody retypes anything.
+
+        ⚠️ `buck_standing_a` STAYS IN, and that is the whole reason this is a
+        property rather than `BASE_12V_A` read from somewhere. U305's EN is
+        tied to its own PVIN (TI SNVSAH5A p.4), so the 5 V aux rail is live
+        whenever the 12 V rail is: the firmware has no way to release it.
+        Leaving it out would be a silent omission, not a conservatism.
+        """
+        return self.load_12v_a - self.aux12_a - self.aux5_a
+
+    @property
+    def shed_conv_in_a(self) -> float:
+        """The 12 V brick's input current at the LVC with the outputs shed."""
+        return _conv_in_a(self.shed_load_12v_a)
+
+    @property
+    def shed_tap_a(self) -> float:
+        """The B+ tap current at the LVC with the outputs shed -- the load
+        `tools/soft_start.py` holds Q101's key-off SOA margin to."""
+        return _tap_a(self.shed_conv_in_a)
 
 
 def _rated_a(value: str) -> float | None:
@@ -313,8 +367,8 @@ def limit_case(d: Design | None = None) -> Limit:
     lim.load_12v_a = (BASE_12V_A + lim.n12 * lim.per_12v_a
                       + lim.n5 * lim.per_5v_a * V5 / BUCK_EFF / V12
                       + (BUCK_STANDING_A if lim.n5 else 0.0))
-    lim.conv_in_a = lim.load_12v_a * V12 / CONV_EFF / LVC_V
-    lim.tap_a = lim.conv_in_a + LOGIC_IN_W / LVC_V
+    lim.conv_in_a = _conv_in_a(lim.load_12v_a)
+    lim.tap_a = _tap_a(lim.conv_in_a)
     return lim
 
 
@@ -328,8 +382,8 @@ def budget(d: Design | None = None) -> Result:
     # 5 V rail exists for those channels, so their presence is what says so.
     standing = BUCK_STANDING_A if n5 else 0.0
     load = BASE_12V_A + aux12 + aux5 + standing
-    conv_in = load * V12 / CONV_EFF / LVC_V
-    tap = conv_in + LOGIC_IN_W / LVC_V
+    conv_in = _conv_in_a(load)
+    tap = _tap_a(conv_in)
     r = Result(load, conv_in, tap, aux12_a=aux12, aux5_a=aux5,
                buck_standing_a=standing)
 
@@ -430,6 +484,14 @@ def _render(r: Result) -> str:
             f"{lim.n12 + lim.n5} simultaneous output faults: over the derates "
             f"by design, and NOT what the gates above size the input path "
             f"against")
+    lines.append(
+        f"SHED {r.shed_load_12v_a:.2f} A at 12 V -- every aux channel "
+        f"RELEASED, which the firmware does on key-off (IO-16) · converter "
+        f"input {r.shed_conv_in_a:.2f} A · tap {r.shed_tap_a:.2f} A at "
+        f"{LVC_V:g} V, the load tools/soft_start.py holds Q101's key-off SOA "
+        f"to. ⚠️ The {r.buck_standing_a * 1000:.2f} mA buck standing draw is "
+        f"INSIDE it: U305's EN is tied to its own PVIN, so no firmware can "
+        f"release the 5 V rail")
     lines += [f"  ⛔ {p}" for p in r.problems]
     lines.append("FAIL" if r.problems else "PASS")
     return "\n".join(lines)
