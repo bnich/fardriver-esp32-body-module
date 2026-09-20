@@ -43,15 +43,15 @@ def gap(stack, below, above):
 
 # --- parameters ----------------------------------------------------------------
 def test_the_envelope_the_pcb_outline_is_cut_to():
-    # IO-14: the board is the DESIGN's requirement, not a slice of the cavity
-    # estimate, so these two are typed. 48 x 219 = 10512 mm². The PCB emitter
-    # draws BOARD_W x BOARD_L, so a change here is a change to a manufactured
-    # outline and must be meant -- and it must come from re-running the search
-    # in the file's comment, never from nudging a budget closed.
-    assert (bp.BOARD_W, bp.BOARD_L) == (48.0, 219.0)
-    assert bp.BOARD_AREA == 48.0 * 219.0 == 10512.0
-    # Height is still cut from the estimate: 70 - 3 floor - 3 lid = 64.
-    assert bp.AVAIL_H == 70.0 - 3.0 - 3.0 == 64.0
+    # IO-14: the board is the DESIGN's requirement, not a slice of the cavity,
+    # so these two are typed. 39 x 239 = 9321 mm². The PCB emitter draws
+    # BOARD_W x BOARD_L, so a change here is a change to a manufactured outline
+    # and must be meant -- and it must come from re-running the search in the
+    # file's comment, never from nudging a budget closed.
+    assert (bp.BOARD_W, bp.BOARD_L) == (39.0, 239.0)
+    assert bp.BOARD_AREA == 39.0 * 239.0 == 9321.0
+    # Height is cut from the MEASURED cavity: 100 - 3 floor - 3 lid = 94.
+    assert bp.AVAIL_H == 100.0 - 3.0 - 3.0 == 94.0
 
 
 # --- the 10 % the envelope search bought ------------------------------------
@@ -65,14 +65,17 @@ def test_the_envelope_the_pcb_outline_is_cut_to():
 # ⛔ Do not "simplify" one of these into board_fit's limit. A tripwire set at the
 # limit it is guarding is not a tripwire.
 def test_the_board_length_holds_the_longest_row_with_room_to_spare():
-    """The row is arithmetic, not a heuristic, so it is what BOARD_L answers to.
-    POWER top's five headers are 55.88 + 25.4 + 35.56 + 20.32 + 55.88 = 193.04
-    of body and four 1 mm gaps = 197.04 mm. 197.04 / 219.0 = 90.0 % of the
-    board, so the row clears it by 21.96 mm -- 14.0 mm of which the four M3
-    corners take: at each END of the row two corners take 2 x 3.5 mm of length
-    between them, so 2 x 2 x 3.5 = 14.0 mm in all.
+    """The row is arithmetic, not a heuristic, so it is one of the two things
+    BOARD_L answers to. POWER top's five headers are 55.88 + 25.4 + 35.56 +
+    20.32 + 55.88 = 193.04 of body and four 1 mm gaps = 197.04 mm. Against the
+    239.0 mm board that is 82.4 %, so the row clears 0.90 x 239.0 = 215.10 by
+    18.06 mm and clears the board itself by 41.96 mm -- 14.0 mm of which the
+    four M3 corners take: at each END of the row two corners take 2 x 3.5 mm of
+    length between them, so 2 x 2 x 3.5 = 14.0 mm in all.
 
-    ⚠️ 0.06 mm of slack. Protects: the length IO-14 sized to this row."""
+    ⚠️ The row is no longer what sets the length. It wanted 197.04 / 0.90 =
+    218.93; the PACK wanted 238.72 and won. Protects: that the row keeps its
+    margin while the length is being set by something else."""
     from tools import board_fit as bf, netlist
     longest = max(e.length_mm for e in bf.edge_budget(netlist.current()))
     assert longest == pytest.approx(197.04)
@@ -80,114 +83,170 @@ def test_the_board_length_holds_the_longest_row_with_room_to_spare():
     assert bp.BOARD_L - longest > 4 * bf.M3_INSET_MM
 
 
-def test_the_worst_pack_keeps_the_10_percent_the_width_was_chosen_for():
-    """BOARD_W is the smallest width at which every face's shelf pack fits
-    0.90 x BOARD_L (47.8, stepped to 48.0). POWER top is the face that binds:
-    195.45 mm of 197.1, which is 1.65 mm of slack and the whole reason the
-    width is 48 and not 45.
+def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
+    """The pack is what BOARD_L was set by, at the narrowest width M18 allows.
+    POWER top binds: 214.85 mm against 0.90 x 239.0 = 215.10, so 0.25 mm of
+    slack -- and that is by construction, because 239.0 is the next whole
+    millimetre above 214.85 / 0.90 = 238.72.
 
-    Protects: that margin. board_fit only fails a pack at 219 mm, so without
-    this a body could grow 23 mm and nothing would say the width had stopped
+    ⚠️ It is the tightest tripwire here and it is meant to be: length is the
+    abundant axis (7.00 mm of cavity spare), so a body that grows is answered by
+    a millimetre or two of board, not by widening into the 4.35 mm the cavity
+    has left across. ⛔ What it must NOT be answered by is a wider board:
+    BOARD_W is 39.0 because 38.9 packs into 239.25 mm, which no length inside
+    the 246.0 mm cavity cap can carry.
+
+    Protects: that margin. board_fit only fails a pack at 239 mm, so without
+    this a body could grow 24 mm and nothing would say the envelope had stopped
     being the one the search chose."""
     from tools import board_fit as bf, netlist
     worst = max(bf.area_budget(netlist.current()),
                 key=lambda s: -1.0 if s.pack_mm is None else s.pack_mm)
     assert (worst.board, worst.side) == ("POWER", "top")
     assert worst.pack_mm <= 0.90 * bp.BOARD_L          # the tripwire
-    assert worst.pack_mm == pytest.approx(195.45, abs=0.01)     # where it stands
+    assert worst.pack_mm == pytest.approx(214.85, abs=0.01)     # where it stands
 
 
-def test_the_worst_density_keeps_the_10_percent_the_width_was_chosen_for():
+def test_the_worst_density_keeps_the_10_percent_the_envelope_was_chosen_for():
     """The same search held every face to 0.90 x DENSITY_LIMIT = 0.675. POWER
-    top binds again at 0.586 -- 6046 mm² of bodies in 10316 mm² of usable side.
+    top binds again: 6045.84 mm² of bodies in 39.0 x 239.0 - 196 = 9125 mm² of
+    usable side = 0.6626, which clears 0.675 by 0.0124 -- 11.7 % of headroom
+    against the 0.75 board_fit fails at.
 
     Protects: the headroom routing, courtyards and creepage come out of. Density
-    is not what set the width (it wanted only 41.8 mm), so it has more slack
-    than the pack -- but board_fit does not fail a face until 0.75, and a face
-    drifting from 0.586 to 0.674 is a board nobody can lay out, silently."""
+    is not what set the envelope (at 239.0 mm it wanted only W >= 38.3), so it
+    has more slack than the pack -- but board_fit does not fail a face until
+    0.75, and a face drifting from 0.663 to 0.749 is a board nobody can lay
+    out, silently."""
     from tools import board_fit as bf, netlist
     worst = max(bf.area_budget(netlist.current()), key=lambda s: s.density)
     assert (worst.board, worst.side) == ("POWER", "top")
     assert worst.density <= 0.90 * bf.DENSITY_LIMIT    # the tripwire
-    assert worst.density == pytest.approx(0.5861, abs=0.0005)   # where it stands
+    assert worst.density == pytest.approx(0.6626, abs=0.0005)   # where it stands
 
 
-def test_the_cavity_the_envelope_requires_is_stated_for_m18():
-    """⬜ A requirement on the enclosure, not a measurement of the bike.
-    Across: 48 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in front
-    of the connector face = 74.65. Along: 219 + 2 x 3 + 2 x 4 = 233.0. Tall: the
+def test_the_cavity_the_envelope_requires_is_stated_against_m18():
+    """A requirement on the enclosure, not a measurement of the bike.
+    Across: 39 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in front
+    of the connector face = 65.65. Along: 239 + 2 x 3 + 2 x 4 = 253.0. Tall: the
     DERIVED stack + 3 floor + 3 lid."""
-    assert bp.CAVITY_REQUIRED_W == pytest.approx(74.65)
-    assert bp.CAVITY_REQUIRED_L == pytest.approx(233.0)
+    assert bp.CAVITY_REQUIRED_W == pytest.approx(65.65)
+    assert bp.CAVITY_REQUIRED_L == pytest.approx(253.0)
     d = three_boards()                                   # 52.0 mm of stack
-    assert bp.cavity_required(d) == pytest.approx((233.0, 74.65, 52.0 + 6.0))
-    # ...and it is honest about exceeding the estimate rather than matching it.
-    assert bp.CAVITY_REQUIRED_W > bp.CAVITY_W and bp.CAVITY_REQUIRED_L > bp.CAVITY_L
+    assert bp.cavity_required(d) == pytest.approx((253.0, 65.65, 52.0 + 6.0))
+    # ...and it goes inside the cavity M18 measured, with the spare stated:
+    # 260.0 - 253.0 = 7.00 mm along, 70.0 - 65.65 = 4.35 mm across.
+    assert bp.CAVITY_L - bp.CAVITY_REQUIRED_L == pytest.approx(7.00)
+    assert bp.CAVITY_W - bp.CAVITY_REQUIRED_W == pytest.approx(4.35)
 
 
 def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number():
     """⚠️ A DRIFT TRIPWIRE on the real netlist, not a derivation.
 
-    Nothing bounds what this design may ask of the enclosure. CAVITY_REQUIRED_*
-    is an OUTPUT, the cavity it is compared against is unmeasured, and
-    `cavity_problems` is therefore empty -- so the requirement can grow and
-    every gate stays green. The per-wall plug-room verdict that used to push
-    back was removed with IO-6's connector face. A terminal family whose plug
-    stands 40 mm proud walks FACE_ROOM to 50.0 (the plug, then the 10 mm bend)
-    and the required width with it, to 105.0 mm, with `board_fit` still
-    exiting 0 -- measured, not argued.
+    CAVITY_REQUIRED_* is an OUTPUT and nothing bounds it from below. Since M18
+    `cavity_problems` does bound it from above -- a requirement past 260.0 or
+    70.0 now FAILS -- but the whole distance to that bound is only 7.00 mm along
+    and 4.35 mm across, and every millimetre of it can be spent with every gate
+    green. A body or a terminal that walks the width from 65.65 to 69.9 leaves
+    the design fitting by 0.1 mm and nobody told. The per-wall plug-room verdict
+    that used to push back was removed with IO-6's connector face.
 
-    Protects: the requirement M18 will be measured against. These are today's
-    figures on today's netlist; a terminal, a body height, the wall or a
-    clearance that moves one of them fails here, so whoever moved it has to
-    look at the new number and type it in -- against a cavity estimate the
-    design is already 33.0 mm and 24.65 mm outside."""
+    Protects: the spare the envelope search bought against the measured cavity.
+    These are today's figures on today's netlist; a terminal, a body height, the
+    wall or a clearance that moves one of them fails here, so whoever moved it
+    has to look at the new number and type it in.
+
+    ⚠️ The TALL figure is asserted beside the plan axes because it must NOT have
+    moved with them: the stack is derived from heights alone. 68.39 at 48 x 219,
+    68.39 at 39 x 239."""
     from tools import netlist
     along, across, tall = bp.cavity_required(netlist.current())
-    assert (along, across) == pytest.approx((233.0, 74.65))
+    assert (along, across) == pytest.approx((253.0, 65.65))
     assert tall == pytest.approx(68.39, abs=0.01)
-    # ...and the estimate they are reported against, so a drift in EITHER bites.
-    assert (bp.CAVITY_L, bp.CAVITY_W, bp.CAVITY_H) == (200.0, 50.0, 70.0)
-    assert [(axis, round(need - have, 2))
-            for axis, need, have in bp.cavity_overruns(netlist.current())] \
-        == [("along", 33.0), ("across", 24.65)]
+    # ...and the measurement they are judged against, so a drift in EITHER bites.
+    assert (bp.CAVITY_L, bp.CAVITY_W, bp.CAVITY_H) == (260.0, 70.0, 100.0)
+    assert bp.cavity_overruns(netlist.current()) == ()      # it fits, on all three
 
 
-# --- the cavity requirement is CHECKED, once the cavity is a fact ------------
-def test_an_unmeasured_cavity_cannot_fail_the_design_it_does_not_hold():
-    """The real flags. The requirement exceeds the estimate on both plan axes
-    and that is a finding for M18, not a failure -- `cavity_problems` is empty
-    because `envelope_is_binding()` is False, not because it fits."""
+def test_the_tall_requirement_does_not_answer_to_the_board_s_width_or_length(
+        monkeypatch):
+    """Shown, not assumed. Reshaping the board from 48 x 219 to 39 x 239 moved
+    both plan axes and must have moved the height by nothing at all: the stack
+    is a sum of part heights, clearances and PCB, and no term of it is a plan
+    dimension. Put the old envelope back and the tall figure is the same."""
     from tools import netlist
-    assert not bp.envelope_is_binding()
-    assert bp.cavity_overruns(netlist.current())        # it does NOT fit
-    assert bp.cavity_problems(netlist.current()) == []  # ...and does not fail
+    d = netlist.current()
+    tall_now = bp.cavity_required(d)[2]
+    monkeypatch.setattr(bp, "BOARD_W", 48.0)
+    monkeypatch.setattr(bp, "BOARD_L", 219.0)
+    monkeypatch.setattr(bp, "BOARD_AREA", 48.0 * 219.0)
+    assert bp.cavity_required(d)[2] == pytest.approx(tall_now)
+    assert bp.stack_height(d).total_mm == pytest.approx(tall_now - bp.FLOOR - bp.LID)
+
+
+# --- the cavity requirement is CHECKED, now that the cavity is a fact --------
+def test_the_measured_cavity_holds_the_design_and_the_gate_is_armed():
+    """The real flags. M18 measured 260 x 70 x 100 and the design asks for
+    253.0 x 65.65 x 68.4, so there is no verdict to give -- and, unlike before
+    M18, the empty list means it FITS and not that nothing was gating it."""
+    from tools import netlist
+    assert bp.envelope_is_binding()
+    assert bp.cavity_overruns(netlist.current()) == ()
+    assert bp.cavity_problems(netlist.current()) == []
+
+
+def test_the_gate_answers_to_the_measurement_not_to_the_enclosure():
+    """⚠️ THE DECISION of 2026-09-20, asserted and not merely commented: a
+    MEASURED cavity binds while the enclosure is still undecided. Both flags are
+    read as they really are, and `envelope_is_binding` must follow only the
+    first. ⛔ If someone re-adds ENCLOSURE_DECIDED to that gate, this fails and
+    the reasoning is in `board_params.envelope_is_binding`."""
+    assert (bp.CAVITY_MEASURED, bp.ENCLOSURE_DECIDED) == (True, False)
+    assert bp.envelope_is_binding()
+
+
+def test_a_board_too_wide_for_the_measured_cavity_fails(wider_board):
+    """⚠️ THE MUTATION that makes the gate a check rather than a claim. Today's
+    39.0 mm board asks 65.65 mm of the 70.0 M18 measured and passes; a 45.0 mm
+    board asks 71.65 mm and does not go in the box. The flags are the real ones
+    -- the enclosure is STILL UNDECIDED -- so this is exactly the case the
+    decision is about, and the failure names the wall allowance as the lever
+    that has not been spent yet."""
+    from tools import netlist
+    d = netlist.current()
+    assert bp.cavity_problems(d) == []                   # 39.0 mm: it fits
+    wider_board(45.0)
+    (across,) = bp.cavity_problems(d)
+    assert across.startswith("cavity across:")
+    assert "requires 71.65 mm" in across and "gives 70.00 mm" in across
+    assert "OVER by 1.65 mm" in across
+    assert "thinner wall allowance" in across            # the lever still open
 
 
 def test_a_measured_cavity_that_cannot_hold_the_design_is_a_failure(measured_cavity):
-    """The day M18 lands. 233.0 x 74.65 required; a 230 x 70 box holds neither
-    axis, and each problem names its axis and the overrun."""
+    """253.0 x 65.65 required; a 250 x 61 box holds neither axis, and each
+    problem names its axis and the overrun."""
     d = three_boards()
-    measured_cavity(230.0, 70.0)
+    measured_cavity(250.0, 61.0)
     along, across = bp.cavity_problems(d)
     assert along.startswith("cavity along:") and "OVER by 3.00 mm" in along
     assert across.startswith("cavity across:") and "OVER by 4.65 mm" in across
-    assert "measured cavity gives 230.00 mm" in along
+    assert "measured cavity gives 250.00 mm" in along
 
 
 def test_a_measured_cavity_that_holds_the_design_is_no_verdict_at_all(measured_cavity):
-    measured_cavity(240.0, 80.0)
+    measured_cavity(270.0, 80.0)
     assert bp.cavity_problems(three_boards()) == []
     assert bp.cavity_overruns(three_boards()) == ()
 
 
-def test_the_tall_axis_is_left_to_the_stack_so_one_overrun_is_not_two_faults(
-        measured_cavity):
-    """`three_boards(30.0)` is 68.0 mm of stack, 74.0 mm of cavity against the
-    70 mm estimate: `cavity_overruns` sees it on the tall axis, and it is
-    `stack_height` that fails on it. `cavity_problems` must not say it again."""
-    measured_cavity(240.0, 80.0)
-    d = three_boards(30.0)
+def test_the_tall_axis_is_left_to_the_stack_so_one_overrun_is_not_two_faults():
+    """`three_boards(60.0)` is 98.0 mm of stack, 104.0 mm of cavity against the
+    100 mm M18 measured: `cavity_overruns` sees it on the tall axis, and it is
+    `stack_height` that fails on it. `cavity_problems` must not say it again.
+    The plan axes are the real ones here and they fit, so the tall axis is the
+    only thing that can speak."""
+    d = three_boards(60.0)
     assert [axis for axis, *_ in bp.cavity_overruns(d)] == ["tall"]
     assert bp.cavity_problems(d) == []
     assert any("OVER by 4.0" in p for p in bp.stack_height(d).problems)
@@ -197,15 +256,16 @@ def test_rules_fails_on_a_cavity_the_measured_box_cannot_hold(measured_cavity):
     from tools import rules
     d = three_boards()
     assert not any(e.startswith("HT-CAVITY") for e in rules.check_all(d))
-    measured_cavity(230.0, 70.0)
+    measured_cavity(250.0, 61.0)
     cavity = [e for e in rules.check_all(d) if e.startswith("HT-CAVITY: ")]
     assert len(cavity) == 2 and "cavity along" in cavity[0]
 
 
-def test_both_budgets_say_they_are_provisional():
-    assert bp.CAVITY_MEASURED is False, "flip only when M18 lands"
+def test_the_cavity_is_measured_and_the_enclosure_is_not():
+    assert bp.CAVITY_MEASURED is True, "M18: measured by the owner, 2026-09-20"
     assert bp.ENCLOSURE_DECIDED is False, "flip only when the enclosure is chosen"
-    # ...and that reaches the verdict even when every height is confirmed:
+    # The stack still calls itself provisional -- on the ALLOWANCES now, not on
+    # the cavity -- even when every height is confirmed:
     stack = bp.stack_height(three_boards())
     assert stack.load_bearing == () and stack.provisional
 
@@ -225,7 +285,7 @@ def test_three_board_stack_by_hand():
     # LOGIC->LID       7.0 + 1.0                                       =  8.0
     assert [g.gap_mm for g in stack.gaps] == pytest.approx([13.2, 16.5, 9.5, 8.0])
     assert stack.total_mm == pytest.approx(47.2 + 3 * 1.6)           # 52.0
-    assert stack.margin_mm == pytest.approx(12.0)                    # 64.0 - 52.0
+    assert stack.margin_mm == pytest.approx(42.0)                    # 94.0 - 52.0
     assert stack.ok
 
 
@@ -235,11 +295,11 @@ def test_a_height_changed_in_the_design_moves_the_stack_by_that_much():
     assert gap(high, "POWER", "OUTPUTS").top_ref == "L101"
 
 
-def test_an_over_height_stack_fails_and_says_by_how_much(binding_envelope):
-    stack = bp.stack_height(three_boards(30.0))         # 52.0 + 16.0 = 68.0 of 64
+def test_an_over_height_stack_fails_and_says_by_how_much():
+    stack = bp.stack_height(three_boards(60.0))         # 52.0 + 46.0 = 98.0 of 94
     assert not stack.ok
     assert any("OVER by 4.0" in p for p in stack.problems)
-    assert bp.stack_problems(three_boards(30.0)) == list(stack.problems)
+    assert bp.stack_problems(three_boards(60.0)) == list(stack.problems)
 
 
 def test_connectors_count_as_tall_things():
@@ -531,15 +591,28 @@ def test_the_inter_board_halves_get_no_keep_out_of_their_own():
                        for r in ("J311", "J312", "J406", "J407"))]
 
 
-# --- the envelope verdict is provisional until the envelope is a fact --------
-# ⚠️ Built on `three_boards(30.0)`, NOT on the real netlist. These three used to
+# --- the envelope verdict is provisional only while the CAVITY is a guess ----
+# ⚠️ Built on `three_boards(60.0)`, NOT on the real netlist. These three used to
 # derive their overrun from `netlist.current()` and skip when it fitted, so the
 # wording of the verdict went untested exactly when the design was healthy.
-def test_an_overrun_against_an_estimated_envelope_is_loud_but_not_a_failure():
-    """52.0 mm with the 14.0 mm choke, so 30.0 makes it 68.0 of the 64.0 the
-    estimate leaves: OVER by 4.0."""
+# 52.0 mm of stack with the 14.0 mm choke, so 60.0 makes it 98.0 against the
+# 94.0 the measured cavity leaves: OVER by 4.0 either way.
+def test_an_overrun_of_the_measured_envelope_is_a_failure():
+    """The real flags. M18 is measured, so this is a verdict and not a note --
+    and the enclosure being undecided does not soften it."""
+    assert bp.envelope_is_binding()
+    tall = bp.stack_height(three_boards(60.0))
+    assert any("OVER by 4.0" in p for p in tall.problems)
+    assert not tall.envelope_verdicts
+    assert not tall.ok
+
+
+def test_the_same_overrun_could_not_fail_a_cavity_nobody_had_measured(
+        unmeasured_cavity):
+    """The world before M18, which is the only thing `envelope_verdicts` is for:
+    an overrun reported loudly and unable to fail the design."""
     assert not bp.envelope_is_binding()
-    tall = bp.stack_height(three_boards(30.0))
+    tall = bp.stack_height(three_boards(60.0))
     assert tall.envelope_verdicts, "an overrun must never vanish silently"
     assert "OVER by 4.0" in tall.envelope_verdicts[0]
     assert "ESTIMATED envelope" in tall.envelope_verdicts[0]
@@ -547,17 +620,21 @@ def test_an_overrun_against_an_estimated_envelope_is_loud_but_not_a_failure():
     assert tall.ok                       # reported loudly, and not a failure
 
 
-def test_the_same_overrun_is_a_failure_once_the_envelope_is_measured(binding_envelope):
-    tall = bp.stack_height(three_boards(30.0))
-    assert any("OVER by 4.0" in p for p in tall.problems)
-    assert not tall.envelope_verdicts
-    assert not tall.ok
-
-
-def test_rules_relay_the_provisional_verdict_as_a_warning():
+def test_rules_relay_the_provisional_verdict_as_a_warning(unmeasured_cavity):
     from tools import rules
-    d = three_boards(30.0)
+    d = three_boards(60.0)
     assert bp.stack_height(d).envelope_verdicts
     assert any(w.startswith("HT-STACK-PROVISIONAL") and "OVER by 4.0" in w
                for w in rules.warnings(d))
     assert not any(e.startswith("HT-STACK") for e in rules.check_all(d))
+
+
+def test_rules_fail_on_that_same_overrun_now_the_cavity_is_measured():
+    """...and the other side of it: with the real flags the warning becomes an
+    error, so a stack too tall for the measured box cannot ride out as a note."""
+    from tools import rules
+    d = three_boards(60.0)
+    assert not bp.stack_height(d).envelope_verdicts
+    assert not any(w.startswith("HT-STACK-PROVISIONAL") for w in rules.warnings(d))
+    assert any(e.startswith("HT-STACK") and "OVER by 4.0" in e
+               for e in rules.check_all(d))

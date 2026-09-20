@@ -26,14 +26,13 @@ Four budgets, four plain answers:
             of them, `board_params.FACE_ROOM`, is not a budget here: it is a
             term of the cavity this design REQUIRES, which the report states.
 
-⚠️ The HEIGHT verdict is provisional until M18 is measured and the enclosure is
-chosen; the report says so on its first line for as long as that is true. Area,
-pack and rows are not provisional: since IO-14 they are measured against the
-envelope the design itself asks for, which is a fact about the design.
+⚠️ M18 is MEASURED (2026-09-20), so the cavity is a fact and every budget here
+is a verdict. What is still an allowance is the ENCLOSURE -- wall, floor and lid
+-- which the report says on its first line for as long as that is true. It makes
+the requirement provisional, not the verdict: see `board_params.envelope_is_binding`.
 
-The CAVITY the design requires is reported beside them, and it answers to the
-same gate the height does (`board_params.envelope_is_binding`): an estimate it
-exceeds is a finding for M18, and a MEASURED cavity it exceeds is a failure --
+The CAVITY the design requires is reported beside the budgets, and it answers to
+the same gate the height does: a MEASURED cavity it exceeds is a failure --
 `board_params.cavity_problems`, which `problems()` includes.
 """
 import sys
@@ -110,9 +109,9 @@ def shelf_pack(rects, board_w: float | None = None):
     beside it have been placed elsewhere. That is one board-wide connector
     wasting a shelf the length of itself. POWER top's three biggest bodies are
     two 55.88 mm harness terminals (J101, J405) and J202, the 58.42 mm
-    inter-board PWR-OUT connector; on today's 48 mm board the old order reports
-    254.93 mm where these same bodies pack into 195.45 mm, and at the 42 mm
-    width the board used to be it reported 319.32 against 208.91.
+    inter-board PWR-OUT connector; on today's 39 mm board the old order reports
+    321.57 mm where these same bodies pack into 214.85 mm, and on the 48 mm
+    board this width replaced it reported 254.93 against 195.45.
     """
     width = bp.BOARD_W if board_w is None else board_w
     placed = []
@@ -220,11 +219,11 @@ def problems(d: Design) -> list[str]:
     errs += [f"area: {what} has no footprint -- the area budget cannot see it"
              for what in unseen(d)]
     errs += bp.stack_height(d).problems
-    # The plan axes of the cavity, once the cavity is a FACT. Gated inside
+    # The plan axes of the cavity, now that the cavity is a FACT. Gated inside
     # `cavity_problems` on the same `envelope_is_binding()` the height answers
-    # to, so the day M18 lands the report stops being a paragraph about a
-    # design 33 mm too long and becomes a FAIL. Empty while the cavity is an
-    # estimate -- the report still states the overrun.
+    # to; M18 landed on 2026-09-20, so this is a live gate and not a paragraph
+    # addressed to the future. Empty only if a cavity figure goes back to being
+    # an estimate -- and the report still states the overrun even then.
     errs += bp.cavity_problems(d)
     # Not gated on `envelope_is_binding`: a row longer than the board it stands
     # on is a failure of the design against its OWN envelope (IO-14), and
@@ -235,14 +234,21 @@ def problems(d: Design) -> list[str]:
 
 def report(d: Design) -> str:
     out = []
-    caveats = [] if bp.CAVITY_MEASURED else ["M18 NOT MEASURED: the cavity is an estimate"]
-    if not bp.ENCLOSURE_DECIDED:
-        caveats.append("enclosure not chosen: wall, floor and lid are allowances")
-    if caveats:
-        out.append("⚠️ THE HEIGHT VERDICT IS PROVISIONAL -- "
-                   + "; ".join(caveats) + ". Area, pack and rows are not: "
-                   "they are measured against the envelope the design "
-                   "itself requires (IO-14).")
+    # ⚠️ The two flags say different things and the first line must not blur
+    # them. An unmeasured cavity makes the VERDICT provisional -- nothing can
+    # fail against a guess. An undecided enclosure makes the REQUIREMENT
+    # provisional, and nothing else: the verdict still binds, because the design
+    # is judged against its own allowances (`board_params.envelope_is_binding`).
+    if not bp.CAVITY_MEASURED:
+        out.append("⚠️ THE HEIGHT VERDICT IS PROVISIONAL -- M18 NOT MEASURED: the "
+                   "cavity is an estimate, so an overrun is reported and not "
+                   "failed. Area, pack and rows are not: they are measured "
+                   "against the envelope the design itself requires (IO-14).")
+    elif not bp.ENCLOSURE_DECIDED:
+        out.append("⚠️ THE REQUIREMENT IS NOT FINAL -- enclosure not chosen: wall, "
+                   "floor and lid are allowances, so the cavity figures below "
+                   "move when the box's model lands. Every VERDICT here binds "
+                   "regardless: M18 is measured (IO-14).")
     req_l, req_w, req_h = bp.cavity_required(d)
     out.append(f"board {bp.BOARD_W:.0f} x {bp.BOARD_L:.0f} = {bp.BOARD_AREA:.0f} mm² "
                f"({MOUNT_AREA:.0f} mm² of it under the four M3 corners)   "
@@ -256,21 +262,24 @@ def report(d: Design) -> str:
     # to be unconditional under a first line that said "NOT MEASURED", so
     # flipping CAVITY_MEASURED changed nothing a reader could see and the day
     # M18 landed the report would have called a measured box an estimate.
+    # ⛔ There used to be a third branch here -- measured, enclosure undecided,
+    # "not yet a failure". It is gone, deliberately: a measured cavity the
+    # design does not fit is a failure whatever the box's model has yet to say
+    # (`board_params.envelope_is_binding` argues it). The lever the undecided
+    # allowances still offer is named in the problem text, not in a reprieve.
     cavity = (f"{bp.CAVITY_L:.0f} x {bp.CAVITY_W:.0f} x {bp.CAVITY_H:.0f} mm")
     over = [f"{axis} by {need - have:.1f} mm"
             for axis, need, have in bp.cavity_overruns(d)]
     if not bp.CAVITY_MEASURED:
         head, tail = f"⬜ NOT MEASURED -- M18's estimate is {cavity}", (
             "That is a finding for M18, not a failure of the design.")
-    elif bp.envelope_is_binding():
+    else:
+        plan_over = [a for a, *_ in bp.cavity_overruns(d) if a != "tall"]
         head, tail = f"✅ MEASURED (M18) -- the cavity is {cavity}", (
             "The design DOES NOT FIT the cavity that was measured, and that is "
-            "a FAILURE: see the plan axes below.")
-    else:
-        head, tail = f"✅ MEASURED (M18) -- the cavity is {cavity}", (
-            "Not yet a failure only because the enclosure is not chosen -- "
-            "wall, floor and lid are still allowances, so the requirement is "
-            "not final either.")
+            "a FAILURE: " + ("see the plan axes below." if plan_over else
+                             "it is the stack's height, and HEIGHT below "
+                             "fails on it."))
     out.append(head + (f"; the requirement EXCEEDS it {', '.join(over)}. {tail}\n"
                        if over else "; the requirement fits inside it.\n"))
 

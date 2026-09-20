@@ -21,7 +21,7 @@ After any change to the netlist or the model:
 python3 -m tools.integrity        # is the netlist a circuit at all?  must print "0 integrity problem(s)"
 python3 -m pytest                 # rules and unit tests              hermetic: no library fetch
 python3 -m tools.rules            # every rule, and the warnings      exit 1 on a violation
-python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL, 2 over the estimate
+python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL (2: see below)
 python3 -m tools.gpio_budget      # pin budget                        exit 1 on FAIL
 python3 -m tools.power_budget     # the 12 V load, choke and tap fuse exit 1 on FAIL
 python3 tools/soft_start.py       # D13 soft start                    exit 1 on FAIL
@@ -64,9 +64,10 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 
 ### `board_params.py` — parameters typed, geometry derived
 
-Holds the M18 cavity (`CAVITY_MEASURED = False` until it is measured); the wall / floor / lid
-**allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's model sets them — the box is
-all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
+Holds the **board envelope, 39 × 239 mm** — typed, and re-derived by the search written out beside
+it; the M18 cavity, **260 × 70 × 100 mm, measured by the owner 2026-09-20** (`CAVITY_MEASURED =
+True`); the wall / floor / lid **allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's
+model sets them — the box is all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
 trimmed through-hole lead stands out of its board (IPC); the 0.5 mm insulating liner on the metal
 floor under POWER, whose underside carries 84 V pins; the floor seat — `U201` bolts its baseplate
 to the box floor through a 0.5 mm thermal pad, which is the only heatsink (BD-27), and the liner is
@@ -96,12 +97,16 @@ out from the netlist's own heights:
 
 `cavity_required(design)` states the cavity the envelope asks the enclosure for — along, across
 and the derived height — and `cavity_overruns(design)` names every axis the cavity does not hold.
-`cavity_problems(design)` turns the two **plan** axes into failures, and only once
-`envelope_is_binding()` — the cavity measured **and** the enclosure chosen. ⚠️ While M18 is an
-estimate that list is empty **because of the gate, not because the design fits**: today it is
-33.0 mm too long and 24.65 mm too wide for the estimate, which the report states as a finding. The
-height is not in that list: `stack_height` already fails on it through the same gate. Both
-`board_fit` and `rules` (`HT-CAVITY`) relay it, so the two gates cannot give different answers.
+`cavity_problems(design)` turns the two **plan** axes into failures once `envelope_is_binding()` —
+which since M18 means **the cavity is measured**, and nothing else. ⚠️ `ENCLOSURE_DECIDED` is
+deliberately *not* in that gate (owner's measurement, 2026-09-20): the cavity is the fact the design
+cannot change, while the wall, floor and lid are the design's **own** allowances, so a design that
+does not fit **with** them fails today rather than after the box is drawn. What the undecided
+enclosure still does is keep the requirement from being final, which the report's first line says
+and the failure text names as a lever. Today the design requires **253.0 × 65.65 × 68.4 mm** and
+fits, with 7.00 mm along and 4.35 mm across to spare. The height is not in that list: `stack_height`
+already fails on it through the same gate. Both `board_fit` and `rules` (`HT-CAVITY`) relay it, so
+the two gates cannot give different answers.
 
 ### `board_fit.py`
 
@@ -121,16 +126,15 @@ is no longer a budget of "every header's plug against the nearest wall": every h
 apart, against the length of the board they stand on, with a terminal under a board counted in its
 own row and not in the one above it. The room a mated plug and its wire's bend need is no longer a
 budget either: it is a **term of the cavity this design requires**, which the report states on its
-second line against M18's estimate and names the excess. ⚠️ **That requirement is checked, not just
-printed:** the day the cavity is measured and the enclosure chosen, a plan axis the box cannot hold
-is a **FAIL** (`board_params.cavity_problems`), and the report's wording changes with the flag
-instead of still calling a measured box an estimate.
+second line against the cavity M18 measured. ⚠️ **That requirement is checked, not just printed:** a
+plan axis the measured box cannot hold is a **FAIL** (`board_params.cavity_problems`).
 
-One verdict: exit 1 when a budget fails, 2 when the stack is over the estimated envelope. A body with
-no footprint that is a connector, or 2 mm tall or more, fails the run: the budget cannot see it. The
-first line says PROVISIONAL for as long as M18 is unmeasured or the enclosure unmodelled — **and
-only the HEIGHT verdict is provisional.** Area, pack and rows answer to the envelope the design
-itself requires (IO-14), which is a fact about the design.
+One verdict: exit 1 when a budget fails, 2 when the stack is over an *estimated* envelope — a path
+M18 closed, kept for the day a cavity figure goes back to being a guess. A body with no footprint
+that is a connector, or 2 mm tall or more, fails the run: the budget cannot see it. The first line
+says **THE REQUIREMENT IS NOT FINAL** while the enclosure is unmodelled: wall, floor and lid are
+allowances, so the cavity figures move when its model lands — but every **verdict** binds
+regardless, because the cavity is measured.
 
 ### `gpio_budget.py`
 

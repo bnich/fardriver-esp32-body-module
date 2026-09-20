@@ -15,25 +15,32 @@ Two kinds of thing live here and they are kept apart on purpose:
 ⚠️ IO-14 INVERTED THE WIDTH DERIVATION. The boards used to be cut out of the
 cavity estimate. They are now sized to the DESIGN -- owner, 2026-09-19: "we have
 the ability to increase the board size if we need to" -- and this file states
-the cavity that implies, as a REQUIREMENT on the enclosure. `CAVITY_*` is still
-here, still the owner's unmeasured estimate, and no longer an input to anything:
-M18 confirms the requirement or forces a rethink, instead of the design failing
-against a guess.
+the cavity that implies, as a REQUIREMENT on the enclosure (`CAVITY_REQUIRED_*`).
+
+⚠️ M18 LANDED (owner, 2026-09-20): the cavity is MEASURED at 260 x 70 x 100 mm.
+Two things follow, and both are load-bearing:
+  * The comparison is now a VERDICT. `cavity_problems` FAILS the design on any
+    plan axis the measured cavity cannot hold, and `stack_height` fails it on
+    the height. It is no longer a paragraph addressed to a future measurement.
+  * WHICH AXIS IS SCARCE FLIPPED. Length has room and width does not, so the
+    envelope search below spends length and protects width -- the opposite of
+    what it did against the estimate. ⛔ Read the search at `BOARD_W` before
+    changing either number.
 
 ⚠️ WHAT IS STILL PROVISIONAL, and what is not:
-  * The HEIGHT verdict is. It is the one budget still read against the cavity
-    ESTIMATE (AVAIL_H), so an overrun is reported loudly and cannot fail the
-    design until `envelope_is_binding()`.
-  * The plan budgets are not. Area, pack and rows answer to BOARD_W x BOARD_L,
-    which is the design's own requirement -- a fact about the design.
-  * ⬜ CAVITY_REQUIRED_* is neither: it is a requirement M18 has yet to confirm.
-  * The enclosure is an all-metal CNC box, but its model does not exist yet:
-    wall, floor and lid are ALLOWANCES that the model's thicknesses replace.
-When either lands: edit the block, flip the flag, run `python3 -m tools.board_fit`.
-⚠️ Flipping both flags ARMS the comparison: `cavity_problems` then fails the
-design on any plan axis the measured cavity cannot hold, and `stack_height`
-fails it on the height, so the report stops being a paragraph and becomes a
-verdict. That is the point of the flags -- see `envelope_is_binding`.
+  * The enclosure is an all-metal CNC box whose model does not exist yet: WALL,
+    FLOOR and LID are ALLOWANCES the model's thicknesses will replace. That is
+    all `ENCLOSURE_DECIDED` claims, and it is why the REQUIREMENT is not final
+    -- a thinner wall hands width back, a thicker one spends it.
+  * ⛔ It is NOT a reason to withhold a verdict, and it no longer does:
+    `envelope_is_binding()` answers to the MEASUREMENT alone. The reasoning is
+    written out there; the short version is that the cavity is the fact this
+    design cannot change, while the allowances are the design's own numbers,
+    and a design is always judged against its own numbers.
+  * The plan budgets are not provisional either. Area, pack and rows answer to
+    BOARD_W x BOARD_L, which is the design's own requirement.
+When the enclosure lands: edit the allowances, flip `ENCLOSURE_DECIDED`, run
+`python3 -m tools.board_fit`, and re-run the envelope search if a wall moved.
 """
 import math
 import re
@@ -41,22 +48,27 @@ from dataclasses import dataclass
 
 from .model import Connector, Design, Part
 
-# --- M18: the cavity, as ESTIMATED -----------------------------------------
-#: ⬜ The owner's estimate of the space under the seat. Since IO-14 it sizes
-#: NOTHING: the envelope below is the design's own requirement, and
-#: CAVITY_REQUIRED_* says what the enclosure has to be. These three are what M18
-#: will replace, and what the requirement is reported against.
-CAVITY_L = 200.0   # mm, along the bike
-CAVITY_W = 50.0    # mm, across -- ⚠️ the sensitive axis
-CAVITY_H = 70.0    # mm, floor to the underside of the battery tray
-CAVITY_MEASURED = False   # ⛔ still an estimate; flip when M18 lands
+# --- M18: the cavity, as MEASURED -------------------------------------------
+#: ✅ MEASURED (M18, owner, 2026-09-20): the old-controller cavity under the
+#: battery compartment, where the stack lives. Since IO-14 these three size
+#: NOTHING -- the envelope below is the design's own requirement and
+#: CAVITY_REQUIRED_* says what the enclosure has to be. What they are is the
+#: FACT that requirement is judged against, and the caps the envelope search
+#: works within.
+CAVITY_L = 260.0   # mm, along the bike
+CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 4.35 mm spare today
+CAVITY_H = 100.0   # mm, floor to the underside of the battery tray
+CAVITY_MEASURED = True    # ✅ M18, measured by the owner 2026-09-20
 
 # --- enclosure: PROVISIONAL allowances -------------------------------------
 # What the enclosure takes out of the cavity on each face. The enclosure is an
 # all-metal CNC box (owner, 2026-09-18); these are allowances until its model
 # sets the real wall, floor and lid thicknesses. CAVITY_REQUIRED_* and AVAIL_H
-# inherit them, which is why both report themselves as provisional.
+# inherit them, which is why the requirement is not yet FINAL.
 # ENCLOSURE_DECIDED means "the model has set these", not "the material is known".
+# ⛔ It does NOT gate the fit verdict -- see `envelope_is_binding`. A design that
+# does not fit the measured cavity WITH these allowances fails today; what the
+# model can still change is the requirement, not whether it is checked.
 ENCLOSURE_DECIDED = False
 WALL = 3.0
 FLOOR = 3.0
@@ -93,59 +105,88 @@ SIDE_CLEARANCE = 1.0
 END_ALLOWANCE = 4.0
 
 #: ⚠️ TYPED, NOT DERIVED FROM THE CAVITY -- that is what IO-14 changed. These
-#: two are the smallest envelope on which the design as it stands closes every
-#: budget in `board_fit` with at least 10 % of margin, found by searching W and
-#: L rather than by picking a round number. The search, against the netlist of
-#: 2026-09-20:
+#: two are the envelope the search below picked: the design as it stands closes
+#: every budget in `board_fit` on them with at least 10 % of margin, and the
+#: cavity they require fits inside the one M18 measured.
 #:
-#:   LENGTH is set by the longest row, and nothing else can set it: the harness
-#:   headers of one face stand end to end along the board, and that sum is
-#:   arithmetic, not a heuristic. POWER top is the longest at 197.04 mm, so
-#:   197.04 / 0.90 = 218.93 -> 219.0. No width buys length back. The 21.96 mm
-#:   of margin is not a round number either: 14.0 mm of it is spoken for by
-#:   the four M3 corners the row may not run into -- at each END of the row two
-#:   corners take 2 x M3_INSET_MM of length between them, so 2 x 2 x 3.5 =
-#:   14.0 mm in total -- which the row check does not model.
+#: ⚠️ THE RULE IS: FIT THE MEASURED CAVITY, THEN TAKE THE NARROWEST BOARD THAT
+#: STILL CLEARS EVERY BUDGET BY 10 %, SPENDING THE ABUNDANT LENGTH RATHER THAN
+#: THE SCARCE WIDTH.
+#: ⛔ It used to be the opposite -- least LENGTH first, then least width -- and
+#: M18 inverted the reason, not just the numbers. That order was chosen while
+#: the cavity was a 200 x 50 ESTIMATE the design already overran by 33.0 mm
+#: along and 24.7 mm across: buying length to save width would have made the
+#: worse of the two problems worse. The MEASUREMENT is 260 x 70. Length now has
+#: 27.0 mm of slack and WIDTH is the axis that runs out first, so length is the
+#: axis to spend and width the one to protect. ⛔ Do not restore the old order,
+#: and do not re-derive it from the old reason: it is written down here so
+#: nobody has to.
 #:
-#:   WIDTH is then the smallest at which every face's shelf pack fits 0.90 x
-#:   BOARD_L and every face's body density clears 0.90 x DENSITY_LIMIT. Density
-#:   wants W >= 41.8 (POWER top's 6046 mm² of bodies); the pack is what binds,
-#:   and it clears 197.1 mm first at W = 47.8. Stepped up to 48.0 so the number
-#:   does not sit on the first 0.1 mm of a step in a heuristic's staircase.
+#: The search, against the netlist and the cavity of 2026-09-20:
 #:
-#: ⚠️ "SMALLEST" IS LEXICOGRAPHIC -- least LENGTH first, then least width -- and
-#: NOT least area. Over L in [219, 260] the minimum-AREA envelope is 39.0 x
-#: 239.0 = 9321 mm², against the 47.8 x 219 = 10468 mm² taken here: 20 mm of
-#: extra length buys 8.8 mm of width back. Length is the axis to protect. The
-#: cavity this design requires is already 33.0 mm LONGER than M18's estimate and
-#: 24.7 mm wider, so spending length to save width makes the harder of the two
-#: M18 problems worse, on the one axis nothing else can shorten (the row sets
-#: it). ⛔ Do not "optimise" this to the area minimum.
+#:   THE CAPS come straight off the measurement. Across, the box takes 2 x WALL,
+#:   the far side needs SIDE_CLEARANCE to drop the board in past, and the
+#:   connector face needs FACE_ROOM in front of it:
+#:       70.0 - 2 x 3.0 - 1.0 - 19.65 = 43.35 mm of board.
+#:   Along, 2 x WALL and END_ALLOWANCE at each end:
+#:       260.0 - 2 x 3.0 - 2 x 4.0 = 246.0 mm of board.
+#:
+#:   WIDTH is searched first and taken as narrow as the caps allow. 39.0 mm is
+#:   the NARROWEST width that closes at ANY length <= 246.0, and the PACK is
+#:   what binds: at 39.0 the worst face (POWER top) packs into 214.85 mm and so
+#:   needs L >= 214.85 / 0.90 = 238.72, inside the cap; at 38.9 the same face
+#:   packs into 239.25 mm, needing L >= 265.8, outside it. The 24.4 mm step is
+#:   C203-C206, four 12.5 x 18.5 Y-caps: 18.5 + 2 x COURTYARD = 19.50 across
+#:   each, and 19.50 + 19.50 = 39.00 exactly, so they pair two to a shelf at
+#:   39.0 and each take a 13.5 mm shelf of their own a tenth below it.
+#:   ⚠️ 39.0 therefore sits ON that step rather than above it -- the pack reads
+#:   214.85 for every width from 39.0 to 41.0 and jumps below it. The step-up
+#:   this envelope buys is spent on LENGTH instead, the axis with room to spend.
+#:
+#:   LENGTH is then the least that clears all three budgets by 10 %. The pack
+#:   wants 238.72. The longest row wants less: the harness headers of one face
+#:   stand end to end along the board and that sum is arithmetic, not a
+#:   heuristic -- POWER top is longest at 197.04 mm, so 197.04 / 0.90 = 218.93.
+#:   Density is satisfied at any length in range (it wants only W >= 38.3 here).
+#:   238.72 -> 239.0.
+#:
+#:   WHAT IT COSTS AND BUYS: 39.0 x 239.0 = 9321 mm², three boards 280 cm². The
+#:   cavity it requires is 253.00 along (7.00 mm spare) x 65.65 across (4.35 mm
+#:   spare). Margins: row 17.6 %, pack 10.1 %, density 11.7 %. The row's 41.96 mm
+#:   of slack also covers the four M3 corners it may not run into -- at each END
+#:   of the row two corners take 2 x M3_INSET_MM of length between them, 2 x 2 x
+#:   3.5 = 14.0 mm in all -- which the row check does not model.
 #:
 #: ⛔ Re-run the search when a body or a terminal changes; do not nudge these to
 #: make a budget close. `python3 -m tools.board_fit` prints every margin, and
 #: `tests/test_board_params.py` holds the row, the pack and the density to the
 #: 10 % this search bought.
-BOARD_W = 48.0
-BOARD_L = 219.0
+BOARD_W = 39.0
+BOARD_L = 239.0
 BOARD_AREA = BOARD_W * BOARD_L
 
-AVAIL_H = CAVITY_H - FLOOR - LID        # internal height the stack may use
+#: Internal height the stack may use. Cut from a MEASUREMENT since M18:
+#: 100.0 - 3.0 - 3.0 = 94.0 mm, against a derived stack of 62.4. ⚠️ It was 64.0
+#: against the old estimate, where the same stack sat 1.6 mm inside its limit;
+#: nothing about this budget is tight any more. ⛔ It is still read against two
+#: ALLOWANCES, so the enclosure's model moves it.
+AVAIL_H = CAVITY_H - FLOOR - LID
 
 # --- the cavity that envelope REQUIRES ---------------------------------------
-#: ⬜ UNCONFIRMED UNTIL M18. These are not observations of the bike: they are
-#: what the enclosure has to be for the design above to go in it, and the
-#: measurement will confirm them or force a rethink (IO-14). Across, the box
-#: wall, the drop-in clearance on the far side and the plug-and-bend room in
-#: front of the connector face; along, the wall and the drop-in clearance at
-#: each end; tall, the DERIVED stack plus the floor and the lid
-#: (`cavity_required`, because the stack is a property of the design).
-#: ⚠️ These are CHECKED, not merely stated: `cavity_problems` fails the design on
-#: the plan axes the moment `envelope_is_binding()` -- so a measured cavity that
-#: cannot hold the design is a FAILURE, not a paragraph in a report.
-#: `tests/test_board_params.py` pins all three against drift.
-CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 74.65
-CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 233.0
+#: These are not observations of the bike: they are what the enclosure has to be
+#: for the design above to go in it (IO-14). Across, the box wall, the drop-in
+#: clearance on the far side and the plug-and-bend room in front of the
+#: connector face; along, the wall and the drop-in clearance at each end; tall,
+#: the DERIVED stack plus the floor and the lid (`cavity_required`, because the
+#: stack is a property of the design).
+#: ⚠️ They are CHECKED, not merely stated: M18 is measured, so `cavity_problems`
+#: FAILS the design on either plan axis the cavity cannot hold. Today they fit
+#: -- 253.00 of 260.0 along, 65.65 of 70.0 across -- with 7.00 and 4.35 mm to
+#: spare. ⬜ Still not FINAL: WALL is an allowance, so both figures move when the
+#: enclosure's model lands. `tests/test_board_params.py` pins all three against
+#: drift, because nothing else bounds what the design may ask of the enclosure.
+CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 65.65
+CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 253.0
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
@@ -314,10 +355,13 @@ class Stack:
     #: drawing. `load_bearing` is the subset that sets a gap.
     unconfirmed: tuple[tuple[str, str, str, float], ...]
     load_bearing: tuple[str, ...]
-    #: The stack-versus-envelope verdict while the envelope itself is not a
-    #: fact (cavity unmeasured or enclosure undecided). Reported loudly, never
-    #: silently -- but it cannot FAIL a design against a number nobody has
-    #: measured. The moment both flags are true it lands in `problems` instead.
+    #: The stack-versus-envelope verdict while the CAVITY is not a fact -- an
+    #: overrun reported loudly, never silently, but unable to FAIL a design
+    #: against a number nobody has measured. ⚠️ Empty since M18 (2026-09-20):
+    #: with the cavity measured an overrun lands in `problems` instead. The
+    #: machinery stays because `CAVITY_MEASURED` is what it answers to, and a
+    #: guard that cannot fire today is still the guard for the day a cavity
+    #: figure goes back to being a guess.
     envelope_verdicts: tuple[str, ...] = ()
 
     @property
@@ -597,8 +641,8 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
             problems.append(verdict)
         else:
             envelope_verdicts.append(
-                verdict + " against the ESTIMATED envelope (M18 unmeasured and/or "
-                "enclosure undecided). Binding the moment both are settled")
+                verdict + " against the ESTIMATED envelope (the cavity is not "
+                "measured). Binding the moment it is")
 
     unconfirmed = unconfirmed_heights(d, order)
     setters = {r for g in gaps for r in g.set_by}
@@ -610,9 +654,10 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
 def cavity_required(d: Design, order=STACK_ORDER) -> tuple[float, float, float]:
     """(along, across, tall) the enclosure has to give this design, in mm.
 
-    ⬜ A REQUIREMENT, not a measurement (IO-14): the plan dimensions come from
-    the typed envelope, the height from the stack this design derives. M18
-    confirms these or forces a rethink.
+    A REQUIREMENT, not a measurement (IO-14): the plan dimensions come from the
+    typed envelope, the height from the stack this design derives. M18 measured
+    the cavity these are judged against; `cavity_overruns` does the comparing
+    and `cavity_problems` decides whether it is a failure.
     """
     return (CAVITY_REQUIRED_L, CAVITY_REQUIRED_W,
             stack_height(d, order).total_mm + FLOOR + LID)
@@ -635,14 +680,12 @@ def cavity_overruns(d: Design, order=STACK_ORDER) -> tuple[tuple[str, float, flo
 
 
 def cavity_problems(d: Design, order=STACK_ORDER) -> list[str]:
-    """The PLAN axes against the cavity, once the envelope is a FACT.
+    """The PLAN axes against the cavity, now that the cavity is a FACT.
 
-    Gated exactly as the height overrun is (`envelope_is_binding`): while M18
-    is an estimate a requirement that exceeds it is a finding for M18, and the
-    day the owner measures the cavity and flips the flag it is a design that
-    does not fit the box. Without the gate it would fail the design against a
-    guess; without the check it would pass a design 33 mm too long for a box
-    somebody has actually measured.
+    Gated exactly as the height overrun is (`envelope_is_binding`), which since
+    M18 means gated on the MEASUREMENT alone. Without the gate this would have
+    failed the design against a guess; without the check it would pass a design
+    too wide for a box somebody has actually measured.
 
     ⚠️ The TALL axis is deliberately not here. `stack_height` already fails on
     it through the same gate (AVAIL_H is CAVITY_H less the floor and the lid),
@@ -650,20 +693,48 @@ def cavity_problems(d: Design, order=STACK_ORDER) -> list[str]:
     """
     if not envelope_is_binding():
         return []
+    # ⚠️ The lever named depends on ENCLOSURE_DECIDED, because it is the honest
+    # one: while WALL is still an allowance, a thinner wall really can close a
+    # small overrun, and a reader who is not told that will redesign a board
+    # instead. Once the model sets the wall, that lever is gone.
+    lever = ("a smaller design or a bigger box" if ENCLOSURE_DECIDED else
+             "a smaller design, a thinner wall allowance or a bigger box")
     return [f"cavity {axis}: the design requires {need:.2f} mm but the measured "
             f"cavity gives {have:.2f} mm -- OVER by {need - have:.2f} mm. The "
             f"board, its walls and its clearances do not go in the box that was "
-            f"measured (M18); only a smaller design or a bigger box closes this"
+            f"measured (M18); only {lever} closes this"
             for axis, need, have in cavity_overruns(d, order) if axis != "tall"]
 
 
 def envelope_is_binding() -> bool:
-    """True once the envelope is a FACT: cavity measured AND enclosure chosen.
+    """True once the CAVITY is a measurement rather than a guess.
 
-    Read at call time, not import time, so flipping either flag takes effect
+    ⚠️ THE DECISION, 2026-09-20, and the reason, because the alternative is
+    defensible and somebody will ask: a measured cavity the design does not fit
+    FAILS even while `ENCLOSURE_DECIDED` is False. This used to require both
+    flags.
+
+    The two flags are not the same kind of thing.
+      * `CAVITY_MEASURED` is about the BIKE. Nothing in this design can move
+        260 x 70 x 100, and a design that does not go in it is broken now.
+      * `ENCLOSURE_DECIDED` is about the DESIGN'S OWN allowances -- WALL, FLOOR,
+        LID. A design is always judged against its own numbers; if those numbers
+        later change, the requirement re-derives and this gate re-answers.
+    Waiting for the box to be modelled would mean holding a known failure open
+    across every hour of work that gets built on the design meanwhile, to buy
+    one thing: the chance that a thinner wall rescues it. That is the wrong
+    trade -- and the chance is not lost, because the failure message says so and
+    the requirement recomputes the moment an allowance moves.
+
+    ⛔ Do not re-add `ENCLOSURE_DECIDED` here. It still has its own job: it says
+    the requirement is not FINAL, which is why `Stack.provisional` reads it, why
+    the report carries the allowance caveat on its first line, and why the
+    failure text names the wall as a lever.
+
+    Read at call time, not import time, so flipping the flag takes effect
     everywhere at once -- and so a test can prove the overrun becomes an error.
     """
-    return bool(CAVITY_MEASURED and ENCLOSURE_DECIDED)
+    return bool(CAVITY_MEASURED)
 
 
 def stack_provisional(d: Design) -> list[str]:
