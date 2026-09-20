@@ -722,7 +722,7 @@ STACK_CONTRACT = {
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
     "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2", "HORN_CMD",
-    "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "V3P3",
+    "FAN_CMD", "BUZZ_CMD", "V12_SENSE",
     # the motor cut: the command out, the 100 kΩ-isolated copy back (IO-8)
     "BL_CMD", "BL_SENSE",
     # relayed on to CTRL and the controller row on POWER (IO-5): the serial
@@ -731,6 +731,9 @@ STACK_CONTRACT = {
     "UART1_TX", "UART1_RX", "BOOST_CMD", "ACC_SENSE", "CANH", "CANL",
     # ⛔ NOT the brake levers: J306 is in the INPUTS row on LOGIC (IO-6), so
     # IN05_BRAKE_L and IN06_BRAKE_R reach their pins without a crossing.
+    # ⛔ And NOT V3P3, or any other rail: a rail lands on itself when a half is
+    # mated reversed, which only a palindrome gives it, so it rides PWR-LOGIC
+    # (rule BUS-ORDER). The spine carries signals and grounds.
 }
 
 #: CTRL, POWER ↔ OUTPUTS: the controller row's signals, every one beside a
@@ -786,6 +789,17 @@ def test_what_crosses_ctrl_and_stack_both_is_relayed_not_duplicated(d):
         n = d.net(name)
         assert n.interface == "CTRL", name
         assert {d.board_of(r) for r, _ in n.pins} >= {"POWER", "LOGIC"}, name
+
+
+def test_no_rail_rides_a_signal_spine(d):
+    """Derived from the design's own statement of what a rail is (rules.rails,
+    which reads SUPPLY_PINS): reversed or mirrored, a spine lands every contact
+    on a ground, so a rail on one is a short across the interface."""
+    from tools import rules
+    spines = {"STACK", "CTRL"}
+    for c in d.connectors:
+        if c.interface in spines:
+            assert not (rules.rails(d) & {cp.net for cp in c.pins}), c.refdes
 
 
 def test_pwr_up_shares_the_load_current_over_three_contacts(d):

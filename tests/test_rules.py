@@ -113,7 +113,7 @@ DOMAINS = {
 }
 INTERFACES = {
     "GND": "PWR-OUT", "KEY_SENSE": "PWR-OUT",
-    "V12": "PWR-OUT", "V5": "PWR-OUT", "V3P3": "STACK",
+    "V12": "PWR-OUT", "V5": "PWR-OUT", "V3P3": "PWR-LOGIC",
     "HORN_CMD": "STACK", "CONTACT_SENSE": "STACK", "CS1": "STACK",
     "LGT_LOW": "STACK",
 }
@@ -129,11 +129,16 @@ def _good() -> Design:
     pwr = ("V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5", "GND", "V12")
     # A signal spine: a ground beside every signal, and a ground OPPOSITE every
     # signal too -- an even number of contacts, ending on the ground row. The
-    # trailing GND is not decoration: without it contacts 1 and 9 are two
+    # trailing GND is not decoration: without it contacts 1 and 7 are two
     # different commands, and a half mated reversed lands one on the other
     # (BUS-ORDER, which checks every interface by its pin table).
-    stack = ("HORN_CMD", "GND", "CONTACT_SENSE", "GND", "V3P3", "GND", "CS1",
-             "GND", "LGT_LOW", "GND")
+    stack = ("HORN_CMD", "GND", "CONTACT_SENSE", "GND", "CS1", "GND",
+             "LGT_LOW", "GND")
+    # ⛔ And no RAIL on the spine: reversed, the 3.3 V rail would land on a
+    # ground. It rides the power bus between the same two boards instead, on two
+    # contacts placed symmetrically, as it does in the design (BUS-ORDER).
+    pwr_logic = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
+                 "GND", "V5")
     connectors = (
         # POWER
         _conn("J101", "POWER", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
@@ -142,7 +147,7 @@ def _good() -> Design:
         # OUTPUTS
         _conn("J311", "OUTPUTS", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT",
               side="bottom"),
-        _conn("J307", "OUTPUTS", "PWR-LOGIC", pwr, leaves_box=False,
+        _conn("J307", "OUTPUTS", "PWR-LOGIC", pwr_logic, leaves_box=False,
               interface="PWR-LOGIC"),
         _conn("J308", "OUTPUTS", "STACK", stack, leaves_box=False, interface="STACK"),
         _conn("J301", "OUTPUTS", "Headlight", ("HL_LOW", "GND")),
@@ -154,7 +159,7 @@ def _good() -> Design:
         # LOGIC
         _conn("J406", "LOGIC", "STACK", stack, leaves_box=False, interface="STACK",
               side="bottom"),
-        _conn("J407", "LOGIC", "PWR-LOGIC", pwr, leaves_box=False,
+        _conn("J407", "LOGIC", "PWR-LOGIC", pwr_logic, leaves_box=False,
               interface="PWR-LOGIC", side="bottom"),
         _conn("J401", "LOGIC", "USB-C", ("USB_DM", "USB_DP", "GND")),
         _conn("J402", "LOGIC", "Left pod", ("SW_WIRE", "POD2_WIRE", "GND")),
@@ -655,10 +660,12 @@ def test_strap_fires_when_a_strapping_pin_drives_a_gate():
 def test_strap_fires_when_a_strapping_pin_crosses_to_another_board():
     """A strapping pin may serve its bias parts and the internal service
     header. Across STACK it meets another board's contacts at key-on."""
-    ext = lambda c: c.pins + (ConnPin("11", "SPARE_X"), ConnPin("12", "GND"))
+    spare = str(len(GOOD.connector("J308").pins) + 1)      # the next contact
+    ext = lambda c: c.pins + (ConnPin(spare, "SPARE_X"),
+                              ConnPin(str(int(spare) + 1), "GND"))
     bad = GOOD.replace_connector("J406", pins=ext(GOOD.connector("J406")))
     bad = bad.replace_connector("J308", pins=ext(GOOD.connector("J308")))
-    bad = bad.with_net(Net("SPARE_X", (("J406", "11"), ("J308", "11")),
+    bad = bad.with_net(Net("SPARE_X", (("J406", spare), ("J308", spare)),
                            domain="SIGNAL", interface="STACK"))
     errs = fired(on_gpio(bad, "SPARE_X", 46), "GPIO-STRAP")
     assert any("crosses STACK" in e for e in errs)
@@ -1124,10 +1131,34 @@ def test_bus_order_lets_a_converter_return_sit_beside_its_feed():
     assert not fired(_rebus(GOOD, "PWR-OUT", pair), "BUS-ORDER")
 
 
-def test_bus_order_leaves_the_stack_to_its_ground_row():
+def test_a_spine_passes_on_its_grounds_wherever_the_row_starts():
+    """Not an exemption -- the grounds ARE the answer. Shift the ground row by
+    one and every signal still faces a ground reversed, shifted and mirrored,
+    so the rule still has nothing to report."""
     stack = GOOD.connector("J308")
     odd = _rebus(GOOD, "STACK", tuple(cp.net for cp in stack.pins)[::-1][:-1] + ("GND",))
     assert not fired(odd, "BUS-ORDER")
+
+
+def test_bus_order_fires_on_a_rail_landing_on_a_ground_reversed():
+    """⛔ The one a return in the pair must NOT excuse. A rail opposite a ground
+    is a SHORT when the half is mated reversed or mirrored, and it seats fully
+    and looks right. The real design had it: V3P3 sat on the signal spine until
+    this test moved it to PWR-LOGIC, two contacts placed symmetrically."""
+    bus = tuple(cp.net for cp in GOOD.connector("J202").pins)
+    assert bus[-1] == "V12"
+    bad = _rebus(GOOD, "PWR-OUT", bus[:-1] + ("GND",))
+    errs = fired(bad, "BUS-ORDER")
+    assert any("both ends" in e and "V12 is a supply rail" in e
+               and "SHORTS it to GND" in e for e in errs), errs
+
+
+def test_bus_order_knows_a_rail_from_a_net_of_the_same_class():
+    """The rail test reads SUPPLY_PINS, not the domain: CS1 is 3.3 V class and
+    feeds nothing, so a spine may face it with a ground -- and does."""
+    rails = rules.rails(GOOD)
+    assert {"V12", "V5", "V3P3"} <= rails
+    assert not rails & {"CS1", "KEY_SENSE", "HORN_CMD", "HL_LOW"}
 
 
 def test_bus_order_fires_on_a_spine_that_loses_a_ground():

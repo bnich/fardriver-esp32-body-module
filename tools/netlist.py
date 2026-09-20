@@ -4,14 +4,15 @@ Shape lives in `model.py`; this file is content only. `integrity.py` is the
 structural gate: every declared pin of every part lands on exactly one net.
 
 Conventions
-  REFDES    board-scoped hundreds: POWER 1xx and 2xx · OUTPUTS 3xx · LOGIC 4xx.
-            A refdes never changes, not even when its part changes board, so
-            POWER's controller row carries the numbers of the boards its parts
-            came from: the FarDriver and display connectors with their clamps
-            and series resistors (J310, J404, J405, D404-D407, Q401, R424, R425,
-            R429, R436, R443) are 4xx on POWER, and R426-R428 stay 4xx on
-            OUTPUTS, where the lamp feeds they tap are. The documents' informal
-            names (`D13`, `C1`) are quoted in `source` so they stay greppable.
+  REFDES    the hundred a part was FIRST numbered in: POWER 1xx and 2xx ·
+            OUTPUTS 3xx · LOGIC 4xx. ⛔ A refdes never changes, not even when
+            its part moves board, so the hundreds do NOT partition the boards
+            and nothing may read one as if they did. Since the rows were laid
+            out, a good many parts sit outside their own hundred -- the
+            controller row on POWER is the largest block of them, and it is
+            numbered 3xx and 4xx throughout. **Read a part's board off
+            `board`**, never off its number. The documents' informal names
+            (`D13`, `C1`) are quoted in `source` so they stay greppable.
   PINS      functional names from the datasheet; where several pads share one
             name (`VS`, `GND`, `OUT1`) the pad numbers are in `source`.
             Passives 1/2 · polarised caps +/- · diodes A/K · FETs G/D/S ·
@@ -30,6 +31,21 @@ Conventions
             PDF and the page the figure was read from.
   CONNECTOR pin numbers are a generator-side index. For the pods the binding
             key is wire colour + gauge, never the cavity number.
+  PITCH     the four harness rows (IO-4..IO-6), one row per board face. A screw
+            plug seats in ANY header of its own pitch that is at least its
+            size, offset if the header is larger, so each group whose mismate
+            would DESTROY something owns a pitch nothing else uses:
+              7.62  the pack plug (`J101`) alone -- 84 V
+              5.08  every FarDriver and display lead alone -- 12 V back-fed
+                    into the controller's 3.3 V logic
+              3.50  the 5 V outputs alone -- 12 V into a 5 V device
+            3.81 is deliberately SHARED by the 12 V outputs and the inputs,
+            where the worst mismate is an output into its own current limit, or
+            3.3 V through 1 kΩ into a lamp. Beyond that, a terminal carrying a
+            safety-relevant wire also keeps a (pitch, positions) SIZE no other
+            fitted terminal has, so its plug is left in the hand rather than
+            seated offset. `tests/test_rows.py` holds each exclusive pitch to
+            its owners; `tests/test_interconnect.py` holds the sizes.
 """
 from dataclasses import replace
 
@@ -197,6 +213,12 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
                        f"cathodes tie to GND")
 
 
+#: Every class-A network built here, as (pull-up, series, cap, net). The board
+#: below is a DEFAULT, and `class_a_problems()` is what makes it true: it holds
+#: each network to the board of the terminal its own contact arrives on.
+_CLASS_A: list[tuple[str, str, str, str]] = []
+
+
 def _class_a_parts(pull: str, series: str, cap: str, net: str,
                    note: str = "") -> tuple[Part, ...]:
     """plan §4 class A: 1 kΩ pull-up · 1 kΩ series · 100 nF at the pin.
@@ -205,8 +227,16 @@ def _class_a_parts(pull: str, series: str, cap: str, net: str,
     every contact from the harness arrives on the board that reads it, so the
     pull-up, the series resistor and the 100 nF at the pin sit together and no
     unconditioned contact crosses an interface.
+
+    ⚠️ That is a default, and `class_a_problems()` checks it against the
+    terminal each contact actually lands on -- the guard is in this shared
+    function's own class, not at a call site, so an input terminal put on
+    another board tomorrow cannot silently get its conditioning an interface
+    away. That defect is not hypothetical: the levers had it until IO-6 moved
+    J306 into the inputs row.
     """
     board: Board = "LOGIC"
+    _CLASS_A.append((pull, series, cap, net))
     tail = f" {note}" if note else ""
     return (
         _r(pull, board, "1k",
@@ -510,9 +540,17 @@ _POWER_CONVERTER_PARTS = (
 # PARTS — POWER (L1), continued: the CONTROLLER ROW (IO-5, IO-6). Every wire to
 # the FarDriver and the parked display leaves from POWER's edge, and each one's
 # driver, divider, series resistor and clamp sits here with its connector, so
-# nothing unconditioned crosses an interface: only the commands and the sense
-# nodes cross CTRL. The refdes hundreds are the boards these parts came from
-# (see REFDES above) -- a refdes never changes when a part moves board.
+# nothing unconditioned crosses an interface: commands and sense nodes cross
+# CTRL, and nothing else --
+#   ⚠️ except the three TELLTALES, deliberately. TT_L, TT_R and TT_HL are fed
+#   from the lamp channels themselves (plan §6.2.1: a flash lights the headlight
+#   telltale with no firmware running), so their 1 kΩ series resistors have to
+#   stay on OUTPUTS with those feeds. What crosses CTRL is the far side of a
+#   1206 that limits a shorted display wire to 144 mW (VR-POWER), clamped at the
+#   connector by D406. Moving the resistors here instead would put the raw lamp
+#   feed on the crossing, which is the thing this row exists to prevent.
+# The refdes hundreds are the boards these parts came from (see REFDES above)
+# -- a refdes never changes when a part moves board.
 # ════════════════════════════════════════════════════════════════════════════
 _POWER_CTRL_PARTS = (
     # ── the motor cut: an open-drain output at J309 (IO-8, IO-9) ─────────────
@@ -821,6 +859,29 @@ _SPARE_LINES = tuple(
     for i, bit in enumerate(_U403_SPARES))
 
 
+#: The throttle's boost button is an input too (IO-4), so it sits in the row
+#: beside the spares and takes a line of the same arrays. Typed once, read by
+#: the array's own `source` and by the net that lands it.
+_BOOST_BTN_AT, _BOOST_BTN_LINE = f"{_INPUTS_A}.2", "D413.K3"
+
+
+def _array_where(ref: str) -> str:
+    """What one input array clamps, DERIVED from the lines it carries: the
+    arrays span the two terminals (D412 sits entirely at J410, D411 and D413
+    straddle both), and a typed connector name went on saying J409 after the
+    row was split in two."""
+    at, lines = set(), []
+    for bit, where, *_x, tvs in _SPARE_LINES:
+        if tvs.startswith(f"{ref}."):
+            at.add(where.split(".")[0])
+            lines.append(f"U403.{bit}")
+    if _BOOST_BTN_LINE.startswith(f"{ref}."):
+        at.add(_BOOST_BTN_AT.split(".")[0])
+        lines.append("the boost button")
+    return (f"At {' and '.join(sorted(at))}: {', '.join(lines)} — class-A "
+            f"contacts of the INPUTS row (plan §4)")
+
+
 def _spare_cps(terminal: str) -> tuple[ConnPin, ...]:
     """One terminal's spare contacts, DERIVED from `_SPARE_LINES`, so the
     connector table and the nets cannot disagree about a pin number."""
@@ -888,13 +949,14 @@ _LOGIC_PARTS = (
          nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
          value="I²C address 0x21 (A2..A0 = 001)",
          source=f"Expander #2: GPA0 senses ACC+; the other 13 input-capable "
-                f"bits are spare, brought out to the unfitted header J409. "
+                f"bits are the INPUTS row's free inputs (IO-1), brought out to "
+                f"the fitted terminals {_INPUTS_A} and {_INPUTS_B}, each "
+                f"class-A conditioned on this board. "
                 f"nc INTA: nothing on #2 needs an interrupt; ACC_SENSE is "
                 f"polled. {_MCP_SOURCE}"),
     *(part for bit, _, pull, series, cap, _ in _SPARE_LINES
       for part in _class_a_parts(pull, series, cap, f"SPARE_{bit[2:]}")),
-    *(_tvs5(ref, "LOGIC", "J409, expander #2's spare inputs: class A (plan §4)")
-      for ref in _SPARE_TVS),
+    *(_tvs5(ref, "LOGIC", _array_where(ref)) for ref in _SPARE_TVS),
     Part("U404", "SN65HVD230DR", "SOIC-8", "LOGIC", "IC",
          ("D", "GND", "VCC", "R", "CANL", "CANH", "RS"), 1.75,
          height_confirmed=True, footprint_mm=(5.0, 6.2), nc=("Vref",),
@@ -1012,7 +1074,8 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
           + _OUTPUTS_PARTS + _LOGIC_PARTS)
 
 # ════════════════════════════════════════════════════════════════════════════
-# INTERFACE PIN MAPS — the three inter-board spines (BD-3, BD-4).
+# INTERFACE PIN MAPS — the four inter-board crossings (BD-3, BD-4): two power
+# buses (PWR-OUT, PWR-LOGIC) and two signal spines (CTRL, STACK).
 # ════════════════════════════════════════════════════════════════════════════
 # Every power bus reads the same from either end, so a half mated reversed, or
 # the upper half mirrored by being mounted under its board, lands every net on
@@ -1025,9 +1088,16 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
 _PWROUT_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
                "GND", "V12", "V12")
 
-#: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: only what LOGIC uses. Its ground
-#: return is also every even STACK contact.
-_PWRLOGIC_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
+#: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: the rails between those two
+#: boards, in both directions -- V5 and KEY_SENSE up, and 3.3 V back DOWN for
+#: the three pull-ups on OUTPUTS (R346, R349, R351). Its ground return is also
+#: every even STACK contact.
+#: ⚠️ V3P3 rides HERE, not on STACK, and it takes two contacts: a rail must land
+#: on ITSELF when a half is mated reversed or mirrored, which only a palindrome
+#: gives it (rule BUS-ORDER). On the spine it faced a ground, and reversed that
+#: is the 3.3 V rail shorted to ground. A power bus is where a rail belongs.
+_PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
+                  "GND", "V5")
 
 #: CTRL, J105 ↔ J312, POWER to OUTPUTS: the controller row's signals, every one
 #: beside a ground.  Odd contacts carry these in order, every even contact is
@@ -1035,7 +1105,9 @@ _PWRLOGIC_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
 #: so only commands and sense nodes cross.
 _CTRL_SIGNALS = ("BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX",
                  "BOOST_CMD", "CANH", "CANL", "TT_L", "TT_R", "TT_HL")
-#: Contacts per row, and the header's length on the 2.54 mm grid.
+#: ⚠️ `_ROWS` counts COLUMNS: one per signal, each a signal contact over its
+#: own ground. The name is kept because `2 × N` is how both spines' pinouts are
+#: written everywhere else. The header's length follows on the 2.54 mm grid.
 _CTRL_ROWS = len(_CTRL_SIGNALS)
 _CTRL_FP = (2.54 * _CTRL_ROWS, 2 * 2.54)
 
@@ -1049,7 +1121,7 @@ _STACK_SIGNALS = (
     "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2",
     "HORN_CMD", "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "BL_SENSE", "BL_CMD",
-    "UART1_TX", "UART1_RX", "BOOST_CMD", "CANH", "CANL", "V3P3",
+    "UART1_TX", "UART1_RX", "BOOST_CMD", "CANH", "CANL",
     "ACC_SENSE",
 )
 #: Contacts per row, and the header's length on the 2.54 mm grid.
@@ -1195,7 +1267,7 @@ _NETS_RAILS = (
         + _STACK_GND,
         domain="GND", interface="PWR-OUT",
         source="The star net, on all three boards and across all four "
-               "interfaces (PWR-OUT × 4, every even CTRL contact, PWR-LOGIC × 2, "
+               "interfaces (PWR-OUT × 4, every even CTRL contact, PWR-LOGIC × 4, "
                "every even STACK contact); "
                "`interface` names the lowest. Both converters' -Vout, every "
                "lamp common (plan §6.0.2), both B− conductors of J101, and "
@@ -1229,12 +1301,15 @@ _NETS_RAILS = (
            "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 R477.2 "
            "R317.2 R318.2 "
            "R472.2 U406.VDD C436.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _stack("V3P3") + _p("R346.2 R349.2 R351.2"),
-        domain="3V3", interface="STACK",
-        source="LOGIC's 3.3 V rail. Crosses STACK to OUTPUTS for the AUX12 "
+        + _pwrlogic("V3P3") + _p("R346.2 R349.2 R351.2"),
+        domain="3V3", interface="PWR-LOGIC",
+        source="LOGIC's 3.3 V rail. It goes DOWN to OUTPUTS for the AUX12 "
                "enable (R346) and the two FAULT pull-ups (R349, R351) -- every "
                "class-A pull-up, the levers' included, is on LOGIC with its own "
-               "terminal now. U403.A0 is strapped here (address 001)"),
+               "terminal now -- and it goes on the POWER BUS, two contacts of "
+               "it, never on the signal spine: a rail has to land on itself "
+               "when a half is mated reversed (BUS-ORDER). U403.A0 is strapped "
+               "here (address 001)"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1489,7 +1564,9 @@ _NETS_STACK = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — the parked display block on OUTPUTS (D19).
+# NETS — the parked display block, on POWER with J405 in the controller row
+# (IO-5, D19). Only the three telltales cross an interface: their 1 kΩ series
+# resistors stay on OUTPUTS with the lamp feeds that drive them.
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_DISPLAY = (
     Net("TT_L", _p("R426.2") + _ctrl("TT_L") + _p("J405.1 D406.K1"),
@@ -1630,7 +1707,7 @@ _NETS_CLASS_A = (
     *_class_a_nets("R408", "R419", "C407", "IN10_HAZARD", "GPA6",
                    "J402.9 D402.K4", "Left pod 'green-black' (hazard trio)"),
     *_class_a_nets("R409", "R420", "C408", "IN07_BOOST_BTN", "GPB3",
-                   f"{_INPUTS_A}.2 D413.K3",
+                   f"{_BOOST_BTN_AT} {_BOOST_BTN_LINE}",
                    f"The throttle's red button, a 2-pin dry-contact lead: it is "
                    f"an INPUT, so it joins the inputs row on {_INPUTS_A}.2 with "
                    f"the row's return on {_INPUTS_A}.1 -- not the serial "
@@ -1794,7 +1871,8 @@ _CONNECTORS = (
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
     Connector("J202", "POWER", "PWR-OUT, POWER side: 4 × V12, 4 × GND, 2 × V5, "
-              "KEY_SENSE", _bus(_PWROUT_NETS), 8.5, footprint_mm=(27.94, 2.54),
+              "KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
+              footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54),
               leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
     Connector("J105", "POWER",
               f"CTRL, POWER side: 2 × {_CTRL_ROWS}, the controller row's "
@@ -1885,11 +1963,12 @@ _CONNECTORS = (
     )),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
               "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
-              footprint_mm=(27.94, 2.54), leaves_box=False,
+              footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54), leaves_box=False,
               interface="PWR-OUT", side="bottom", source=_INTERBOARD),
-    Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5, KEY_SENSE and ground "
-              "for LOGIC", _bus(_PWRLOGIC_NETS), 8.5,
-              footprint_mm=(12.7, 2.54), leaves_box=False,
+    Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
+              "to LOGIC, 3.3 V back down, ground on every other contact",
+              _bus(_PWRLOGIC_NETS), 8.5,
+              footprint_mm=(2.54 * len(_PWRLOGIC_NETS), 2.54), leaves_box=False,
               interface="PWR-LOGIC", source=_INTERBOARD),
     Connector("J308", "OUTPUTS",
               f"STACK, OUTPUTS side: 2 × {_STACK_ROWS}, alternating grounds",
@@ -1952,7 +2031,8 @@ _CONNECTORS = (
               footprint_mm=_STACK_FP, leaves_box=False, interface="STACK",
               side="bottom", source=_INTERBOARD),
     Connector("J407", "LOGIC", "PWR-LOGIC, LOGIC side, under the board",
-              _bus(_PWRLOGIC_NETS), 2.54, footprint_mm=(12.7, 2.54),
+              _bus(_PWRLOGIC_NETS), 2.54,
+              footprint_mm=(2.54 * len(_PWRLOGIC_NETS), 2.54),
               leaves_box=False, interface="PWR-LOGIC", side="bottom",
               source=_INTERBOARD),
     Connector("J408", "LOGIC", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "
@@ -2161,8 +2241,41 @@ def terminal_catalogue() -> dict[str, str]:
     return out
 
 
+def class_a_problems(d: Design) -> list[str]:
+    """Every class-A network sitting apart from the terminal it conditions.
+
+    The pull-up's wire-side leg is on the contact's own net, and that net names
+    the harness terminal, so the board is DERIVED both ways round and neither
+    is typed. Empty on the design; `current()` refuses to hand out a design
+    that is not."""
+    out = []
+    for pull, series, cap, net in _CLASS_A:
+        wire = next((n for n in d.nets if (pull, "1") in n.pins), None)
+        if wire is None:
+            out.append(f"class A: {pull}.1 ({net}) is on no net, so nothing can "
+                       f"say which terminal it conditions")
+            continue
+        refs = {r for r, _ in wire.pins}
+        boards = {c.board for c in d.connectors if c.leaves_box and c.refdes in refs}
+        if not boards:
+            continue                    # an internal node: no terminal to be beside
+        for ref in (pull, series, cap):
+            if d.board_of(ref) not in boards:
+                out.append(
+                    f"class A: {ref} ({net}) is on {d.board_of(ref)}, but "
+                    f"{wire.name} arrives on {'/'.join(sorted(boards))} -- the "
+                    f"pull-up, the series resistor and the 100 nF belong on the "
+                    f"board the contact lands on, or an unconditioned wire "
+                    f"crosses an interface (plan §4, IO-6)")
+    return out
+
+
 def current() -> Design:
     """The design as it stands. The ONE API: `.parts`, `.nets`, `.connectors`
     and the lookups on `Design`. Nothing else builds a Design."""
-    return Design(parts=_with_fab(_PARTS), nets=_NETS,
-                  connectors=_with_fab_conn(_CONNECTORS))
+    design = Design(parts=_with_fab(_PARTS), nets=_NETS,
+                    connectors=_with_fab_conn(_CONNECTORS))
+    problems = class_a_problems(design)
+    if problems:
+        raise ValueError("; ".join(problems))
+    return design

@@ -816,6 +816,21 @@ def _one_resistor_away(ix: _Ix, name: str) -> set[str]:
 _RETURN_NETS = frozenset({"GND", "HV_C1_N", "HV_C2_N"})
 
 
+def rails(d: Design) -> frozenset[str]:
+    """Every net that feeds a part's SUPPLY pin: the design's own statement of
+    what a RAIL is, and the same table rule SUPPLY holds each of those pins to.
+
+    ⛔ Not the domain. `CS1` is 3.3 V class and `TT_L` 12 V class, and neither
+    carries anything: a sense node shorted to ground reads zero, a rail shorted
+    to ground takes the board down with it."""
+    ix = _index(d)
+    out = set()
+    for p in d.parts:
+        for pin in _supply_pins(p):
+            out.update(ix.nets_of_pin(p.refdes, pin))
+    return frozenset(out)
+
+
 def bus_order(d: Design) -> list[str]:
     """Every inter-board interface, against the two ways a half can be mated
     wrong. Reversed -- or, the same thing in copper, an upper half mirrored by
@@ -825,19 +840,33 @@ def bus_order(d: Design) -> list[str]:
 
       opposite pairs  a power bus survives reversal by being a palindrome, so
                       every net lands on itself; a signal spine survives it by
-                      facing every signal with a ground.
+                      facing every signal with a ground. ⛔ A RAIL opposite
+                      anything but itself is a short across the interface, and
+                      a ground opposite it does not excuse it -- that IS the
+                      short. So a mismatched pair passes only when neither side
+                      is a rail and one of them is a return. ⚠️ Where that line
+                      sits: a SENSE line facing a ground reversed is a misread
+                      and a loud one (firmware flags 'powered with KEY_SENSE
+                      low'); a RAIL facing one is a short across the interface.
+                      A power bus still earns its palindrome by having one --
+                      every net lands on itself and neither case arises.
       adjacent pairs  two different nets may sit side by side only if one of
                       them is a return: a shift can short a rail, never feed
-                      84 V or 12 V into a logic input.
+                      84 V or 12 V into a logic input. (A shift is a visibly
+                      hanging contact and blows the module's fuse; a half
+                      reversed seats fully and looks right, which is why the
+                      opposite-pair test is the stricter of the two.)
 
     ⚠️ Both tests are read off the PIN TABLE, for EVERY interface. STACK was
     exempt BY NAME, on the argument that its alternating grounds make the
-    palindrome unnecessary. True -- and it left the alternation itself unchecked,
-    and it fired on CTRL the day CTRL was added, which is built the same way,
-    contact for contact. A ground opposite a signal satisfies the pair test on
-    its own, so the exemption was never needed."""
+    palindrome unnecessary. True of its signals -- and it left the alternation
+    itself unchecked, it fired on CTRL the day CTRL was added, which is built
+    the same way contact for contact, and it hid a RAIL on the spine: V3P3 sat
+    opposite a ground until the rail test above moved it to PWR-LOGIC, where a
+    rail belongs."""
     errs = []
     seen = set()
+    supply = rails(d)
     for c in d.connectors:
         if not c.interface or c.interface in seen:
             continue
@@ -846,13 +875,19 @@ def bus_order(d: Design) -> list[str]:
         n = len(nets)
         for i in range(n // 2):
             a, b = nets[i], nets[n - 1 - i]
-            if a != b and not ({a, b} & _RETURN_NETS):
+            if a == b:
+                continue
+            shorted = sorted({a, b} & supply)
+            if shorted or not ({a, b} & _RETURN_NETS):
+                why = (f"{shorted[0]} is a supply rail, so a reversed or "
+                       f"mirrored half SHORTS it to {(a if b == shorted[0] else b) or '-'}"
+                       if shorted else
+                       "neither is a return, so a reversed or mirrored half "
+                       "lands one on the other")
                 errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) reads "
                             f"{'/'.join(x or '-' for x in nets)}: not the same "
                             f"from both ends -- contacts {i + 1}/{n - i} carry "
-                            f"{a or '-'} and {b or '-'}, and neither is a return, "
-                            f"so a reversed or mirrored half lands one on the "
-                            f"other")
+                            f"{a or '-'} and {b or '-'}, and {why}")
                 break
         for i, (a, b) in enumerate(zip(nets, nets[1:]), start=1):
             if a != b and not ({a, b} & _RETURN_NETS):

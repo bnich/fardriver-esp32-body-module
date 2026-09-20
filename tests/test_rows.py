@@ -139,6 +139,25 @@ def test_each_row_is_one_face_of_one_board():
         assert set(e.headers) == {r for r, b in ROW_BOARD.items() if b == e.board}
 
 
+def test_every_class_a_network_sits_at_its_own_terminal():
+    """The conditioning belongs on the board the contact lands on, so only the
+    conditioned signal crosses an interface (plan §4). `netlist.current()`
+    refuses a design where it does not."""
+    assert netlist.class_a_problems(D) == []
+
+
+def test_a_class_a_network_left_on_another_board_is_refused():
+    """The guard is inside `_class_a_parts`' own class, not at a call site: it
+    is the default board that is checked, so an input terminal put on another
+    board cannot silently take its conditioning an interface away."""
+    bad = D.replace_part("R409", board="OUTPUTS")
+    problems = netlist.class_a_problems(bad)
+    assert any("R409" in p and "OUTPUTS" in p and "IN07_BOOST_BTN_WIRE" in p
+               for p in problems), problems
+    # ...and every other network is still clean, so the message names the one.
+    assert len(problems) == 1
+
+
 def test_a_row_is_as_long_as_its_headers_and_the_gaps_between_them():
     """The one figure the fit depends on, by hand for one row: the inputs row is
     J306 (3 × 3.81 + 10.48), J402 (9), J403 (6), J409 and J410 (8 each), with

@@ -76,7 +76,10 @@ def test_each_crossing_carries_what_the_boards_above_it_use(d):
     assert up["GND"] >= 4 and up["V5"] and up["KEY_SENSE"]
     assert set(up) == {"V12", "V5", "KEY_SENSE", "GND"}
     brain = Counter(_nets(_halves(d, "PWR-LOGIC")[0]))
-    assert set(brain) == {"V5", "KEY_SENSE", "GND"}, "LOGIC uses no V12"
+    assert set(brain) == {"V5", "V3P3", "KEY_SENSE", "GND"}, "LOGIC uses no V12"
+    assert brain["V3P3"] == 2, (
+        "the 3.3 V rail goes back DOWN to OUTPUTS on this bus, not on the "
+        "signal spine, and a rail needs two contacts to stay a palindrome")
 
 
 def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):
