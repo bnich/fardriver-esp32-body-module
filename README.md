@@ -84,7 +84,7 @@ single part.
 - ESP-IDF **v5.5**.
 
 Construction path: breadboard → FR4 plated perfboard → custom PCB. The custom build is **three
-stacked 4-layer boards, 48 × 219 mm** — **POWER** (84 V entry, the soft-start, both converters and
+stacked 4-layer boards, 40 × 241 mm** — **POWER** (84 V entry, the soft-start, both converters and
 every FarDriver connector) · **OUTPUTS** (the 12 V drivers, the 5 V aux supply and its switches) ·
 **LOGIC** (the S3 and every input) — with every inter-board interface on the 2.54 mm grid, so a
 breadboard section can stand in for any one board. **Each board owns one row of harness connectors on
@@ -123,15 +123,22 @@ EasyEDA Pro project. No board is laid out yet.
 - **Assembly.** JLC places everything but the two converters and the two input chokes, which are
   hand-soldered, and the parts that must lie flat or clip in, which are ordered loose with the boards
   ([BOM](docs/bom.md#jlc-assembly--the-custom-boards)).
-- ⚠️ **The boards are sized to the design, and the cavity they need is bigger than the estimate.**
-  `python3 -m tools.board_fit` closes every area, pack and row budget on a **48 × 219 mm** board and
-  derives the stack at **62.4 mm of 64.0 available**. The cavity that implies is **233.0 mm along ×
-  74.65 across × 68.4 tall**, against a working estimate of 200 × 50 × 70 — **33.0 mm longer and
-  24.7 mm wider**, with 1.6 mm of height to spare. That is a finding for the cavity measurement
-  (M18), which confirms it or forces a rethink. ⭐ **M18 arms a gate**: while the cavity is an
-  estimate the tool states the excess and passes, but once the cavity is measured a box that cannot
-  hold the design is a **FAIL**, in `board_fit` and in the rules gate alike. The height verdict stays
-  provisional until M18 lands and the all-metal enclosure is modelled.
+- ✅ **The cavity is measured, and the boards are shaped to it.** M18 came back **260 mm along × 70
+  across × 100 tall** (owner, 2026-09-20). The 48 × 219 mm boards did not go in it — they needed
+  74.65 mm across — so **IO-17** re-shapes them to the measurement. That inverts IO-14's search
+  order, which took least length first because length was the axis further over the *estimate*: the
+  measured cavity allows a board **246.0 mm long but only 43.35 mm wide**, so the rule is now to take
+  the narrowest board that still clears every budget by 10 % and spend the abundant length. **IO-18**
+  then stands the width 1.0 mm clear of a packing discontinuity — POWER's top packs into 239.25 mm at
+  38.99 mm of board width and 214.85 mm at 39.00, a 24.4 mm cliff. The result is **40.0 × 241.0 mm**:
+  `python3 -m tools.board_fit` closes every area, pack and row budget on it (row 18.2 %, pack 10.8 %,
+  density 14.6 % of margin) and derives the stack at **62.4 mm of 94.0 available**. The cavity that
+  implies is **255.0 mm along × 66.65 across × 68.4 tall**, inside the measurement by **5.00, 3.35
+  and 31.6 mm**. ⚠️ **Width is the axis with least room** — 3.35 mm, and 19.65 mm of the 66.65 is the
+  plug-and-bend room in front of the connector face, so anything that deepens a harness plug spends
+  it. ⭐ **The gate is live**: `board_fit` and the rules gate now compare a real measurement, so an
+  envelope that outgrows the cavity **FAILS**. The requirement itself is not final — the wall, floor
+  and lid are allowances until the all-metal enclosure is modelled.
 - ⬜ **The EasyEDA project must be re-proven.** Each board has to be re-imported, its netlist
   re-exported from the editor and proven identical with `python3 -m tools.tel_check`; no board of
   the current netlist has been proven yet.

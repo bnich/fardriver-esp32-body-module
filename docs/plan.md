@@ -45,22 +45,22 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
   page is the primary readout** for motor temp, controller temp, bus current, boost mode and lamp-out.
 - ✅ **Controls (D20–D22):** both original bar pods are replaced by bought switch sets — plain class-A dry
   contacts, a 3-position lighting slider, a 3-position turn switch (§2.0).
+- ✅ **M18 measured (owner, 2026-09-20): the cavity is 260 mm along × 70 across × 100 tall**, and the
+  boards are re-shaped to fit it — **40 × 241 mm** (D27/IO-17, IO-18), requiring **255.0 along ×
+  66.65 across × 68.4 tall** with 5.00 / 3.35 / 31.6 mm to spare (§9.2). ⚠️ **Width is the axis with
+  least room.** The cavity comparison is a **gate** now, not a note: an envelope that outgrows the
+  measurement fails.
 
 **⬜ Open:**
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time. With
   the brake cut in firmware (D23) it is also what bounds a lost cut.
 - **M3** — the brake-lever switch type gates `J306`, the lever terminal, and its wire count.
-- **M18** — the enclosure cavity. Gates the enclosure model (§9.7) and confirms the cavity the board
-  envelope requires.
-- ⚠️ **The boards are 48 × 219 mm, and the cavity they require is bigger than M18's estimate**
-  (§9.2). `tools/board_params.py` sizes the boards to the design (D27/IO-14) and states the cavity
-  that implies: **233.0 mm along × 74.65 across × 68.4 tall**, against the working estimate of
-  200 × 50 × 70 — **33.0 mm longer and 24.7 mm wider**, with 1.6 mm of height to spare. That is a
-  finding for M18, which confirms it or forces a rethink; it is not argued away.
+- **The enclosure model (§9.7)** — an all-metal CNC box, not yet drawn. Its wall, floor and lid are
+  allowances until it exists, so the cavity the design requires is checked but not final.
 - **DC-DC #1's dissipation at the real 101.7 W load** — unverified, ~10 W derived; measure it before
   any thermal budget is trusted (§3.2.3, owner item 4, at 8.5 A).
 - Measurements: **M2 · M3 · M8 · M9 · M10** (bench session), M14 current at exactly 12 V, M15, M17,
-  M18, M19.
+  M19.
 
 **⭐ CRITICAL PATH (every step is display-independent, D19):**
 
@@ -69,7 +69,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 | **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Block F is not in this order — it parks with D11 |
 | **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ✅ **right pod in hand 2026-09-12 — its lighting slider measured `OFF / A / A+B`, which is what D21's decode needs (§2.0)** — procedure: **`inputs-bench-session.md`** | Gates the input conditioning (**block C**) and the firmware's input map. Needs the *bike*, not the parts. ⚠️ **M3** (unpowered lever-type check) gates `J306`: a three-wire Hall lever adds a supply pin to the terminal |
 | **3** | ⬜ **Firmware** — lighting lookup (§7), read-the-slider-at-boot, the **≤300 ms** watchdog, the brake function (cut, lamp, kill), the **key-off aux shed** (D27/IO-16), boost HOLD/TOGGLE, the **WiFi status page** | The brake cut and the brake lamp are firmware (D23), and `Q101`'s key-off SOA margin depends on the shed (§3.2.5). The WiFi page is the only readout for temps, bus current, boost mode and lamp-out |
-| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ⬜ **M18** (the cavity) confirms the enclosure the 48 × 219 mm boards require |
+| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ✅ **M18 measured the cavity at 260 × 70 × 100** (2026-09-20) and the boards are shaped to it, **40 × 241 mm** (§9.2); ⬜ the enclosure model is what remains |
 
 ## Contents
 
@@ -921,7 +921,7 @@ this bike**, **a floating reference lies**, and **"it fits so it must be right"*
 | M15 | Proto-board geometry, on arrival: (a) DevKit header rows centre-to-centre — expect **0.9" (22.86 mm)**; (c) **copper weight** (1 vs 2 oz — sets the ~2.4 A vs ~3.6 A trace limit, §9.6.2); (d) meter top-to-bottom continuity to see whether plated through-holes join the layers | calipers + ohmmeter | ⬜ |
 | M16 | ⏸️ **Answered, then parked (D19).** The Chaojie never ACKs: 17 bitrates (10K–1M), standard and extended IDs, TEC pinned at 128, 0 ACKs, panel silent — with the bus proven one node at **68 Ω** at the breakout, grounds bonded, the display's transceiver proven live, and the rig validated (loopback 8/8 correct · 0/8 disconnected · 0/8 reversed). The vendor says the panel speaks **FarDriver CAN 18** by default, so it reads as a **receive-only node** (confidence MEDIUM): the module transmits in `TWAI_MODE_NO_ACK` and the remaining gap is the **CAN 18 byte map (D8)**. 📄 `can18-investigation.md` — ⛔ its §4.1 pre-flight gate is mandatory before any CAN bench work | MSO5074 + ohmmeter + a CAN node | ⏸️ parked |
 | M17 | **Transients on the 84 V node.** MSO5074 on the module's B+ tap, referenced to controller B−. Capture (i) hard acceleration at the 80 A cap, (ii) **a deliberate key-off under load** — the case `Q101`'s SOA turns on (§3.2.5) — (iii) XT90-S mate/unmate with the key OFF. Record worst peak voltage, current into the clamp, duration, and the decay's shape. Expectation (§3.2.1): nothing near the `SMCJ90A`'s rated 10.3 A (~7.4 A at 60 °C) at its 146 V clamp. Does not block ordering | MSO5074 + current probe | ⬜ |
-| M18 | **The enclosure cavity** — the old-controller cavity under the battery compartment, where the three-board stack lives (§9.2). Usable length; width **at the narrowest point along the run**; clear height **along the whole run**, floor to the underside of the battery tray; what the floor is made of and whether it sees moving air; where cables can exit; any intrusion partway along. Working estimate: **200 × 50 × 70 mm.** ⚠️ **The design requires 233.0 × 74.65 × 68.4 mm** (§9.2) — 33.0 mm longer and 24.7 mm wider than that estimate. M18 confirms the requirement or forces a rethink; it no longer sizes the boards. ⭐ **This measurement arms a gate**: once it is entered and `CAVITY_MEASURED` is set, `board_fit` and the rules gate FAIL a cavity that cannot hold the design (§9.2) | tape + calipers | ⬜ |
+| M18 | ✅ **Closed — measured by the owner 2026-09-20.** The old-controller cavity under the battery compartment, where the three-board stack lives (§9.2), is **260 mm along × 70 across × 100 tall**. The go/no-go came back **go, after a re-shape**: the 48 × 219 mm boards needed 74.65 mm across, which the cavity does not have, so they are **40 × 241 mm** now (D27/IO-17, IO-18) and the design requires **255.0 × 66.65 × 68.4 mm** — inside the measurement by 5.00, 3.35 and 31.6 mm. ⚠️ **Width is the axis with least room**, and 19.65 mm of its 66.65 is the plug-and-bend room in front of the connector face. ⭐ **The gate is live**: `CAVITY_MEASURED` is set, so `board_fit` and the rules gate now **FAIL** a design the measured cavity cannot hold (§9.2). ⬜ Still to come from the same cavity, and not part of the envelope: what the floor is made of and whether it sees moving air, where cables can exit and what the exit costs, and any intrusion partway along | tape + calipers | ✅ |
 | M19 | **Part heights that set each gap in the stack** (§9.2) — **the inter-board connector family first: its mated pairs sit in three of the four gaps and, once chosen, set them**; then every part not yet read from a manufacturer drawing. Read so far: CM chokes `7448023005` and `7448022010` **22.0 mm** tall (18.0 × 14.0 mm footprint); `IXTA26P20P` 4.83 mm (TO-263); the Y2 discs upright 15.5–16.5 mm, so they lie **flat** (5.0 mm); the harness headers **7.00 mm** (Kefa 3.50 mm), **7.25 mm** (Kangnex 3.81 mm), **8.30 mm** (Kangnex 5.08 mm) and **8.60 mm** (Kefa 7.62 mm) tall; the Schurter `FAC 0031.3803` holder is a **47.5 mm vertical** part and cannot go in the stack (§9.5.2) | datasheets + calipers | ◐ |
 
 ## 6. Outputs
@@ -1557,7 +1557,7 @@ During P0/P1 the diagnostic channels are USB serial and the WiFi page.
 | **D22** | Turn-signal control | **A push-push latch whose button self-centres, with auto-cancel** — a fact of the bought left pod, in hand 2026-09-11 | ⭐ **It is a PUSH-PUSH (alternate-action) latch whose BUTTON SELF-CENTRES:** push left → latched left, the button springs back; press again to unlatch. **The latch is electrical and hidden, so the switch has NO visible state** — the dash telltale is the only indicator, and that is what auto-cancel exists to compensate for. ✅ **Auto-cancel: 20 s above 15 km/h, or 60 s regardless.** ⭐ **Implement on EDGES, not levels:** `open→closed` starts · `closed→open` stops · **auto-cancel stops the lamp and marks that latch cycle spent** so the still-closed contact cannot restart it · the next `open→closed` is a fresh signal. ⛔ **A latch state machine is required** — press = on · same side = off · **press opposite = switch sides**, a real firmware case since both sides latch independently. ⚠️ **Auto-cancel depends on speed from the serial link** — degrade to the 60 s timeout alone when speed is unavailable. ✅ Also confirmed on this pod: **horn momentary · hazard latching · high/low 2-position.** ⭐ **The rear headlight-marked momentary is the natural flash-to-pass** — IN-09 |
 | ⭐ **D23** | Does the brake light depend on firmware? | **Yes — firmware.** The module has **no dedicated circuits**: the brake cut, the brake lamp and the run/off kill are ordinary I/O like everything else | ✅ **DECIDED 2026-09-19 (owner):** *"Which systems have dedicated circuits like brakes? I'm thinking we get rid of those and just use simple input/output like everything else."* Chosen over moving the circuit into an external brake box and over keeping it on the module. **The design:** the levers are class-A contacts on **native** pins, read on an interrupt (IN-05/06) · `BL` is an **open-drain** output, `Q106` with a fitted 10 kΩ gate pull-down · the STOP lamp is an ordinary `TPS4H160B` channel on GPIO19 · the run/off toggle is a plain contact the firmware treats as a kill slot (IN-11). ⚠️ **With the firmware not running the cut is RELEASED and the lamp is OFF** — the owner's choice, *the bike always drives* (D27/IO-9). **Accepted consequence:** a hang or restart while braking loses both for up to ~0.8 s, and a dead or unflashed module loses them entirely, with nothing to warn the rider. **The one hardware kill is the key switch** (D24, D10). **Consequences:** the steering diodes, Q1, Q2 and their networks are **deleted, not moved** · the lever arrays drop from the 15 V `SMS15T1G` to the 5 V `SMS05T1G` (§6.2.4) · a lever cuts the motor as a **fixed guarantee** the configuration UI cannot unbind · rule `LISTEN` is deleted with the circuit. **Gate:** **M3** still sets `J306`'s size (§5) |
 | **D25** | How is the custom board flashed and serviced? | **A Tag-Connect TC2030-NL land on UART0 (`J408`) — no USB port** | **DECIDED 2026-09-19 (owner):** *"is the usb port for initial load of the firmware? if so, lets change that to a TC2030-MCP-NL."* The USB-C carried first load, the console and recovery when OTA fails. The `TC2030-MCP-NL` itself is Microchip's ICSP cable (MCLR / VDD / GND / PGD / PGC to an RJ-12), which cannot program an ESP32, so the land is the same TC2030-NL footprint wired for UART0 in the ESP-Prog's order, reached with a `TC2030-IDC-NL` cable (bom A8). It replaces both the USB-C and the pin header, and with them the CC resistors, the VBUS sense divider, both USB ESD parts and the 22 Ω pair; GPIO19/20 join the pool (§9.8.1). Later updates go over WiFi OTA |
-| ⭐ **D27** | **I/O by rows, aux outputs, three boards** — the shape of the module's I/O and of the board set | **Plain channels only, grouped by kind in rows on one face, on three boards** | ✅ **DECIDED 2026-09-19 (owner), with IO-16 added 2026-09-20.** Sixteen numbered sub-decisions, **IO-1…IO-16**, which the tools cite by number. **IO-1** 4 × 12 V + 4 × 5 V aux outputs (*"buying more TPS4H160B is fine"*) · **IO-2** 1 A each, all eight on together · **IO-3** they leave on pluggable screw terminals like the rest of the harness · **IO-4** grouped **by kind, in rows** (*"I want all 12v and 5v outputs to be together … And Inputs row, a 12v row, a 5v row"*) · **IO-5** a fourth row, **CTRL**: the pack plug, the FarDriver links, the parked display · **IO-6** the rows stack on **one face**, each row the edge of one board · **IO-7** **three boards — POWER · OUTPUTS · LOGIC** (§9.2) · **IO-8** **no dedicated circuits** — this is **D23** · **IO-9** `BL` **released** when the firmware is not running · **IO-10** a ≥ 3 A input choke and a 3 A tap fuse, and the converter's heat measured at the new load, rather than a firmware cap on the aux total (§3.2.3) · **IO-11** the 12 V brick moves to POWER's underside and **bolts to the box floor through a thermal pad — the floor is the heatsink**; BD-9's alloy plate is removed (§9.7) · **IO-12** the 5 V outputs keep `TPS2553` switches with an `SMF6.0A` and a **recorded residual risk**, rather than eFuses at ~4× the area (§6.2.2b) · **IO-13** the choke is Würth **`7448023005`**, hand-soldered (§3.2.6) · **IO-14** **the boards are sized to the design, not to the cavity estimate** (*"we have the ability to increase the board size if we need to"*); `tools/board_params.py` states the cavity that implies and M18 confirms it (§9.2) · **IO-15** the parked display and one-line connectors **stay** · **IO-16** (2026-09-20) **the firmware releases every aux output at key-off**, and `Q101`'s SOA margin depends on it (§3.2.5) |
+| ⭐ **D27** | **I/O by rows, aux outputs, three boards** — the shape of the module's I/O and of the board set | **Plain channels only, grouped by kind in rows on one face, on three boards** | ✅ **DECIDED 2026-09-19 (owner), with IO-16, IO-17 and IO-18 added 2026-09-20.** Eighteen numbered sub-decisions, **IO-1…IO-18**, which the tools cite by number. **IO-1** 4 × 12 V + 4 × 5 V aux outputs (*"buying more TPS4H160B is fine"*) · **IO-2** 1 A each, all eight on together · **IO-3** they leave on pluggable screw terminals like the rest of the harness · **IO-4** grouped **by kind, in rows** (*"I want all 12v and 5v outputs to be together … And Inputs row, a 12v row, a 5v row"*) · **IO-5** a fourth row, **CTRL**: the pack plug, the FarDriver links, the parked display · **IO-6** the rows stack on **one face**, each row the edge of one board · **IO-7** **three boards — POWER · OUTPUTS · LOGIC** (§9.2) · **IO-8** **no dedicated circuits** — this is **D23** · **IO-9** `BL` **released** when the firmware is not running · **IO-10** a ≥ 3 A input choke and a 3 A tap fuse, and the converter's heat measured at the new load, rather than a firmware cap on the aux total (§3.2.3) · **IO-11** the 12 V brick moves to POWER's underside and **bolts to the box floor through a thermal pad — the floor is the heatsink**; BD-9's alloy plate is removed (§9.7) · **IO-12** the 5 V outputs keep `TPS2553` switches with an `SMF6.0A` and a **recorded residual risk**, rather than eFuses at ~4× the area (§6.2.2b) · **IO-13** the choke is Würth **`7448023005`**, hand-soldered (§3.2.6) · **IO-14** **the boards are sized to the design, not to the cavity estimate** (*"we have the ability to increase the board size if we need to"*); `tools/board_params.py` states the cavity that implies (§9.2) · **IO-15** the parked display and one-line connectors **stay** · **IO-16** (2026-09-20) **the firmware releases every aux output at key-off**, and `Q101`'s SOA margin depends on it (§3.2.5) · **IO-17** (2026-09-20) ⭐ **M18 came back measured and the boards are re-shaped to fit it** — 48 × 219 mm needed 74.65 mm across against a cavity 70 mm wide, so IO-14's search order **inverts**: fit the measured cavity, then take the **narrowest** board that clears every budget by 10 %, spending the length the measurement made abundant (§9.2) · **IO-18** (2026-09-20) the envelope is **40 × 241 mm**, standing 1.0 mm clear of a packing step where POWER's top face falls 24.4 mm at exactly 39.00 mm of board width (§9.2) |
 
 ## 9. Component breakdown and build plan
 
@@ -1691,34 +1691,53 @@ upright, and the height budget needs these lying down. `python3 -m tools.jlc_bom
 
 #### The envelope, and the cavity it requires
 
-⚠️ **The boards are sized to the design, not cut out of a cavity estimate** (D27/IO-14). Every
-number below comes from `python3 -m tools.board_fit` and `tools/board_params.py`; nothing here is
-typed twice.
+⚠️ **The boards are sized to the design, then shaped to fit the measured cavity** (D27/IO-14,
+IO-17, IO-18). Every number below comes from `python3 -m tools.board_fit` and
+`tools/board_params.py`; nothing here is typed twice.
 
-**The boards are 48 × 219 mm**, 4-layer. Length is set by the longest row — POWER's face packs
-197.0 mm of headers end to end — and width by the tightest shelf-pack, with about 10 % of margin on
-each. The other rows: LOGIC 185.9 mm, OUTPUTS' 12 V row 166.9 mm, its 5 V row 38.4 mm. Body density
-runs 59 % on POWER's top face and under 30 % everywhere else, against a 75 % ceiling.
+**The boards are 40 × 241 mm**, 4-layer. **Length is set by the shelf-pack**, not by a row: POWER's
+top face packs into 214.85 mm against a 216.90 mm limit, 10.8 % of margin. The longest row is no
+longer binding — POWER's face stands 197.04 mm of headers end to end against the same 216.90 mm,
+18.2 % of slack. The other rows: LOGIC 185.9 mm, OUTPUTS' 12 V row 166.9 mm, its 5 V row 38.4 mm.
+Body density runs **64 %** on POWER's top face, 37 % on its underside and under 30 % everywhere else,
+against a 75 % ceiling — 14.6 % of margin.
 
-⚠️ **The cavity that envelope requires is bigger than M18's working estimate, and this is a finding
-for M18, not a failure of the design:**
+⚠️ **Width is the axis with least room, and it is why the boards are this shape.** M18 measured the
+cavity at **260 along × 70 across × 100 tall** (2026-09-20), and the previous 48 × 219 mm boards
+needed 74.65 mm across — 4.65 more than the bike has. **IO-17 re-shapes them to the measurement, and
+inverts IO-14's search order**: that order took least length first *because* length was the axis
+further over the estimate, and the measurement makes length the abundant one — it allows a board
+**246.0 mm long and only 43.35 mm wide**. The rule is now *fit the measured cavity, then take the
+narrowest board that clears every budget with the 10 % margin, spending the abundant length.*
 
-| | Required | M18's estimate | Excess |
+⚠️ **IO-18 then buys 1.0 mm of width to stand clear of a packing cliff.** POWER's top packs into
+239.25 mm at 38.99 mm of board width and **214.85 mm at 39.00** — a 24.4 mm step, because `C203`–
+`C206` are 19.50 mm across with their courtyards and two share one shelf only at 19.50 + 19.50 =
+39.00 exactly. 40.0 mm sits 1.0 mm above the step, which also lifts the pack margin from 0.25 mm to
+2.05 mm. ⛔ **The step is a live constraint on those four caps and on `COURTYARD`**, not a historical
+note: `tests/test_board_params.py` derives it from the packer on every run and fails when it comes
+within 1.0 mm of `BOARD_W`, so a body that grows is caught instead of silently re-shaping both plan
+axes.
+
+**The cavity that envelope requires, against the measurement:**
+
+| | Required | M18, measured | Spare |
 |---|---|---|---|
-| along the bike | **233.0 mm** | 200 | **+33.0 mm** |
-| across (the sensitive axis) | **74.65 mm** | 50 | **+24.7 mm** |
-| tall | **68.4 mm** | 70 | 1.6 mm to spare |
+| along the bike | **255.0 mm** | 260 | 5.00 mm |
+| across (⚠️ the axis with least room) | **66.65 mm** | 70 | **3.35 mm** |
+| tall | **68.4 mm** | 100 | 31.6 mm |
 
 Across is the board, 3 mm of wall each side, 1 mm to drop it in past the far side, and **19.65 mm in
 front of the connector face** — the deepest mated plug's 9.65 mm past its header, then a 10 mm bend
-in the wire. Along is the board plus wall and 4 mm of drop-in room at each end. ⬜ M18 confirms these
-or forces a rethink.
+in the wire. ⚠️ That 19.65 mm is **19.65 of the 66.65**, so anything that deepens a harness plug
+comes straight out of the 3.35 mm of width slack. Along is the board plus wall and 4 mm of drop-in
+room at each end. ⬜ The requirement is checked but not final: the wall, floor and lid are allowances
+until the enclosure's model sets them.
 
-⭐ **The check arms when M18 lands.** While the cavity is an estimate, `board_fit` states the
-requirement and the excess and passes — there is nothing yet to hold the design to. The moment the
-cavity is measured and `CAVITY_MEASURED` is set, `board_params.cavity_problems()` and the rules
-gate's `HT-CAVITY` compare the two, and a cavity that cannot hold the design is a **FAIL**, not a
-paragraph. That is why M18 is a gate and not a confirmation.
+⭐ **The check is live.** `board_params.cavity_problems()` and the rules gate's `HT-CAVITY` compare
+the requirement against a real measurement, so an envelope the cavity cannot hold is a **FAIL** in
+`python3 -m tools.board_fit` and in `python3 -m tools.rules`, not a paragraph. `stack_height` fails
+the same way on the tall axis.
 
 **The stack's height is derived, never typed**, from the netlist's own part and connector heights.
 With 1.6 mm boards and 1.0 mm of clearance, solder tails are per part: long leads are trimmed to
@@ -1730,7 +1749,7 @@ With 1.6 mm boards and 1.0 mm of clearance, solder tails are per part: long lead
 | POWER → OUTPUTS | 25.1 | the 22.0 mm chokes standing on POWER, and `J314`'s 7.0 mm hanging under OUTPUTS |
 | OUTPUTS → LOGIC | 11.0 | `J313` 7.2 mm up, and LOGIC's header pins 2.1 mm down |
 | LOGIC → lid | 8.2 | `J410` at 7.2 mm |
-| **used** | **62.4 of 64.0** | 1.6 mm spare — ⚠️ provisional until M18 and the enclosure model |
+| **used** | **62.4 of 94.0** | 31.6 mm spare, against a measured 100 mm cavity less the floor and lid — ⬜ both still allowances until the enclosure model |
 
 ⚠️ **`J314` is a placement constraint, not just a height.** The 5 V terminal hangs **7.0 mm under
 OUTPUTS**, so **nothing on POWER taller than 17.1 mm may sit beneath it** — which rules out `L101`,
