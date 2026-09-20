@@ -43,11 +43,41 @@ def gap(stack, below, above):
 
 # --- parameters ----------------------------------------------------------------
 def test_the_envelope_the_pcb_outline_is_cut_to():
-    # Hand-stated: 50 - 2x3 - 2x1 = 42 wide, 200 - 2x3 - 2x4 = 186 long,
-    # 70 - 3 - 3 = 64 tall. The PCB emitter draws BOARD_W x BOARD_L, so a
-    # change here is a change to a manufactured outline and must be meant.
-    assert (bp.BOARD_W, bp.BOARD_L, bp.AVAIL_H) == (42.0, 186.0, 64.0)
-    assert bp.BOARD_AREA == 42.0 * 186.0
+    # IO-14: the board is the DESIGN's requirement, not a slice of the cavity
+    # estimate, so these two are typed. 48 x 219 = 10512 mm². The PCB emitter
+    # draws BOARD_W x BOARD_L, so a change here is a change to a manufactured
+    # outline and must be meant -- and it must come from re-running the search
+    # in the file's comment, never from nudging a budget closed.
+    assert (bp.BOARD_W, bp.BOARD_L) == (48.0, 219.0)
+    assert bp.BOARD_AREA == 48.0 * 219.0 == 10512.0
+    # Height is still cut from the estimate: 70 - 3 floor - 3 lid = 64.
+    assert bp.AVAIL_H == 70.0 - 3.0 - 3.0 == 64.0
+
+
+def test_the_board_length_holds_the_longest_row_with_room_to_spare():
+    """The row is arithmetic, not a heuristic, so it is what BOARD_L answers to.
+    POWER top's five headers are 55.88 + 25.4 + 35.56 + 20.32 + 55.88 = 193.04
+    of body and four 1 mm gaps = 197.04 mm. 197.04 / 219.0 = 90.0 % of the
+    board, so the row clears it by 21.96 mm -- 14.0 mm of which the four M3
+    corners take (2 x 2 x 3.5 mm inset at each end of the row)."""
+    from tools import board_fit as bf, netlist
+    longest = max(e.length_mm for e in bf.edge_budget(netlist.current()))
+    assert longest == pytest.approx(197.04)
+    assert longest <= 0.90 * bp.BOARD_L
+    assert bp.BOARD_L - longest > 4 * bf.M3_INSET_MM
+
+
+def test_the_cavity_the_envelope_requires_is_stated_for_m18():
+    """⬜ A requirement on the enclosure, not a measurement of the bike.
+    Across: 48 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in front
+    of the connector face = 74.65. Along: 219 + 2 x 3 + 2 x 4 = 233.0. Tall: the
+    DERIVED stack + 3 floor + 3 lid."""
+    assert bp.CAVITY_REQUIRED_W == pytest.approx(74.65)
+    assert bp.CAVITY_REQUIRED_L == pytest.approx(233.0)
+    d = three_boards()                                   # 52.0 mm of stack
+    assert bp.cavity_required(d) == pytest.approx((233.0, 74.65, 52.0 + 6.0))
+    # ...and it is honest about exceeding the estimate rather than matching it.
+    assert bp.CAVITY_REQUIRED_W > bp.CAVITY_W and bp.CAVITY_REQUIRED_L > bp.CAVITY_L
 
 
 def test_both_budgets_say_they_are_provisional():
@@ -318,37 +348,94 @@ def test_a_dnp_part_still_needs_its_room():
     assert gap(bp.stack_height(d), "OUTPUTS", "LOGIC").top_ref == "D406"
 
 
-# --- the envelope verdict is provisional until the envelope is a fact --------
-def _real():
+# --- the connector face (IO-6) ------------------------------------------------
+def test_the_face_room_is_the_deepest_plug_and_its_bend():
     from tools import netlist
-    return netlist.current()
+    d = netlist.current()
+    deepest = max(c.overhang_mm for c in d.connectors if c.leaves_box and not c.dnp)
+    assert bp.face_room(d) == pytest.approx(deepest + bp.WIRE_BEND)
 
 
-def test_an_overrun_against_an_estimated_envelope_is_loud_but_not_a_failure(monkeypatch):
-    from tools import board_params as bp
-    monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
-    tall = bp.stack_height(_real())
-    if tall.total_mm <= tall.avail_mm:
-        pytest.skip("the real stack fits the estimate; nothing to report")
+def test_the_typed_face_room_matches_the_netlist():
+    """FACE_ROOM is typed once so the outline and the budgets can use it as a
+    constant; this is what keeps it honest. Today the deepest fitted plug is
+    J101's Kefa 7.62, 9.65 mm past its header: 9.65 + 10.0 bend = 19.65."""
+    from tools import netlist
+    assert bp.FACE_ROOM == pytest.approx(19.65)
+    assert bp.FACE_ROOM == pytest.approx(bp.face_room(netlist.current()))
+
+
+def test_an_unfitted_plug_does_not_set_the_face_room():
+    """A DNP terminal is laid out but nothing is plugged into it, so no plug of
+    its stands in front of the face. J405 is parked and DNP: a 40 mm overhang on
+    it must not move the answer; on a fitted one it would."""
+    from tools import netlist
+    d = netlist.current()
+    assert bp.face_room(d.replace_connector("J405", overhang_mm=40.0)) \
+        == pytest.approx(bp.FACE_ROOM)
+    assert bp.face_room(d.replace_connector("J101", overhang_mm=40.0)) \
+        == pytest.approx(50.0)
+
+
+def test_a_harness_header_hanging_under_outputs_sets_the_gap_below_it():
+    from tools import netlist
+    d = netlist.current()
+    tall = d.replace_connector("J314", height_mm=20.0, height_confirmed=True)
+    gap = next(g for g in bp.layer_gaps(tall) if (g.below, g.above) == ("POWER", "OUTPUTS"))
+    assert gap.hang_mm >= 20.0 and gap.gap_mm >= 20.0 + bp.CLEARANCE
+
+
+def test_a_harness_terminal_under_a_board_gets_a_keep_out_like_a_part():
+    """BD-14 on connectors, not just parts. J314 hangs 7.0 mm under OUTPUTS into
+    the POWER->OUTPUTS gap, which L102's 22.0 mm choke + 1.0 clearance + the
+    2.1 mm of J402's pins through OUTPUTS set to 25.1 mm. So 25.1 - 7.0 - 1.0 =
+    17.1 mm is the tallest thing that may stand under it, and the chokes do
+    not qualify."""
+    from tools import netlist
+    stack = bp.stack_height(netlist.current())
+    note = next(n for n in stack.notes if n.startswith("keep-out: J314"))
+    assert "hangs 7.0 mm under OUTPUTS" in note
+    assert "taller than 17.1 mm" in note and "L101" in note and "L102" in note
+
+
+def test_the_inter_board_halves_get_no_keep_out_of_their_own():
+    """Each half of a pair faces its own other half by construction, and their
+    mated height IS the gap -- so J311, J312, J406 and J407 hanging under their
+    boards are four notes about nothing."""
+    from tools import netlist
+    stack = bp.stack_height(netlist.current())
+    assert not [n for n in stack.notes
+                if any(n.startswith(f"keep-out: {r}")
+                       for r in ("J311", "J312", "J406", "J407"))]
+
+
+# --- the envelope verdict is provisional until the envelope is a fact --------
+# ⚠️ Built on `three_boards(30.0)`, NOT on the real netlist. These three used to
+# derive their overrun from `netlist.current()` and skip when it fitted, so the
+# wording of the verdict went untested exactly when the design was healthy.
+def test_an_overrun_against_an_estimated_envelope_is_loud_but_not_a_failure():
+    """52.0 mm with the 14.0 mm choke, so 30.0 makes it 68.0 of the 64.0 the
+    estimate leaves: OVER by 4.0."""
+    assert not bp.envelope_is_binding()
+    tall = bp.stack_height(three_boards(30.0))
     assert tall.envelope_verdicts, "an overrun must never vanish silently"
-    assert "OVER by" in tall.envelope_verdicts[0]
+    assert "OVER by 4.0" in tall.envelope_verdicts[0]
+    assert "ESTIMATED envelope" in tall.envelope_verdicts[0]
     assert not any("OVER by" in p for p in tall.problems)
+    assert tall.ok                       # reported loudly, and not a failure
 
 
 def test_the_same_overrun_is_a_failure_once_the_envelope_is_measured(binding_envelope):
-    from tools import board_params as bp
-    tall = bp.stack_height(_real())
-    if tall.total_mm <= tall.avail_mm:
-        pytest.skip("the real stack fits; nothing to fail")
-    assert any("OVER by" in p for p in tall.problems)
+    tall = bp.stack_height(three_boards(30.0))
+    assert any("OVER by 4.0" in p for p in tall.problems)
     assert not tall.envelope_verdicts
+    assert not tall.ok
 
 
-def test_rules_relay_the_provisional_verdict_as_a_warning(monkeypatch):
-    from tools import board_params as bp, rules
-    monkeypatch.setattr(bp, "CAVITY_MEASURED", False)
-    d = _real()
-    if not bp.stack_height(d).envelope_verdicts:
-        pytest.skip("no overrun to relay")
-    assert any(w.startswith("HT-STACK-PROVISIONAL") for w in rules.warnings(d))
+def test_rules_relay_the_provisional_verdict_as_a_warning():
+    from tools import rules
+    d = three_boards(30.0)
+    assert bp.stack_height(d).envelope_verdicts
+    assert any(w.startswith("HT-STACK-PROVISIONAL") and "OVER by 4.0" in w
+               for w in rules.warnings(d))
     assert not any(e.startswith("HT-STACK") for e in rules.check_all(d))

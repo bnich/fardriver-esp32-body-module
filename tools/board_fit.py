@@ -6,7 +6,7 @@ footprint, height, whether that height was ever confirmed -- come from
 `board_params`, which also DERIVES the stack height. This file only adds the
 area arithmetic and says PASS or FAIL.
 
-    python3 -m tools.board_fit          # exit 1: a budget fails · 2: over the ESTIMATED envelope
+    python3 -m tools.board_fit          # exit 1: a budget fails · 2: over the ESTIMATED cavity height
     python3 tools/board-fit.py          # the same
 
 Three budgets, three plain answers:
@@ -20,14 +20,16 @@ Three budgets, three plain answers:
             built, and says so -- the number is not explained away. What
             overrules it is a placed outline, not an argument.
   HEIGHT    `board_params.stack_height`, gap by gap, against the height there.
-  PLUGS     each FACE's harness headers end to end -- one row per face (IO-6),
+  ROWS      each FACE's harness headers end to end -- one row per face (IO-6),
             so a terminal under a board is not summed into the row on top of it
-            -- against the edges of the envelope whose wall is far enough away
-            for a mated plug and the bend of the wire leaving straight out of
-            its back.
+            -- against the length of the board they stand on. The room in front
+            of them, `board_params.FACE_ROOM`, is not a budget here: it is a
+            term of the cavity this design REQUIRES, which the report states.
 
-⚠️ Both are provisional until M18 is measured and the enclosure is chosen;
-the report says so on its first line for as long as that is true.
+⚠️ The HEIGHT verdict is provisional until M18 is measured and the enclosure is
+chosen; the report says so on its first line for as long as that is true. Area,
+pack and rows are not provisional: since IO-14 they are measured against the
+envelope the design itself asks for, which is a fact about the design.
 """
 import sys
 from dataclasses import dataclass
@@ -88,21 +90,42 @@ def bodies(d: Design, board: str, side: str):
     return [(r, w, l) for r, w, l in out if w > 0 and l > 0]
 
 
-def shelf_pack(rects, board_w: float = bp.BOARD_W):
-    """Greedy shelf pack, deepest shelf first. -> (length used, blocker refdes)."""
-    grown = sorted(((max(w, l) + 2 * COURTYARD, min(w, l) + 2 * COURTYARD, ref)
-                    for ref, w, l in rects), key=lambda r: -r[1])
-    x = y = shelf = 0.0
-    for across, along, ref in grown:
-        if across > board_w:
+def shelf_pack(rects, board_w: float | None = None):
+    """Naive first-fit shelf pack. -> (length used, blocker refdes).
+
+    Every body is ORIENTED first -- long side across the board, unless it is
+    longer than the board is wide and has to lie lengthwise -- then the pack is
+    ordered by the shelf depth that orientation gives, deepest first, and each
+    body goes on the first shelf with room across for it.
+
+    ⚠️ Ordering by the depth the orientation gives is the point of the sort.
+    Ordering on the body's short side, as this did until 2026-09-20, puts a body
+    that must lie lengthwise in the MIDDLE of the order: it then opens the
+    deepest shelf of the whole pack after the bodies that could have stood
+    beside it have been placed elsewhere. That is one board-wide connector
+    wasting a shelf the length of itself. On POWER top, whose three biggest
+    bodies are 55.88, 55.88 and 58.42 mm terminals on a 48 mm board, the old
+    order reported 319 mm where these same bodies pack into 195 mm.
+    """
+    width = bp.BOARD_W if board_w is None else board_w
+    placed = []
+    for ref, w, l in rects:
+        across, along = max(w, l) + 2 * COURTYARD, min(w, l) + 2 * COURTYARD
+        if across > width:
             across, along = along, across
-        if across > board_w:
+        if across > width:
             return None, ref
-        if x + across > board_w:
-            y, x, shelf = y + shelf, 0.0, 0.0
-        x += across
-        shelf = max(shelf, along)
-    return y + shelf, ""
+        placed.append((across, along))
+    placed.sort(key=lambda r: -r[1])
+    shelves: list[list[float]] = []            # [width used, depth]
+    for across, along in placed:
+        for shelf in shelves:
+            if shelf[0] + across <= width + 1e-9:
+                shelf[0] += across
+                break
+        else:
+            shelves.append([across, along])
+    return sum(shelf[1] for shelf in shelves), ""
 
 
 def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
@@ -153,23 +176,12 @@ def edge_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Edge, ...]:
     return tuple(out)
 
 
-def edge_verdicts(d: Design) -> list[str]:
-    """A board whose plugs no wall of the envelope has room for. The walls'
-    allowances are provisional (M18, the enclosure), so this is a verdict
-    against an estimate until `envelope_is_binding()`."""
-    out = []
-    for e in edge_budget(d):
-        ends = 2 * bp.BOARD_W if bp.END_ALLOWANCE >= e.room_mm else 0.0
-        sides = 2 * bp.BOARD_L if bp.SIDE_CLEARANCE >= e.room_mm else 0.0
-        if e.length_mm <= ends + sides:
-            continue
-        out.append(
-            f"plugs: {e.face}'s {len(e.headers)} harness headers take "
-            f"{e.length_mm:.0f} mm of edge and need {e.room_mm:.1f} mm to the wall "
-            f"(the mated plug, then the wire's bend); the envelope leaves "
-            f"{bp.END_ALLOWANCE:g} mm at each end ({2 * bp.BOARD_W:.0f} mm of edge) "
-            f"and {bp.SIDE_CLEARANCE:g} mm at each side ({2 * bp.BOARD_L:.0f} mm)")
-    return out
+def face_verdicts(d: Design) -> list[str]:
+    """Each board's harness headers are one row on the connector face (IO-6):
+    the row must fit the board's length."""
+    return [f"row: {e.board}'s {len(e.headers)} harness headers take "
+            f"{e.length_mm:.0f} mm of the face; the board is {bp.BOARD_L:.0f} mm long"
+            for e in edge_budget(d) if e.length_mm > bp.BOARD_L]
 
 
 def unseen(d: Design, order=bp.STACK_ORDER) -> list[str]:
@@ -201,8 +213,10 @@ def problems(d: Design) -> list[str]:
     errs += [f"area: {what} has no footprint -- the area budget cannot see it"
              for what in unseen(d)]
     errs += bp.stack_height(d).problems
-    if bp.envelope_is_binding():
-        errs += edge_verdicts(d)
+    # Not gated on `envelope_is_binding`: a row longer than the board it stands
+    # on is a failure of the design against its OWN envelope (IO-14), and
+    # nothing M18 can measure makes it not one.
+    errs += face_verdicts(d)
     return errs
 
 
@@ -212,11 +226,28 @@ def report(d: Design) -> str:
     if not bp.ENCLOSURE_DECIDED:
         caveats.append("enclosure not chosen: wall, floor and lid are allowances")
     if caveats:
-        out.append("⚠️ PROVISIONAL -- " + "; ".join(caveats) + ".")
-    out.append(f"cavity {bp.CAVITY_L:.0f} x {bp.CAVITY_W:.0f} x {bp.CAVITY_H:.0f} mm   "
-               f"board {bp.BOARD_W:.0f} x {bp.BOARD_L:.0f} = {bp.BOARD_AREA:.0f} mm² "
+        out.append("⚠️ THE HEIGHT VERDICT IS PROVISIONAL -- "
+                   + "; ".join(caveats) + ". Area, pack and rows are not: "
+                   "they are measured against the envelope the design "
+                   "itself requires (IO-14).")
+    req_l, req_w, req_h = bp.cavity_required(d)
+    out.append(f"board {bp.BOARD_W:.0f} x {bp.BOARD_L:.0f} = {bp.BOARD_AREA:.0f} mm² "
                f"({MOUNT_AREA:.0f} mm² of it under the four M3 corners)   "
-               f"height {bp.AVAIL_H:.1f} mm\n")
+               f"height available {bp.AVAIL_H:.1f} mm")
+    out.append(f"CAVITY REQUIRED (IO-14)   {req_l:.1f} along x {req_w:.2f} across x "
+               f"{req_h:.1f} tall -- the board, {bp.WALL:g} mm of wall, "
+               f"{bp.SIDE_CLEARANCE:g} mm to drop in past the far side, "
+               f"{bp.FACE_ROOM:.2f} mm in front of the connector face, "
+               f"{bp.END_ALLOWANCE:g} mm at each end, floor and lid.")
+    est = (f"⬜ NOT MEASURED -- M18's estimate is {bp.CAVITY_L:.0f} x {bp.CAVITY_W:.0f} "
+           f"x {bp.CAVITY_H:.0f} mm")
+    over = [f"{name} by {need - have:.1f} mm"
+            for name, need, have in (("along", req_l, bp.CAVITY_L),
+                                     ("across", req_w, bp.CAVITY_W),
+                                     ("tall", req_h, bp.CAVITY_H)) if need > have]
+    out.append(est + (f"; the requirement EXCEEDS it {', '.join(over)}. That is a "
+                      f"finding for M18, not a failure of the design.\n" if over
+                      else "; the requirement fits inside it.\n"))
 
     out.append(f"AREA   density = bodies / usable side, FAIL above {DENSITY_LIMIT:.0%}.   "
                f"pack = naive shelf-pack, {COURTYARD} mm courtyard, FAIL when longer "
@@ -281,19 +312,18 @@ def report(d: Design) -> str:
             out.append(f"  {'⭐' if starred else '  '} {board:6} {h:5.1f} mm  "
                        f"{what}: {' '.join(refs)}")
 
-    out.append(f"\nPLUGS   one row per FACE (IO-6): its harness headers end to end, "
-               f"{HEADER_GAP:g} mm apart; room = the deepest mated plug + a "
-               f"{bp.WIRE_BEND:g} mm wire bend")
+    out.append(f"\nROWS   one row per FACE (IO-6): its harness headers end to end, "
+               f"{HEADER_GAP:g} mm apart, along a {bp.BOARD_L:.0f} mm board. The face "
+               f"needs {bp.FACE_ROOM:.2f} mm in front of it (the deepest mated plug, "
+               f"then a {bp.WIRE_BEND:g} mm wire bend), which is in the cavity above.")
     for e in edge_budget(d):
-        out.append(f"  {e.board:7} {e.side:6} {e.length_mm:5.0f} mm of edge, "
-                   f"{e.room_mm:4.1f} mm to the wall   {' '.join(e.headers)}")
-    edges = [] if bp.envelope_is_binding() else edge_verdicts(d)
+        fits = ("fits" if e.length_mm <= bp.BOARD_L else
+                f"⛔ DOES NOT FIT ({e.length_mm - bp.BOARD_L:.0f} mm over)")
+        out.append(f"  {e.board:7} {e.side:6} {e.length_mm:6.1f} mm of row, "
+                   f"{e.room_mm:5.2f} mm in front   {fits:12} {' '.join(e.headers)}")
 
     errs = problems(d)
     out.append("")
-    for verdict in edges:
-        out.append(f"⚠️  PROVISIONAL -- {verdict}. Binding the moment M18 and the "
-                   f"enclosure are settled")
     for verdict in stack.envelope_verdicts:
         out.append(f"⚠️  PROVISIONAL -- {verdict}")
         if stack.total_mm > bp.CAVITY_H:
@@ -304,7 +334,7 @@ def report(d: Design) -> str:
     if errs:
         out.append(f"⛔ FAIL -- {len(errs)} problem(s)")
         out += [f"  - {e}" for e in errs]
-    elif stack.envelope_verdicts or edges:
+    elif stack.envelope_verdicts:
         out.append("⚠️  NOT A PASS -- the design overruns the ESTIMATED envelope. It is "
                    "not a failure only because the envelope is not yet a fact.")
     else:
@@ -320,8 +350,10 @@ def main(argv=None, d: Design | None = None) -> int:
     print(report(d))
     if problems(d):
         return 1
-    # 2 = over the ESTIMATED envelope: not a failure yet, and never a pass.
-    return 2 if bp.stack_height(d).envelope_verdicts or edge_verdicts(d) else 0
+    # 2 = over the ESTIMATED cavity's height: not a failure yet, and never a
+    # pass. The plan budgets no longer land here -- since IO-14 they are
+    # measured against the design's own envelope, so they fail outright.
+    return 2 if bp.stack_height(d).envelope_verdicts else 0
 
 
 if __name__ == "__main__":

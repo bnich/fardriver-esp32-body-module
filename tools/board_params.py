@@ -12,9 +12,21 @@ Two kinds of thing live here and they are kept apart on purpose:
               connectors, so a height changed in the netlist moves the stack
               the same day, and a ceiling nobody re-derived cannot exist.
 
-⚠️ BOTH BUDGETS ARE PROVISIONAL, twice over:
-  * M18 is not measured. The cavity is the owner's estimate. Width is the
-    sensitive axis: roughly 25-30 mm of usable board length per 10 mm of width.
+⚠️ IO-14 INVERTED THE WIDTH DERIVATION. The boards used to be cut out of the
+cavity estimate. They are now sized to the DESIGN -- owner, 2026-09-19: "we have
+the ability to increase the board size if we need to" -- and this file states
+the cavity that implies, as a REQUIREMENT on the enclosure. `CAVITY_*` is still
+here, still the owner's unmeasured estimate, and no longer an input to anything:
+M18 confirms the requirement or forces a rethink, instead of the design failing
+against a guess.
+
+⚠️ WHAT IS STILL PROVISIONAL, and what is not:
+  * The HEIGHT verdict is. It is the one budget still read against the cavity
+    ESTIMATE (AVAIL_H), so an overrun is reported loudly and cannot fail the
+    design until `envelope_is_binding()`.
+  * The plan budgets are not. Area, pack and rows answer to BOARD_W x BOARD_L,
+    which is the design's own requirement -- a fact about the design.
+  * ⬜ CAVITY_REQUIRED_* is neither: it is a requirement M18 has yet to confirm.
   * The enclosure is an all-metal CNC box, but its model does not exist yet:
     wall, floor and lid are ALLOWANCES that the model's thicknesses replace.
 When either lands: edit the block, flip the flag, run `python3 -m tools.board_fit`.
@@ -25,7 +37,11 @@ from dataclasses import dataclass
 
 from .model import Connector, Design, Part
 
-# --- M18: the cavity -------------------------------------------------------
+# --- M18: the cavity, as ESTIMATED -----------------------------------------
+#: ⬜ The owner's estimate of the space under the seat. Since IO-14 it sizes
+#: NOTHING: the envelope below is the design's own requirement, and
+#: CAVITY_REQUIRED_* says what the enclosure has to be. These three are what M18
+#: will replace, and what the requirement is reported against.
 CAVITY_L = 200.0   # mm, along the bike
 CAVITY_W = 50.0    # mm, across -- ⚠️ the sensitive axis
 CAVITY_H = 70.0    # mm, floor to the underside of the battery tray
@@ -34,22 +50,82 @@ CAVITY_MEASURED = False   # ⛔ still an estimate; flip when M18 lands
 # --- enclosure: PROVISIONAL allowances -------------------------------------
 # What the enclosure takes out of the cavity on each face. The enclosure is an
 # all-metal CNC box (owner, 2026-09-18); these are allowances until its model
-# sets the real wall, floor and lid thicknesses. Every figure derived below
-# inherits them, which is why both budgets report themselves as provisional.
+# sets the real wall, floor and lid thicknesses. CAVITY_REQUIRED_* and AVAIL_H
+# inherit them, which is why both report themselves as provisional.
 # ENCLOSURE_DECIDED means "the model has set these", not "the material is known".
 ENCLOSURE_DECIDED = False
 WALL = 3.0
 FLOOR = 3.0
 LID = 3.0
 
-# --- derived board envelope ------------------------------------------------
-SIDE_CLEARANCE = 1.0   # per side: the board must drop in past the walls
-END_ALLOWANCE = 4.0    # per end: glands and the connector shells facing them
-BOARD_W = CAVITY_W - 2 * WALL - 2 * SIDE_CLEARANCE
-BOARD_L = CAVITY_L - 2 * WALL - 2 * END_ALLOWANCE
+# --- harness plugs at the connector face (MX-3, IO-6) ------------------------
+#: A harness wire leaves straight out of the back of its screw plug and has to
+#: turn along the wall. ~3x the OD of a 1.5 mm² wire; tighter fatigues the
+#: conductor where the plug clamps it. PROVISIONAL, with the cable exit (M18).
+WIRE_BEND = 10.0
+
+#: The connector face (IO-6): every harness plug is on one long side, and the
+#: deepest mated plug stands this far past its header before its wire bends.
+#: Typed so the outline and the budgets can use it as a constant; a test holds
+#: it equal to `face_room(netlist.current())`, so a terminal changed in the
+#: netlist without this number moving is a failure, not a silent drift.
+#: Today: J101's Kefa 7.62 plug, 9.65 mm past its header, then the bend.
+FACE_ROOM = 19.65
+
+
+def face_room(d: Design) -> float:
+    """The deepest fitted plug's overhang past its header, then the wire's bend."""
+    return max((c.overhang_mm for c in d.connectors if c.leaves_box and not c.dnp),
+               default=0.0) + WIRE_BEND
+
+
+# --- the board envelope: THE DESIGN'S REQUIREMENT (IO-14) --------------------
+#: Around the board inside the box. The connector face is the long side the
+#: harness plugs stand on and gives its room to them (FACE_ROOM); this is the
+#: far side: the board must drop in past the wall.
+SIDE_CLEARANCE = 1.0
+#: Per end: the board has to drop in past the end walls, and no plug faces them
+#: (IO-6 puts every harness plug on one long side).
+END_ALLOWANCE = 4.0
+
+#: ⚠️ TYPED, NOT DERIVED FROM THE CAVITY -- that is what IO-14 changed. These
+#: two are the smallest envelope on which the design as it stands closes every
+#: budget in `board_fit` with at least 10 % of margin, found by searching W and
+#: L rather than by picking a round number. The search, against the netlist of
+#: 2026-09-20:
+#:
+#:   LENGTH is set by the longest row, and nothing else can set it: the harness
+#:   headers of one face stand end to end along the board, and that sum is
+#:   arithmetic, not a heuristic. POWER top is the longest at 197.04 mm, so
+#:   197.04 / 0.90 = 218.93 -> 219.0. No width buys length back. The 21.96 mm
+#:   of margin is not a round number either: 14.0 mm of it is spoken for by
+#:   the four M3 corners the row may not run into (2 x 2 x M3_INSET_MM at each
+#:   end), which the row check does not model.
+#:
+#:   WIDTH is then the smallest at which every face's shelf pack fits 0.90 x
+#:   BOARD_L and every face's body density clears 0.90 x DENSITY_LIMIT. Density
+#:   wants W >= 41.8 (POWER top's 6046 mm² of bodies); the pack is what binds,
+#:   and it clears 197.1 mm first at W = 47.8. Stepped up to 48.0 so the number
+#:   does not sit on the first 0.1 mm of a step in a heuristic's staircase.
+#:
+#: ⛔ Re-run the search when a body or a terminal changes; do not nudge these to
+#: make a budget close. `python3 -m tools.board_fit` prints every margin.
+BOARD_W = 48.0
+BOARD_L = 219.0
 BOARD_AREA = BOARD_W * BOARD_L
 
 AVAIL_H = CAVITY_H - FLOOR - LID        # internal height the stack may use
+
+# --- the cavity that envelope REQUIRES ---------------------------------------
+#: ⬜ UNCONFIRMED UNTIL M18. These are not observations of the bike: they are
+#: what the enclosure has to be for the design above to go in it, and the
+#: measurement will confirm them or force a rethink (IO-14). Across, the box
+#: wall, the drop-in clearance on the far side and the plug-and-bend room in
+#: front of the connector face; along, the wall and the drop-in clearance at
+#: each end; tall, the DERIVED stack plus the floor and the lid
+#: (`cavity_required`, because the stack is a property of the design).
+CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 74.65
+CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 233.0
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
@@ -98,12 +174,6 @@ FLOOR_SEAT = "U201"
 #: runs above the floor -- a thicker or poorer pad spends both. PROVISIONAL:
 #: chosen with the enclosure.
 THERMAL_PAD_T = 0.5
-
-# --- harness plugs at the walls (MX-3) ---------------------------------------
-#: A harness wire leaves straight out of the back of its screw plug and has to
-#: turn along the wall. ~3x the OD of a 1.5 mm² wire; tighter fatigues the
-#: conductor where the plug clamps it. PROVISIONAL, with the cable exit (M18).
-WIRE_BEND = 10.0
 
 FLOOR_NAME, LID_NAME = "FLOOR", "LID"
 
@@ -282,6 +352,16 @@ def _through(d: Design, order=STACK_ORDER):
     return out
 
 
+def _paired(d: Design, order=STACK_ORDER) -> set[str]:
+    """Refdes of every inter-board half that mates with a half on a neighbour.
+
+    These two are a pair: their mated height IS the gap, so neither is a thing
+    standing in it or hanging into it, and neither needs a keep-out under it.
+    """
+    return {c.refdes for lo, up in zip(order, order[1:])
+            for pair in _pairs(d, lo, up, order) for c in pair}
+
+
 def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
     """Every gap of the stack, bottom to top: FLOOR->first board ... last board->LID.
 
@@ -314,8 +394,7 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
     A DNP part counts: its footprint can be populated, so its part must fit.
     """
     decks = (FLOOR_NAME,) + tuple(order) + (LID_NAME,)
-    paired = {c.refdes for lo, up in zip(order, order[1:])
-              for pair in _pairs(d, lo, up, order) for c in pair}
+    paired = _paired(d, order)
     gaps = []
     for below, above in zip(decks, decks[1:]):
         tops = [(p.height_mm, p.refdes) for p in d.parts
@@ -396,6 +475,7 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                 f"of unknown size, so this is a failure, not a pass")
 
     gaps = layer_gaps(d, order)
+    paired = _paired(d, order)
     by_ref = {x.refdes: x for x in items}
 
     # The seat has to BE on the bottom board's underside. Flipped to the top,
@@ -465,10 +545,17 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                         f"{FLOOR_LINER_T:.1f} mm liner and {CLEARANCE:.1f} mm "
                         f"under it")
         # BD-14: what hangs from above and what stands below must not overlap
-        # in plan wherever together they are taller than the gap.
+        # in plan wherever together they are taller than the gap. A harness
+        # terminal under a board hangs into the gap exactly as a part does --
+        # J314 hangs under OUTPUTS into the gap POWER's chokes stand in -- so
+        # connectors are iterated too. The inter-board halves are skipped:
+        # their mated height IS the gap, and each one faces its own other half
+        # by construction, so a keep-out under it would be four notes about
+        # nothing.
         if g.below in order and g.above in order:
-            for p in d.parts:
-                if p.board != g.above or p.side != "bottom" or _bad_height(p.height_mm):
+            for p in (*d.parts, *d.connectors):
+                if (p.board != g.above or getattr(p, "side", "top") != "bottom"
+                        or _bad_height(p.height_mm) or p.refdes in paired):
                     continue
                 room = g.gap_mm - p.height_mm - CLEARANCE
                 blockers = sorted(
@@ -498,6 +585,17 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
     load_bearing = tuple(r for r, *_ in unconfirmed if r in setters)
     return Stack(gaps, total, avail_mm, tuple(problems), tuple(notes),
                  unconfirmed, load_bearing, tuple(envelope_verdicts))
+
+
+def cavity_required(d: Design, order=STACK_ORDER) -> tuple[float, float, float]:
+    """(along, across, tall) the enclosure has to give this design, in mm.
+
+    ⬜ A REQUIREMENT, not a measurement (IO-14): the plan dimensions come from
+    the typed envelope, the height from the stack this design derives. M18
+    confirms these or forces a rethink.
+    """
+    return (CAVITY_REQUIRED_L, CAVITY_REQUIRED_W,
+            stack_height(d, order).total_mm + FLOOR + LID)
 
 
 def envelope_is_binding() -> bool:

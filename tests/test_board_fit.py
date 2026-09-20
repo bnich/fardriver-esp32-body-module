@@ -2,7 +2,7 @@
 
 The tool's job is to say FAIL out loud and exit non-zero. So every test here
 either drives `main()` and reads the exit code and the text a person would
-see, or checks a figure that can be worked out on paper (42 x 186 mm board,
+see, or checks a figure that can be worked out on paper (48 x 219 mm board,
 0.5 mm courtyard).
 """
 import runpy
@@ -36,8 +36,7 @@ def with_connectors(design, *more):
 def good() -> Design:
     """Closes on every budget: 52.0 mm of 64, sparse boards. The brick is under
     POWER on its floor seat, as in the design. Its two 7.0 mm connectors are
-    internal: no harness plug fits the envelope's walls as estimated (see the
-    PLUGS tests)."""
+    internal, so it has no rows; the ROWS tests add harness headers to it."""
     return Design(
         parts=(part("L101", "POWER", 14.0, (22.0, 14.0), package="THT"),
                part("U201", "POWER", 12.7, (58.3, 37.2), package="brick",
@@ -95,7 +94,7 @@ def test_identical_unconfirmed_parts_share_a_line_but_every_refdes_is_named(caps
 
 
 def test_no_unconfirmed_section_when_every_height_is_confirmed(capsys):
-    assert "UNCONFIRMED" not in run(capsys, good())[1]
+    assert "UNCONFIRMED HEIGHTS" not in run(capsys, good())[1]
 
 
 def test_a_bottom_side_part_taller_than_the_gap_below_it_fails(capsys):
@@ -138,26 +137,32 @@ def test_a_terminal_under_a_board_is_a_row_of_its_own(capsys):
     assert "OUTPUTS top " in out and "OUTPUTS bottom " in out
 
 
-def test_a_plug_no_wall_has_room_for_is_never_printed_as_a_pass(capsys):
-    """The walls leave 4 mm at each end and 1 mm at each side: a mated plug
-    stands 9.6 mm proud and its wire must bend after it."""
-    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
+def test_a_row_longer_than_its_board_fails():
+    from tools import netlist
+    d = netlist.current()
+    long = d.replace_connector("J409", footprint_mm=(bf.bp.BOARD_L + 1.0, 9.2))
+    assert any("row" in p and "LOGIC" in p for p in bf.face_verdicts(long))
+
+
+def test_a_row_longer_than_its_board_is_a_plain_failure_not_a_caveat(capsys):
+    """IO-14 made the board the design's own requirement, so a row that does not
+    fit it is a failure whatever M18 turns out to say. Two 120 mm headers 1 mm
+    apart take 241 mm of a 219 mm board: 22 mm over."""
+    d = with_connectors(good(),
+                        conn("J302", "OUTPUTS", 7.0, (120.0, 9.2), overhang=9.6),
+                        conn("J303", "OUTPUTS", 7.0, (120.0, 9.2), overhang=9.6))
+    (e,) = bf.edge_budget(d)
+    assert e.length_mm == pytest.approx(241.0)
     code, out = run(capsys, d)
-    assert code == 2 and "NOT A PASS" in out and "✅ PASS" not in out
-    assert "OUTPUTS top's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
+    assert code == 1 and "✅ PASS" not in out
+    assert "row: OUTPUTS's 2 harness headers take 241 mm of the face" in out
+    assert "the board is 219 mm long" in out
+    assert "⛔ DOES NOT FIT (22 mm over)" in out
 
 
-def test_a_plug_no_wall_has_room_for_fails_once_the_envelope_is_a_fact(capsys, binding_envelope):
-    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
-    code, out = run(capsys, d)
-    assert code == 1 and "plugs: OUTPUTS" in out
-
-
-def test_walls_with_room_let_the_plugs_through(capsys, monkeypatch):
-    from tools import board_params as bp
-    monkeypatch.setattr(bp, "END_ALLOWANCE", 20.0)
-    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
-    assert bf.edge_verdicts(d) == [] and run(capsys, d)[0] == 0
+def test_a_row_that_fits_its_board_is_no_verdict_at_all(capsys):
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, (120.0, 9.2), overhang=9.6))
+    assert bf.face_verdicts(d) == [] and run(capsys, d)[0] == 0
 
 
 def test_an_unknown_height_fails_instead_of_vanishing(capsys):
@@ -171,53 +176,76 @@ def test_density_is_bodies_over_the_side_less_its_mounting_corners():
     brick = rows[("POWER", "bottom")]                       # the brick's own face
     assert brick.raw_mm2 == pytest.approx(58.3 * 37.2)
     assert bf.MOUNT_AREA == pytest.approx(4 * 7.0 * 7.0)     # 3.5 mm inset, both ways
-    assert brick.density == pytest.approx(58.3 * 37.2 / (42 * 186 - 196))
+    assert brick.density == pytest.approx(58.3 * 37.2 / (48 * 219 - 196))
 
 
 def test_a_side_over_the_density_limit_fails(capsys):
-    # Three 40 x 50 slabs: 6000 mm2 of 7616 usable = 79 % > 75 %.
+    # Three 46 x 56 slabs beside J301's 20 x 9: 3 x 2576 + 180 = 7908 mm² of the
+    # 48 x 219 - 196 = 10316 usable = 77 % > 75 %. Two of them is 5332 = 52 %.
     d = good()
     for i in range(3):
-        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (40.0, 50.0)))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (46.0, 56.0)))
     code, out = run(capsys, d)
     assert code == 1
-    assert any(p.startswith("density: OUTPUTS top is 8") for p in bf.problems(d))
-    two = good().with_part(part("X0", "OUTPUTS", 1.0, (40.0, 50.0))) \
-        .with_part(part("X1", "OUTPUTS", 1.0, (40.0, 50.0)))
-    assert not any(p.startswith("density") for p in bf.problems(two))   # 55 %
+    assert any(p.startswith("density: OUTPUTS top is 77%") for p in bf.problems(d))
+    two = good().with_part(part("X0", "OUTPUTS", 1.0, (46.0, 56.0))) \
+        .with_part(part("X1", "OUTPUTS", 1.0, (46.0, 56.0)))
+    assert not any(p.startswith("density") for p in bf.problems(two))   # 52 %
 
 
 # --- area: the naive pack --------------------------------------------------------------
 def test_the_pack_by_hand():
-    # Two 20 x 10 bodies -> 21 x 11 with courtyards. 21 + 21 = 42 fills one row
-    # of a 42 mm board exactly: 11 mm long. A third starts a second row: 22 mm.
+    # Two 20 x 10 bodies -> 21 x 11 with courtyards. 21 + 21 = 42 of the 48 mm
+    # board: one shelf, 11 mm deep. A third needs 63 and starts a second: 22 mm.
     two = [("A", 20.0, 10.0), ("B", 10.0, 20.0)]
     assert bf.shelf_pack(two) == (pytest.approx(11.0), "")
     assert bf.shelf_pack(two + [("C", 20.0, 10.0)])[0] == pytest.approx(22.0)
     assert bf.shelf_pack([]) == (0.0, "")
 
 
+def test_a_body_longer_than_the_board_is_wide_opens_its_shelf_first():
+    """Two 50 x 5 terminals, a 30 x 10 and a 25 x 12 on a 40 mm board. With the
+    courtyard they are 51 x 6, 51 x 6, 31 x 11 and 26 x 13; 51 does not go
+    across a 40 mm board, so the terminals lie lengthwise -- 6 across, 51 deep.
+
+    Deepest shelf first: the two terminals share one 51 mm shelf (6 + 6 = 12 of
+    40), the 26 goes beside them (12 + 26 = 38), and the 31 opens an 11 mm shelf
+    of its own. 51 + 11 = 62 mm.
+
+    ⛔ Ordering on each body's SHORT side instead, which is what this did until
+    2026-09-20, orders them 26, 31, 6, 6: the 26 opens a 13 mm shelf, the 31 an
+    11 mm shelf, the first terminal lands on THAT shelf and deepens it to 51,
+    and the second opens another 51. 13 + 51 + 51 = 115 mm, 53 mm of it pure
+    fragmentation -- and on POWER top, three of whose bodies are 55.88, 55.88
+    and 58.42 mm terminals, that mechanism reported 319 mm for a 195 mm pack."""
+    rects = [("J1", 50.0, 5.0), ("J2", 50.0, 5.0),
+             ("X1", 30.0, 10.0), ("X2", 25.0, 12.0)]
+    assert bf.shelf_pack(rects, 40.0) == (pytest.approx(62.0), "")
+
+
 def test_a_pack_that_does_not_fit_is_a_plain_failure(capsys):
-    # Eight 25 x 24 bodies. Two will not go side by side on a 42 mm board
-    # (26 + 26), so each takes a 25 mm row: 200 mm, plus J301's 10 mm row, of a
-    # 186 mm board. Density is only (8 x 600 + 180) / 7616 = 65 %, so it is the
-    # PACK that fails, and the density figure must not be allowed to excuse it.
+    # Eight 30 x 28 bodies -> 31 x 29. Two will not go side by side on a 48 mm
+    # board (31 + 31 = 62), so each takes a 29 mm shelf: 232 mm. J301's 21 mm
+    # will not fit beside any of them either (31 + 21 = 52), so it opens a 10 mm
+    # shelf: 242 mm of a 219 mm board. Density is only (8 x 840 + 180) / 10316 =
+    # 67 %, so it is the PACK that fails, and density must not excuse it.
     d = good()
     for i in range(8):
-        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (25.0, 24.0)))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (30.0, 28.0)))
     drv = next(s for s in bf.area_budget(d) if (s.board, s.side) == ("OUTPUTS", "top"))
-    assert drv.density == pytest.approx(4980 / 7616) and drv.density_ok
-    assert drv.pack_mm == pytest.approx(210.0) and not drv.pack_ok
+    assert drv.density == pytest.approx(6900 / 10316) and drv.density_ok
+    assert drv.pack_mm == pytest.approx(242.0) and not drv.pack_ok
     code, out = run(capsys, d)
     assert code == 1
-    assert "⛔ DOES NOT FIT (24 mm over)" in out
-    assert any(p.startswith("pack: OUTPUTS top DOES NOT FIT") and "24 mm over" in p
+    assert "⛔ DOES NOT FIT (23 mm over)" in out
+    assert any(p.startswith("pack: OUTPUTS top DOES NOT FIT") and "23 mm over" in p
                for p in bf.problems(d))
 
 
 def test_a_body_wider_than_the_board_both_ways_cannot_be_placed(capsys):
-    code, out = run(capsys, good().with_part(part("X1", "OUTPUTS", 1.0, (45.0, 50.0))))
-    assert code == 1 and "X1 fits a 42 mm board in neither orientation" in out
+    # 50 x 48 -> 51 x 49 with the courtyard: neither side goes across 48 mm.
+    code, out = run(capsys, good().with_part(part("X1", "OUTPUTS", 1.0, (50.0, 48.0))))
+    assert code == 1 and "X1 fits a 48 mm board in neither orientation" in out
 
 
 def test_bottom_side_parts_are_packed_on_the_underside():
