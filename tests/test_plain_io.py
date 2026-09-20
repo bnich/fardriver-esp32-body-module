@@ -38,7 +38,8 @@ def test_bl_is_an_open_drain_output_on_gpio16_released_by_default():
     assert (q.mpn, q.kind) == ("AO3400A", "NFET")
     assert _net("Q106", "D") == "BL" and _net("Q106", "S") == "GND"
     gate = _net("Q106", "G")
-    downs = [r for r, p in D.net(gate).pins if r.startswith("R")
+    downs = [r for r, p in D.net(gate).pins
+             if r.startswith("R") and not D.part(r).dnp
              and D.part(r).value == "10k" and _other_end(r, p) == "GND"]
     assert downs, "BL's FET needs a hard gate pull-down: released until firmware drives it"
     assert 16 not in rules.GPIO_RESET_PULL_UP

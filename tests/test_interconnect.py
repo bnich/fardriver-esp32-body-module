@@ -7,6 +7,7 @@ offset, in a larger header of the same pitch.  Each test below states what
 must still hold when that happens.
 """
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
@@ -117,11 +118,25 @@ def _fitted_harness(d):
     return [c for c in d.connectors if c.leaves_box and not c.dnp]
 
 
+def _named_nets_exist(d):
+    """Every name in SENSITIVE_NETS, against the nets the design really has."""
+    return SENSITIVE_NETS - {n.name for n in d.nets}
+
+
 def test_every_sensitive_net_named_here_is_a_net_the_design_has(d):
     """SENSITIVE_NETS is typed. A renamed net would drop out of it silently and
     the size check below would simply stop looking at that connector."""
-    missing = SENSITIVE_NETS - {n.name for n in d.nets}
+    missing = _named_nets_exist(d)
     assert missing == set(), f"no such net: {sorted(missing)}"
+
+
+def test_the_sensitive_net_guard_fires_when_a_net_it_names_is_renamed(d):
+    """The guard is only a check if it fails. Task 2 renamed RUN to
+    IN11_RUN_WIRE and the list kept the old name, which cost J403 its unique-size
+    check with every test still green; Task 4 renames connectors again."""
+    renamed = replace(d, nets=tuple(
+        replace(n, name="BL_OUT") if n.name == "BL" else n for n in d.nets))
+    assert _named_nets_exist(renamed) == {"BL"}
 
 
 def test_a_sensitive_plug_has_a_size_no_other_header_in_its_family_shares(d):

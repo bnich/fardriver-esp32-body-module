@@ -59,7 +59,6 @@ _DS_SMS = "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf)"
 _DS_SMCJ = "Littelfuse SMCJ series datasheet (littelfuse_smcj_series_2025_wayback.pdf)"
 _DS_VY2 = "Vishay doc 28535 (vishay_vy2_series_doc28535.pdf)"
 _DS_KXJ = "Chemi-Con KXJ series (kxj.pdf)"
-_DS_1N4007 = "Vishay 1N4001-1N4007 (1n4007.pdf)"
 _DS_SPT = "Schurter SPT 5x20 (spt.pdf)"
 _DS_KX381 = ("Kangnex WJ15EDGRM-3.81 and WJ15EDGKM-3.81 drawings rev A "
              "(kangnex_15EDGRM-3.81.pdf, kangnex_15EDGKM-3.81.pdf)")
@@ -193,6 +192,30 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
                        f"within the CC spec, 20 mV on a class-A 1 kΩ pull-up, too "
                        f"heavy for CAN (J405 is parked). BOM C2. Spare "
                        f"cathodes tie to GND")
+
+
+def _class_a_parts(pull: str, series: str, cap: str, net: str,
+                   board: Board = "LOGIC", cap_board: Board | None = None,
+                   note: str = "") -> tuple[Part, ...]:
+    """plan §4 class A: 1 kΩ pull-up · 1 kΩ series · 100 nF at the pin.
+
+    `board` is where the pull-up and the series resistor go -- the board whose
+    harness terminal the contact arrives on, so only the conditioned signal
+    crosses an interface. `cap_board` is where the 100 nF goes when that is a
+    different board: the cap belongs at the MCU pin, and the brake levers land
+    on OUTPUTS while their pin is on LOGIC until Task 4 moves the terminal.
+    """
+    tail = f" {note}" if note else ""
+    return (
+        _r(pull, board, "1k",
+           f"Class-A PULL-UP to V3P3 for {net}, on the CONTACT side of the "
+           f"series resistor. 1 kΩ, not 4.7 kΩ: 3.3 mA of wetting current "
+           f"through a bought switch (plan §4). BOM C1{tail}"),
+        _r(series, board, "1k",
+           f"Class-A SERIES into the pin for {net} (plan §4). BOM C1{tail}"),
+        _c(cap, cap_board or board, "100nF", 50.0,
+           f"Class-A 100 nF to GND at the pin for {net} (plan §4). BOM C1{tail}"),
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -524,6 +547,17 @@ def _open_load_pullup(refdes: str, channel: str) -> Part:
               f"BOM D2")
 
 
+#: What the class-A network at J306 protects, said once for both levers.
+_LEVER_NOTE = (
+    "{side} brake lever, IN-{n}: since IO-8 the lever WIRE is the node, so the "
+    "pull-up, the series resistor and the array (D313) all sit on the board "
+    "J306 is on and only the conditioned signal travels to the S3. The series "
+    "resistor is what keeps a negative surge on the lever wire out of the S3's "
+    "input clamp through D313; with the 100 nF at the pin "
+    "\u03c4 = 100 \u00b5s, well inside the <10 ms the boost safety-release wants."
+)
+
+
 _OUTPUTS_PARTS = (
     _tps4h160("U301", "Headlight: LOW, HIGH, DRL. OUT1 is AUX12, the "
               "current-limited feed to horn +, fan + and buzzer +"),
@@ -569,11 +603,6 @@ _OUTPUTS_PARTS = (
        "to tell a live FarDriver from a dead one. 5.1 V × 180/280 = 3.28 V at "
        "the expander pin (V_IH 2.64 V)"),
     _r("R344", "OUTPUTS", "180k", "ACC+ sense divider, bottom (with R343)"),
-    _r("R341", "OUTPUTS", "1k",
-       "Class-A SERIES for IN-05, between the left lever wire and the S3 pin "
-       "(plan §4). Without it a negative surge on the lever wire runs through "
-       "D313 straight into the S3's input clamp"),
-    _r("R342", "OUTPUTS", "1k", "Class-A SERIES for IN-06, as R341"),
     _r("R339", "OUTPUTS", "10k",
        "CS1 to GND on the ADC side of R323: the bottom of the divider. The CS "
        "node is R321 ∥ (R323 + R339) = 952 Ω: 3.17 V/A there, 1.59 V/A at the "
@@ -652,24 +681,34 @@ _OUTPUTS_PARTS = (
            "BL, the FarDriver's low-brake input, pulled low = motor cut. "
            "Firmware-driven (IO-8) from GPIO16; the hard gate pull-down R115 "
            "keeps it RELEASED from reset until firmware drives it (IO-9)"),
-    _r("R114", "OUTPUTS", "100R", "BL gate series from GPIO16"),
+    _r("R114", "OUTPUTS", "100R",
+       "BL gate series (plan §6.2.3), as R310-R312 and R424. With R115 it is "
+       "also the gate DIVIDER, and that is what has to switch the cut: "
+       "3.3 V × 10k / (100R + 10k) = 3.27 V, over the AO3400A's specified "
+       "V_GS of 2.5 V (rule GATE-VGS). BOM D9"),
     _r("R115", "OUTPUTS", "10k",
        "BL gate HARD pull-down: released at reset, through boot and whenever "
-       "the firmware is not running (IO-9, D14)"),
-    _r("R317", "OUTPUTS", "1k",
-       "Class-A pull-up for the left brake lever (IO-8): a dry contact to "
-       "ground, 3.3 mA of wetting current"),
-    _r("R318", "OUTPUTS", "1k",
-       "Class-A pull-up for the right brake lever (IO-8): a dry contact to "
-       "ground, 3.3 mA of wetting current"),
+       "the firmware is not running (IO-9, D14). 10 kΩ against R114's 100 Ω "
+       "leaves 3.27 V of gate drive (GATE-VGS)"),
+    *_class_a_parts("R317", "R341", "C421", "IN05_BRAKE_L", board="OUTPUTS",
+                    cap_board="LOGIC",
+                    note=_LEVER_NOTE.format(side="Left", n="05")),
+    *_class_a_parts("R318", "R342", "C422", "IN06_BRAKE_R", board="OUTPUTS",
+                    cap_board="LOGIC",
+                    note=_LEVER_NOTE.format(side="Right", n="06")),
     _r("R336", "OUTPUTS", "100k",
-       "BL → BL_SENSE: the 100 kΩ-isolated copy firmware reads back, so a cut "
-       "that did not take and one that will not release both show up. ⚠️ The "
-       "cut itself is now a firmware output (IO-8), so this is a readback, not "
-       "an isolation barrier. 100 kΩ keeps the readback from loading BL: a "
-       "fitted but unpowered LOGIC (or an expander pin set as an output) clamps "
-       "BL_SENSE near 0.5 V, and 100 kΩ from BL to ground only matters against "
-       "a FarDriver pull-up of 47 kΩ or more (⬜ unmeasured)"),
+       "BL → BL_SENSE: the copy firmware reads back, so a cut that did not take "
+       "and one that will not release both show up. ⚠️ The cut itself is a "
+       "firmware output now (IO-8), so this is a readback, not an isolation "
+       "barrier. ⚠️ AND ITS RISK HAS INVERTED: under D23 a spurious pull here "
+       "moved BL toward a cut, which was the safe direction; under IO-9 the "
+       "bike is meant to drive whenever the firmware is not running, so this "
+       "is the ONE copper path on the module that can work against IO-9. A "
+       "fitted but unpowered LOGIC, or an expander pin left as an output, "
+       "clamps BL_SENSE near 0.5 V and puts 100 kΩ from BL to ground. That only "
+       "cuts if the FarDriver's own BL pull-up is 47 kΩ or weaker, which is "
+       "⬜ UNMEASURED — the 100 kΩ is the whole margin, so it may only ever go "
+       "up, never down"),
     # ── IN-15: 12 V rail sense (plan §4 class D) ────────────────────────────
     _r("R337", "OUTPUTS", "47k",
        "IN-15 divider top, from V12. 47 k / 10 k: 12 V → 2.11 V, and TDK's "
@@ -753,20 +792,6 @@ _MCP_SOURCE = (
     f"GPA7/GPB7 as outputs (p.18), so neither floats; every input bit has an "
     f"external pull. p.35 (drawing C04-073): SSOP-28 A 2.00 mm max, D 10.50, "
     f"E 8.20. 400 kHz at 3.3 V. BOM C3")
-
-
-def _class_a_parts(pull: str, series: str, cap: str, net: str) -> tuple[Part, ...]:
-    """plan §4 class A: 1 kΩ pull-up · 1 kΩ series · 100 nF at the pin."""
-    return (
-        _r(pull, "LOGIC", "1k",
-           f"Class-A PULL-UP to V3P3 for {net}, on the CONTACT side of the "
-           f"series resistor. 1 kΩ, not 4.7 kΩ: 3.3 mA of wetting current "
-           f"through a bought switch (plan §4). BOM C1"),
-        _r(series, "LOGIC", "1k",
-           f"Class-A SERIES into the pin for {net} (plan §4). BOM C1"),
-        _c(cap, "LOGIC", "100nF", 50.0,
-           f"Class-A 100 nF to GND at the pin for {net} (plan §4). BOM C1"),
-    )
 
 
 _LOGIC_PARTS = (
@@ -935,10 +960,6 @@ _LOGIC_PARTS = (
     _c("C418", "LOGIC", "100nF", 50.0, "U402 VDD decoupling"),
     _c("C419", "LOGIC", "100nF", 50.0, "U403 VDD decoupling"),
     _c("C420", "LOGIC", "100nF", 50.0, "U404 VCC decoupling"),
-    _c("C421", "LOGIC", "100nF", 50.0,
-       "IN-05 to GND at the MCU pin (plan §4 class A). With R341: τ = 100 µs, "
-       "well inside the <10 ms the boost safety-release wants"),
-    _c("C422", "LOGIC", "100nF", 50.0, "IN-06 to GND at the MCU pin, as C421"),
 )
 
 _PARTS = _POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _OUTPUTS_PARTS + _LOGIC_PARTS
@@ -974,11 +995,11 @@ _STACK_SIGNALS = (
 )
 #: Contacts per row, and the header's length on the 2.54 mm grid.
 _STACK_ROWS = len(_STACK_SIGNALS)
-_STACK_FP = (2.54 * _STACK_ROWS, 5.08)
+_STACK_FP = (2.54 * _STACK_ROWS, 2 * 2.54)
 
 
 def _p(spec: str) -> tuple[tuple[str, str], ...]:
-    """'Q305.S R316.2' → (("Q305", "S"), ("R316", "2")). Keeps REF.PIN greppable."""
+    """'Q106.S R115.2' → (("Q106", "S"), ("R115", "2")). Keeps REF.PIN greppable."""
     return tuple((ref, pin) for ref, pin in
                  (tok.split(".", 1) for tok in spec.split()))
 
@@ -1231,13 +1252,20 @@ _NETS_BRAKE = (
                "is released whenever nothing drives it"),
     Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
         domain="3V3", interface="STACK",
-        source="The 100 kΩ-isolated copy of BL that firmware reads back, so a "
-               "stuck cut or a missing one can be reported"),
+        source="BL read back through R336's 100 kΩ, so a stuck cut or a missing "
+               "one can be reported. A readback, NOT an isolation barrier: "
+               "firmware commands the cut directly on BL_CMD (IO-8), and R336 "
+               "is sized to keep this node from loading BL (see R336)"),
     Net("ACC_SENSE", _p("R343.2 R344.1") + _stack("ACC_SENSE") + _p("U403.GPA0"),
         domain="3V3", interface="STACK",
         source="ACC+ divided to 3.28 V for expander #2: LOW with the key on "
-               "means the throttle supply is absent, so the controller is not "
-               "alive and no output of this module will do anything"),
+               "means the throttle's 5.1 V is not arriving. ⚠️ What that costs "
+               "is the MOTOR CUT and nothing else — BL only means something to a "
+               "live controller. Every 12 V output runs off this module's own "
+               "converters and is unaffected, so ⛔ firmware must NOT gate the "
+               "lamps or the horn on this sensor. ⚠️ It also cannot tell a dead "
+               "controller from a broken ACC+ sense wire: both read LOW, and a "
+               "lamp policy built on it would be lost to one chafed wire"),
     Net("ACC_PLUS", _p("J309.3 R343.1 D316.K3"), domain="5V",
         source="The throttle's 5.1 V supply, in from the FarDriver harness. It "
                "feeds the R343/R344 sense divider and nothing else: a sensor, "
@@ -1301,8 +1329,15 @@ _NETS_STACK = (
         domain="3V3", interface="STACK", gpio="GPIO19",
         source=f"The brake lamp, firmware-driven (IO-8); lighting stays native "
                f"(D16). GPIO19's two ~60 µs high glitches at power-up (S3 "
-               f"datasheet v2.2 Table 2-2) are shorter than the channel's "
-               f"turn-on. {_LGT}"),
+               f"datasheet v2.2 Table 2-2) DO reach the channel: {_DS_TPS} §6.6 "
+               f"gives t_d(on) 20 µs MIN and a 0.55 V/µs MAX turn-on slew, so "
+               f"the fastest part puts current in the lamp for well under "
+               f"100 µs. On a 0.12 A lamp that is below anything a rider or a "
+               f"following driver can see, and orders of magnitude under the "
+               f"lamp's own thermal time constant. What actually keeps the lamp "
+               f"dark is IN4's internal pull-down (below) and, for the pin "
+               f"choice, rule GPIO-RESET-PULL: GPIO19 comes out of reset with "
+               f"NO pull, and the rule refuses any pin that does. {_LGT}"),
     Net("LGT_STOP_IN", _p("R353.2 U302.IN4"), domain="3V3",
         source="U302 IN4: the STOP channel. Its 100-250 kΩ internal pull-down "
                "holds it OFF from reset, so the lamp is dark whenever the "
@@ -1747,8 +1782,8 @@ _CONNECTORS = (
             _cp("5", "START", "green — start button, a spare sensed input"),
             _cp("6", "", "empty: six ways, a size no other terminal has, so a "
                          "swap with the tail's 5-way plug (which would hold "
-                         "RUN to ground through a lamp) always leaves a plug "
-                         "in the hand"),
+                         "IN11_RUN_WIRE to ground through a lamp) always leaves "
+                         "a plug in the hand"),
         )),
     _tb("J404", "LOGIC", "FarDriver serial + boost (5 conductors), and the "
         "throttle's boost button (2)", (

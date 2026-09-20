@@ -110,6 +110,54 @@ def test_m27_a_100_ohm_open_load_pull_up_burns_an_0805():
     assert any("R345" in e for e in fired(D.replace_part("R345", value="100R"), "VR-POWER"))
 
 
+# ── CK-11: a gate divider that cannot switch its FET (review 2026-09-19) ─────
+def test_m37_a_series_resistor_that_leaves_the_motor_cut_ungateable():
+    """The defect the review found: R114 = 100k puts 3.3 V × 10k / 110k = 0.30 V
+    on Q106's gate. BL_CMD is wired, biased OFF, commanded by the right pin and
+    unswitchable — integrity, D14, TURN-ON, every VR rule and 1233 tests pass."""
+    bad = D.replace_part("R114", value="100k")
+    errs = fired(bad, "GATE-VGS")
+    assert any("Q106" in e and "0.3 V" in e for e in errs), errs
+
+
+def test_m37b_a_bias_resistor_that_swallows_the_gate_drive():
+    """The same divider from the other end: a 100 Ω bias against R114's 100 Ω
+    halves the drive to 1.65 V. Guarding one resistor would not have caught it."""
+    assert any("Q106" in e for e in fired(D.replace_part("R115", value="100R"),
+                                         "GATE-VGS"))
+
+
+def test_m37c_a_fet_with_no_stated_vgs_is_refused_not_skipped():
+    """A logic-driven gate whose part has no figure in DATASHEET_VGS_SPEC is an
+    UNCHECKED divider, so the rule says so rather than passing it."""
+    bad = D.replace_part("Q106", mpn="SI2302")
+    assert any("Q106" in e and "DATASHEET_VGS_SPEC" in e
+               for e in fired(bad, "GATE-VGS"))
+
+
+def test_m37d_a_p_fet_whose_source_gives_it_no_swing_is_refused():
+    """The polarity term: a P-FET rests at its source and is driven DOWN, so a
+    source at ground potential leaves no swing at all to turn it on with."""
+    bad = D.replace_part("Q106", kind="PFET")
+    assert any("Q106" in e and "0 V swing" in e for e in fired(bad, "GATE-VGS"))
+
+
+def test_m37e_a_zero_ohm_gate_bias_holds_v_gs_at_zero_for_ever():
+    """0 Ω is a VALUE here, not 'absent'. A link or NET-TIE from gate to source
+    passes D14 (a resistor is there) and TURN-ON (a pin does reach the gate)."""
+    assert any("Q106" in e for e in fired(D.replace_part("R115", value="0R"),
+                                         "GATE-VGS"))
+
+
+def test_m37f_a_high_side_n_fet_a_logic_pin_cannot_lift_is_refused():
+    """Q106 moved to the high side: its gate would have to go above 12 V, and a
+    3.3 V pin cannot. The rule refuses the case instead of computing a swing of
+    12 - 3.3 V that no copper ever sees."""
+    bad = move(move(D, "Q106", "S", "V12"), "R115", "2", "V12")
+    errs = fired(bad, "GATE-VGS")
+    assert any("Q106" in e and "HIGH-SIDE" in e for e in errs), errs
+
+
 # ── CK-10: a switch to ground needs a pull-UP ────────────────────────────────
 def test_m17_a_pull_down_where_the_boost_button_needs_a_pull_up():
     assert any("IN07" in e for e in fired(move(D, "R409", "2", "GND"), "PULL-DIR"))
@@ -121,5 +169,5 @@ def test_m33_a_gate_tied_to_its_own_source():
 
 
 def test_the_real_design_passes_every_new_rule():
-    for rule_id in ("VR-CLAMP", "VR-POWER", "PULL-DIR"):
+    for rule_id in ("VR-CLAMP", "VR-POWER", "PULL-DIR", "GATE-VGS"):
         assert fired(D, rule_id) == [], rule_id

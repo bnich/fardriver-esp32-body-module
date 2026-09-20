@@ -3,10 +3,19 @@ walked past it.
 
 The fixture is a small but real three-board circuit -- a soft-started 84 V
 P-FET with its level shifter, a converter behind a common-mode choke, a
-low-side horn, the hardware brake lamp, a high-side driver with current sense,
-a pod input, USB, an expander and the service header. Every part declares its
-real pins, so the fixture passes tools/integrity.py as well as tools/rules.py.
-A rule that is only ever shown a toy cannot be trusted on the real netlist.
+low-side horn, a 12 V HIGH-SIDE P-FET lamp driver whose gate a 12 V contact
+outside the box pulls down through a steering diode, a high-side driver with
+current sense, a pod input, USB, an expander and the service header. Every part
+declares its real pins, so the fixture passes tools/integrity.py as well as
+tools/rules.py. A rule that is only ever shown a toy cannot be trusted on the
+real netlist.
+
+⚠️ The high-side block is a FIXTURE, not a copy of anything in the design: it
+uses refdes and net names (Q390, R391, D392, D393, R394, PFET_GATE, CONTACT_12V,
+CONTACT_SENSE) that `tools/netlist.py` does not, so a grep for a design refdes
+never lands here and a later task can reuse a freed number without colliding.
+It is real coverage for D14, TURN-ON, VR-DOMAIN, VR-STANDOFF and GPIO-STRAP --
+the one topology in which a wire outside the box commands a high-side gate.
 
 The failing cases are the 2026-09-18 audit's evasion table (audit F), one test
 per evasion, plus the historical defects by name. Each asserts on the RULE ID,
@@ -86,10 +95,10 @@ DOMAINS = {
     "GND": "GND", "BASEPLATE": "GND",
     "HV_BPLUS": "84V", "HV_SW": "84V", "KSW": "84V", "D13_GATE": "84V",
     "D13_PD": "84V", "HV_C1_P": "84V", "HV_C1_N": "84V",
-    "D13_EN": "12V", "V12": "12V", "V5": "5V", "HORN_OUT": "12V", "LEVER_L": "12V",
-    "Q1_GATE": "12V", "STOP_OUT": "12V", "HL_LOW": "12V", "DISP_LINE": "12V",
+    "D13_EN": "12V", "V12": "12V", "V5": "5V", "HORN_OUT": "12V", "CONTACT_12V": "12V",
+    "PFET_GATE": "12V", "STOP_OUT": "12V", "HL_LOW": "12V", "DISP_LINE": "12V",
     "V3P3": "3V3", "KEY_SENSE": "3V3", "HORN_CMD": "3V3",
-    "IN05_BRAKE_L": "3V3", "EN": "3V3", "SW_WIRE": "3V3", "SW_IN": "3V3",
+    "CONTACT_SENSE": "3V3", "EN": "3V3", "SW_WIRE": "3V3", "SW_IN": "3V3",
     "POD2_WIRE": "3V3", "POD2_IN": "3V3", "USB_DM": "3V3", "USB_DP": "3V3",
     "CS1": "3V3",
     # TI SLVSCV8E: the CS pin sits at 4.5-6.5 V in any fault, which is why it
@@ -105,11 +114,11 @@ DOMAINS = {
 INTERFACES = {
     "GND": "PWR-OUT", "KEY_SENSE": "PWR-OUT",
     "V12": "PWR-OUT", "V5": "PWR-OUT", "V3P3": "STACK",
-    "HORN_CMD": "STACK", "IN05_BRAKE_L": "STACK", "CS1": "STACK",
+    "HORN_CMD": "STACK", "CONTACT_SENSE": "STACK", "CS1": "STACK",
     "LGT_LOW": "STACK",
 }
 GPIOS = {
-    "BOOT": 0, "KEY_SENSE": 1, "CS1": 4, "IN05_BRAKE_L": 7, "SDA": 8, "SCL": 9,
+    "BOOT": 0, "KEY_SENSE": 1, "CS1": 4, "CONTACT_SENSE": 7, "SDA": 8, "SCL": 9,
     "SW_IN": 15, "USB_DM": 19, "USB_DP": 20, "LGT_LOW": 38, "HORN_CMD": 42,
     "U0TXD": 43, "U0RXD": 44,
 }
@@ -118,7 +127,7 @@ GPIOS = {
 def _good() -> Design:
     # Power buses read the same from both ends, a return beside every rail.
     pwr = ("V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5", "GND", "V12")
-    stack = ("HORN_CMD", "GND", "IN05_BRAKE_L", "GND", "V3P3", "GND", "CS1",
+    stack = ("HORN_CMD", "GND", "CONTACT_SENSE", "GND", "V3P3", "GND", "CS1",
              "GND", "LGT_LOW")
     connectors = (
         # POWER
@@ -132,9 +141,9 @@ def _good() -> Design:
               interface="PWR-LOGIC"),
         _conn("J308", "OUTPUTS", "STACK", stack, leaves_box=False, interface="STACK"),
         _conn("J301", "OUTPUTS", "Headlight", ("HL_LOW", "GND")),
-        _conn("J302", "OUTPUTS", "Stop lamp", ("STOP_OUT", "GND")),
+        _conn("J302", "OUTPUTS", "High-side lamp", ("STOP_OUT", "GND")),
         _conn("J303", "OUTPUTS", "Horn", ("V12", "HORN_OUT")),
-        _conn("J306", "OUTPUTS", "Brake lever", ("LEVER_L", "GND")),
+        _conn("J306", "OUTPUTS", "12 V contact", ("CONTACT_12V", "GND")),
         _conn("J305", "OUTPUTS", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True,
               dnp=True),
         # LOGIC
@@ -189,11 +198,11 @@ def _good() -> Design:
         _r("R310", "OUTPUTS", "100R"),
         _d("D315", "OUTPUTS", "SMBJ15A", "TVS", 15.0),
         _array("D310", "OUTPUTS", "SMS15T1G", 15.0),
-        _d("D303", "OUTPUTS", "1N4148", "D", 100.0),
-        _d("D305", "OUTPUTS", "1N4148", "D", 100.0),
-        _r("R313", "OUTPUTS", "10k"),
-        _fet("Q304", "OUTPUTS", "AO3407A", "PFET", 30.0),
-        _r("R317", "OUTPUTS", "10k"),
+        _d("D392", "OUTPUTS", "1N4148", "D", 100.0),
+        _d("D393", "OUTPUTS", "1N4148", "D", 100.0),
+        _r("R391", "OUTPUTS", "10k"),
+        _fet("Q390", "OUTPUTS", "AO3407A", "PFET", 30.0),
+        _r("R394", "OUTPUTS", "10k"),
         _d("D406", "OUTPUTS", "SMBJ15A", "TVS", 15.0, dnp=True),
         _ic("U301", "TPS4H160BQPWPRQ1", "HTSSOP-28", "OUTPUTS", "IC", TPS_PINS,
             {"IN2", "IN3", "IN4", "OUT2", "OUT3", "OUT4", "FAULT", "THER"}, 1.2,
@@ -252,17 +261,17 @@ def _good() -> Design:
          ("U202", "-Vin"))
     wire("BASEPLATE", ("U201", "BASEPLATE"), ("C203", "2"), ("R211", "1"))
     wire("V12", ("U201", "+V"), ("U201", "+S"), ("C207", "1"), ("C208", "1"),
-         ("D315", "K"), ("R313", "2"), ("Q304", "S"), ("U301", "VS"),
+         ("D315", "K"), ("R391", "2"), ("Q390", "S"), ("U301", "VS"),
          ("C303", "1"), ("C304", "1"))
     wire("V5", ("U202", "+Vout"), ("U405", "IN"), ("U405", "EN"), ("C404", "1"))
     wire("HORN_CMD", ("U401", "IO42"), ("R310", "1"))
     wire("HORN_GATE", ("R310", "2"), ("Q301", "G"), ("R307", "1"))
     wire("HORN_OUT", ("Q301", "D"), ("D310", "K1"))
-    wire("LEVER_L", ("D303", "K"), ("D305", "K"), ("D310", "K3"))
-    wire("Q1_GATE", ("D303", "A"), ("R313", "1"), ("Q304", "G"))
-    wire("STOP_OUT", ("Q304", "D"), ("D310", "K4"))
+    wire("CONTACT_12V", ("D392", "K"), ("D393", "K"), ("D310", "K3"))
+    wire("PFET_GATE", ("D392", "A"), ("R391", "1"), ("Q390", "G"))
+    wire("STOP_OUT", ("Q390", "D"), ("D310", "K4"))
     wire("HL_LOW", ("U301", "OUT1"), ("D310", "K6"))
-    wire("IN05_BRAKE_L", ("D305", "A"), ("R317", "1"), ("U401", "IO7"))
+    wire("CONTACT_SENSE", ("D393", "A"), ("R394", "1"), ("U401", "IO7"))
     wire("DISP_LINE", ("D406", "K"))
     wire("LGT_LOW", ("U401", "IO38"), ("R330", "1"))
     wire("U301_IN1", ("R330", "2"), ("U301", "IN1"))
@@ -270,7 +279,7 @@ def _good() -> Design:
     wire("U301_CS", ("U301", "CS"), ("R321", "1"), ("R323", "1"))
     wire("CS1", ("R323", "2"), ("C301", "1"), ("U401", "IO4"))
     wire("V3P3", ("U405", "OUT"), ("C402", "1"), ("C403", "1"), ("C405", "1"),
-         ("U401", "3V3"), ("R401", "1"), ("R317", "2"), ("R411", "1"),
+         ("U401", "3V3"), ("R401", "1"), ("R394", "2"), ("R411", "1"),
          ("R413", "1"), ("R414", "1"), ("R415", "1"), ("R416", "1"), ("U402", "VDD"))
     wire("EN", ("U401", "EN"), ("R401", "2"), ("C401", "1"))
     wire("BOOT", ("U401", "IO0"))
@@ -352,6 +361,7 @@ RULE_IDS = {
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
     "D10", "SUPPLY", "BUS-ORDER", "VR-CLAMP", "VR-POWER", "PULL-DIR",
+    "GATE-VGS",
 }
 
 
@@ -613,11 +623,11 @@ def test_strap_fires_through_a_series_resistor():
     assert any("J402" in e and "R410" in e for e in errs)
 
 
-def test_strap_fires_on_the_brake_lever_through_its_steering_diode():
-    """Audit 5c -- the rule's own headline: a rider holding a lever at key-on.
-    IN05_BRAKE_L is one diode away from J306."""
-    errs = fired(on_gpio(GOOD, "IN05_BRAKE_L", 3), "GPIO-STRAP")
-    assert any("J306" in e and "D305" in e for e in errs)
+def test_strap_fires_on_a_contact_through_its_steering_diode():
+    """Audit 5c -- the rule's own headline: someone holding the contact closed
+    at key-on. CONTACT_SENSE is one diode away from J306."""
+    errs = fired(on_gpio(GOOD, "CONTACT_SENSE", 3), "GPIO-STRAP")
+    assert any("J306" in e and "D393" in e for e in errs)
 
 
 @pytest.mark.parametrize("n", sorted(rules.GPIO_STRAPPING - {0}))
@@ -706,8 +716,8 @@ def test_d14_fires_when_fet_pins_are_not_named_g_s_d():
 
 
 def test_d14_accepts_the_pfet_whose_pullup_is_its_bias():
-    """Q304: R313 gate -> V12 IS gate -> source."""
-    assert not [e for e in fired(GOOD, "D14") if "Q304" in e]
+    """Q390: R391 gate -> V12 IS gate -> source."""
+    assert not [e for e in fired(GOOD, "D14") if "Q390" in e]
 
 
 # ── TURN-ON: can the switch be commanded on at all? ──────────────────────────
@@ -758,14 +768,14 @@ def test_turn_on_does_not_count_a_path_through_the_source():
 
 
 def test_turn_on_accepts_a_steering_diode_to_a_contact_that_sinks():
-    """Q304's gate is pulled low by the brake lever, outside the box, through
-    D303 -- a diode that can only ever pull the gate DOWN."""
-    assert not [e for e in fired(GOOD, "TURN-ON") if "Q304" in e]
+    """Q390's gate is pulled low by a contact outside the box through D392 -- a
+    diode that can only ever pull the gate DOWN."""
+    assert not [e for e in fired(GOOD, "TURN-ON") if "Q390" in e]
 
 
 def test_turn_on_fires_when_that_steering_diode_is_reversed():
-    bad = move_pin(move_pin(GOOD, "D303", "A", "LEVER_L"), "D303", "K", "Q1_GATE")
-    assert any("Q304" in e for e in fired(bad, "TURN-ON"))
+    bad = move_pin(move_pin(GOOD, "D392", "A", "CONTACT_12V"), "D392", "K", "PFET_GATE")
+    assert any("Q390" in e for e in fired(bad, "TURN-ON"))
 
 
 def test_turn_on_fires_on_an_nfet_gate_commanded_by_nothing():
@@ -785,26 +795,27 @@ def test_turn_on_fires_when_the_level_shifter_has_no_drive():
 
 
 # ── VR: the voltage line on every part ───────────────────────────────────────
-def test_vr_standoff_fires_on_a_5v_tvs_on_the_11v4_lever_node():
-    """Audit F-1 / C-H2: PESD5V0S4UD breaks down at 6.4 V; the lever node
-    idles at 11.4 V; the stop lamp is lit for ever."""
+def test_vr_standoff_fires_on_a_5v_tvs_on_a_12v_contact_node():
+    """Audit F-1 / C-H2: PESD5V0S4UD breaks down at 6.4 V; a contact node held
+    up to 12 V through its pull-up idles above that, so the clamp conducts for
+    ever and the driver it commands never turns off."""
     bad = GOOD.replace_part("D310", mpn="PESD5V0S4UD", v_max=5.0)
-    assert any("D310" in e and "LEVER_L" in e for e in fired(bad, "VR-STANDOFF"))
+    assert any("D310" in e and "CONTACT_12V" in e for e in fired(bad, "VR-STANDOFF"))
 
 
-def test_vr_domain_fires_when_the_lever_node_is_left_signal():
+def test_vr_domain_fires_when_the_contact_node_is_left_signal():
     """The defect was invisible because the net's domain defaulted to SIGNAL
     and the rule skipped it. No silent skip."""
-    bad = GOOD.replace_net("LEVER_L", domain="SIGNAL")
-    assert any("D310" in e and "LEVER_L" in e for e in fired(bad, "VR-DOMAIN"))
+    bad = GOOD.replace_net("CONTACT_12V", domain="SIGNAL")
+    assert any("D310" in e and "CONTACT_12V" in e for e in fired(bad, "VR-DOMAIN"))
 
 
-def test_vr_standoff_is_not_fooled_by_typing_the_lever_node_3v3():
-    """DERIVED: R313 and D303 hold it at V12 with no path to ground."""
+def test_vr_standoff_is_not_fooled_by_typing_the_contact_node_3v3():
+    """DERIVED: R391 and D392 hold it at V12 with no path to ground."""
     bad = GOOD.replace_part("D310", mpn="PESD5V0S4UD", v_max=5.0)
-    bad = bad.replace_net("LEVER_L", domain="3V3").replace_net("Q1_GATE", domain="3V3")
+    bad = bad.replace_net("CONTACT_12V", domain="3V3").replace_net("PFET_GATE", domain="3V3")
     errs = fired(bad, "VR-STANDOFF")
-    assert any("LEVER_L" in e and "typed 3V3" in e and "12 V" in e for e in errs)
+    assert any("CONTACT_12V" in e and "typed 3V3" in e and "12 V" in e for e in errs)
 
 
 def test_vr_standoff_covers_the_84v_bus():
@@ -817,7 +828,7 @@ def test_vr_rated_fires_on_a_tvs_with_no_rating():
     assert any("D310" in e for e in fired(GOOD.replace_part("D310", v_max=None), "VR-RATED"))
 
 
-@pytest.mark.parametrize("ref", ["C105", "D303", "D102", "D101", "Q301", "Q101"])
+@pytest.mark.parametrize("ref", ["C105", "D392", "D102", "D101", "Q301", "Q101"])
 def test_vr_rated_fires_for_every_kind_that_must_carry_a_rating(ref):
     assert any(ref in e for e in fired(GOOD.replace_part(ref, v_max=None), "VR-RATED"))
 
@@ -876,7 +887,7 @@ def test_vr_lets_a_25v_cap_sit_across_a_zener_clamped_gate():
 def test_vr_treats_a_zener_as_a_clamp_only_across_a_gate():
     assert not [e for e in rules.check_all(GOOD) if "D102" in e or "D106" in e]
     bad = GOOD.with_part(_d("D199", "OUTPUTS", "BZT52C5V1", "ZENER", 5.1))
-    bad = add_pin(add_pin(bad, "LEVER_L", "D199", "K"), "GND", "D199", "A")
+    bad = add_pin(add_pin(bad, "CONTACT_12V", "D199", "K"), "GND", "D199", "A")
     assert any("D199" in e for e in fired(bad, "VR-UNDER"))
 
 
@@ -919,13 +930,13 @@ def test_prot_fires_on_a_tvs_with_one_leg_floating():
 def test_prot_fires_when_every_array_anode_is_lifted():
     """Audit 1b."""
     bad = GOOD.without_pin("D310", "A2").without_pin("D310", "A5")
-    assert {"HL_LOW", "HORN_OUT", "LEVER_L", "STOP_OUT"} <= {
+    assert {"HL_LOW", "HORN_OUT", "CONTACT_12V", "STOP_OUT"} <= {
         m.group(1) for e in fired(bad, "PROT") if (m := re.search(r"net '(\w+)'", e))}
 
 
 def test_prot_fires_on_a_dnp_tvs():
     """Audit 1c."""
-    assert any("LEVER_L" in e and "DNP" in e
+    assert any("CONTACT_12V" in e and "DNP" in e
                for e in fired(GOOD.replace_part("D310", dnp=True), "PROT"))
 
 
@@ -994,7 +1005,7 @@ def test_mcp_bit7_is_never_netted(pin):
 
 
 # ── POL ──────────────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("ref", ["D104", "D303", "D102"])
+@pytest.mark.parametrize("ref", ["D104", "D392", "D102"])
 def test_pol_fires_on_a_diode_with_numbered_pins(ref):
     """Audit C-H6: D104 was netted as pin `1`; polarity undefined."""
     assert any(ref in e for e in fired(GOOD.replace_part(ref, pins=("1", "2")), "POL"))

@@ -561,31 +561,47 @@ def test_unidirectional_clamps_point_the_right_way(d, w):
 # BL's own copper never crosses an interface, the lever contacts are conditioned
 # on the board that owns the connector, and the FarDriver's 5.1 V is a sensor.
 # tests/test_plain_io.py holds the FUNCTION (released at reset, off at reset).
+#
+# ⚠️ Not one of these names a board.  Each DERIVES it from the harness terminal
+# the wire arrives on, because Task 4 moves J309 (with Q106/R114/R115) to POWER
+# and J306 (with the lever networks) to LOGIC.  A typed board name would have to
+# be edited in seven places, and the invariant is what gets lost in that edit.
+
+
+def _terminal_board(w, net):
+    """The board whose harness terminal `net` arrives on -- one board, or the
+    wire is landed in two places at once."""
+    boards = {c.board for c in w.connectors_on(net) if c.leaves_box}
+    assert len(boards) == 1, f"{net} leaves the box from {sorted(boards)}"
+    return boards.pop()
 
 
 def test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross(d, w):
     """The command and the readback cross STACK; BL's own copper does not. One
     walked-out inter-board contact must not be able to open the cut's return
-    path or short it."""
-    exits = [c for c in w.connectors_on("BL") if c.leaves_box]
-    assert exits and all(c.board == "OUTPUTS" for c in exits)
+    path or short it. The cut FET and its bias live on the board BL leaves from."""
+    board = _terminal_board(w, "BL")
     assert not [c for c in w.connectors_on("BL") if c.interface], (
         "BL itself crosses an inter-board connector: one walked-out contact "
         "and the motor cut fails, silently")
-    cut = [q for q in w.parts_on("BL", {"NFET"}, board="OUTPUTS")
+    cut = [q for q in w.parts_on("BL", {"NFET"}, board=board)
            if w.net(q.refdes, "D") == "BL"]
-    assert cut, "nothing on OUTPUTS can pull BL low"
+    assert cut, f"nothing on {board}, where BL leaves, can pull BL low"
+    gate = w.net(cut[0].refdes, "G")
     assert w.net(cut[0].refdes, "S") == "GND", "the cut FET has no source"
+    assert [r for r in w.between(gate, "GND", {"R"}) if r.board == board], (
+        f"the cut FET's bias-OFF is not on {board} with it: an interface "
+        f"between a gate and its pull-down is a cut waiting for a bad contact")
     copy = w.between("BL", "BL_SENSE", {"R"})
     assert copy and ohms(copy[0]) >= 100e3
     assert w.parts_on("BL_SENSE") and not w.between("BL", "BL_SENSE", FETS | {"D"})
 
 
 def test_the_throttle_supply_is_sensed_and_never_used_as_a_rail(d, w):
-    """ACC+ comes in on J309 and feeds the sense divider alone (IO-8): nothing
+    """ACC+ comes in beside BL and feeds the sense divider alone (IO-8): nothing
     on the module is powered or pulled up from the controller's 5.1 V."""
-    feed = w.connectors_on("ACC_PLUS")
-    assert feed and all(c.board == "OUTPUTS" and c.leaves_box for c in feed)
+    assert _terminal_board(w, "ACC_PLUS") == _terminal_board(w, "BL"), (
+        "ACC+ and BL share one FarDriver terminal")
     top = w.between("ACC_PLUS", "ACC_SENSE", {"R"})
     assert len(top) == 1 and ohms(top[0]) >= 100e3
     others = {r.refdes for r in w.parts_on("ACC_PLUS", {"R"})} - {top[0].refdes}
@@ -595,22 +611,28 @@ def test_the_throttle_supply_is_sensed_and_never_used_as_a_rail(d, w):
 @pytest.mark.parametrize("wire,node", [("IN05_BRAKE_L", "LEVER_L"),
                                        ("IN06_BRAKE_R", "LEVER_R")])
 def test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board(d, w, wire, node):
-    """plan §4 class A, and the lever WIRE is the node: 1 kΩ pull-up and 1 kΩ
-    series on OUTPUTS, where J306 and the array are, and the 100 nF at the S3
-    pin on LOGIC.  Only the conditioned signal crosses STACK."""
-    assert [c.refdes for c in w.connectors_on(node)
-            if c.leaves_box and c.board == "OUTPUTS"]
+    """plan §4 class A, and the lever WIRE is the node: the 1 kΩ pull-up and the
+    1 kΩ series sit on the board the lever terminal is on, beside its array, and
+    the 100 nF sits at the S3's pin on the S3's board. Only the conditioned
+    signal travels."""
+    board = _terminal_board(w, node)
+    mcu = d.part("U401").board
     pull = w.between(node, "V3P3", {"R"})
-    assert pull and pull[0].board == "OUTPUTS" and pull[0].value == "1k"
+    assert pull and pull[0].board == board and pull[0].value == "1k", (
+        f"{node}'s pull-up must be on {board}, at its terminal")
     series = w.between(node, wire, {"R"})
-    assert series and series[0].board == "OUTPUTS", f"{wire} has no series resistor"
+    assert series and series[0].board == board, f"{wire} has no series resistor"
     assert series[0].value == "1k"
     assert not w.between(node, wire, {"D"}), (
         "no steering diode stands between the lever and its input any more")
-    assert any(p.kind == "C" and p.board == "LOGIC" for p in w.parts_on(wire, {"C"})), \
-        f"{wire} has no capacitor at the MCU pin (plan §4 class A)"
-    on_drv = [c for c in w.connectors_on("V3P3") if c.board == "OUTPUTS" and c.interface]
-    assert on_drv, "V3P3 has no contact onto OUTPUTS"
+    assert any(p.kind == "C" and p.board == mcu for p in w.parts_on(wire, {"C"})), \
+        f"{wire} has no capacitor at the MCU pin on {mcu} (plan §4 class A)"
+    assert [t for t in w.parts_on(node, {"TVS"}) if t.board == board], (
+        f"{node} has no clamp on {board}, the board its terminal is on")
+    rail_reaches = ([c for c in w.connectors_on("V3P3")
+                     if c.board == board and c.interface]
+                    + [p for p in w.parts_on("V3P3", {"IC"}) if p.board == board])
+    assert rail_reaches, f"V3P3 does not reach {board}, where the pull-up is"
 
 
 # ─── LOGIC ───────────────────────────────────────────────────────────────────
@@ -796,6 +818,13 @@ DEFECTS = [
      lambda d: d.replace_part("R317", board="LOGIC"),
      test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board,
      {"wire": "IN05_BRAKE_L", "node": "LEVER_L"}),
+    ("the lever array left behind on another board",
+     lambda d: d.replace_part("D313", board="LOGIC"),
+     test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board,
+     {"wire": "IN05_BRAKE_L", "node": "LEVER_L"}),
+    ("the cut FET's bias-OFF an interface away from its gate",
+     lambda d: d.replace_part("R115", board="LOGIC"),
+     test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross, {}),
     ("the throttle's 5.1 V pressed into service as a pull-up",
      lambda d: move_pin(d, "R346", "2", "ACC_PLUS"),
      test_the_throttle_supply_is_sensed_and_never_used_as_a_rail, {}),

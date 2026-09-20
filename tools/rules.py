@@ -26,7 +26,7 @@ Every error string starts with a stable rule ID, then a colon:
   BD-2  BD-4
   GPIO-TAG  GPIO-DUP  GPIO-PAD  GPIO-43  GPIO-ADC1  GPIO-STRAP
   GPIO-RESET-PULL
-  D14  TURN-ON
+  D14  TURN-ON  GATE-VGS
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
   HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER  VR-CLAMP
@@ -959,6 +959,162 @@ def _has_driver(ix: _Ix, gate: str, source: set[str]) -> bool:
     return False
 
 
+# ── GATE-VGS: a commanded gate must REACH the V_GS its part is specified at ───
+#: |V_GS| each FET's on-state is specified at, from its datasheet. Beside
+#: DATASHEET_V_MAX, and read the same way: (mpn prefix, volts, where it says so).
+#: An entry is required for any FET a logic pin commands through a divider --
+#: no figure means no check, so a missing one is an error, not a pass.
+#: ⭐ Found by review 2026-09-19: R114 = 100k puts 0.30 V on Q106's gate, and the
+#: motor cut simply never works. Integrity passes, D14 passes (the bias-OFF is
+#: there), TURN-ON passes (a pin does reach the gate), VR-* pass, and all 1233
+#: tests pass. The topology is right; only the RATIO is wrong, and nothing was
+#: looking at the ratio.
+DATASHEET_VGS_SPEC: tuple[tuple[str, float, str], ...] = (
+    ("AO3400A", 2.5, "AOS AO3400A: R_DS(on) 48 mΩ max is specified at "
+                     "V_GS = 2.5 V, the lowest gate drive the part is "
+                     "characterised at"),
+)
+
+#: A source declared within this of 0 V counts as sitting at GROUND potential.
+_AT_RAIL_V = 0.2
+
+
+def gate_drive_level(d: Design) -> list[str]:
+    """Can the command actually switch the FET?
+
+    D14 asks whether the gate rests OFF. TURN-ON asks whether anything can
+    reach it. Neither reads the DIVIDER the series resistor and the bias
+    resistor form, so a series resistor of the wrong decade leaves a switch
+    that is wired correctly, biased correctly, commanded by the right pin, and
+    does not switch.
+
+    |V_GS| at the divider is |V_source - V_on| × R_bias / (R_series + R_bias),
+    where V_on is the level the driver asserts to turn this FET on: its own
+    rail for a low-side N-FET, 0 V for a P-FET resting at its source. The BIAS
+    is taken worst case (the smallest of them, which loses the most drive); the
+    SERIES is the lightest resistive path to a logic pin, because that is the
+    path the copper drives through -- two pins on one gate and the stronger wins.
+
+    ⛔ The rule REFUSES the cases it cannot compute rather than passing them: a
+    source that is not at ground potential, a swing it cannot read, or an mpn
+    with no stated V_GS. (A P-FET whose source is above 3.3 V and whose gate a
+    logic pin pulls down is LV-LOGIC's error, not this one: that pin sees the
+    rail.)
+    """
+    ix = _index(d)
+    errs = []
+    for q in ix.fets():
+        if q.dnp or not {"G", "S"} <= set(q.pins):
+            continue
+        gate, source = ix.nets_of_pin(q.refdes, "G"), ix.nets_of_pin(q.refdes, "S")
+        if not gate or not source or set(gate) & set(source):
+            continue                            # integrity / D14 / TURN-ON own these
+        g, s = gate[0], source[0]
+        drive = _logic_drive(ix, g, set(source))
+        if drive is None:
+            continue                            # no logic pin commands this gate
+        series, driver = drive
+        biases = [r for r in ix.parts.values()
+                  if r.kind == "R" and not r.dnp and _joins(ix, r, gate, source)]
+        ohms = [x for x in (resistance(r.value) for r in biases) if x is not None]
+        if not ohms:
+            continue                            # D14 reports a missing bias-OFF
+        # ⚠️ 0 Ω is a real value here, not "absent": a 0 Ω link or NET-TIE from
+        # gate to source passes D14 (a resistor IS there) and TURN-ON (a pin does
+        # reach the gate) while holding V_GS at zero for ever.
+        bias = min(ohms)
+        v_src, v_rail = ix.declared(s), ix.declared(driver)
+        v_on = 0.0 if q.kind == "PFET" else v_rail
+        if v_src is None or v_on is None:
+            mute = f"source {s!r}" if v_src is None else f"driver {driver!r}"
+            errs.append(f"GATE-VGS: {q.refdes} ({q.kind} {q.mpn}) is commanded "
+                        f"from {driver!r} through {series:g} Ω, and the swing "
+                        f"across its gate divider cannot be read: {mute} "
+                        f"declares no voltage. An unknown swing is an unchecked "
+                        f"gate.")
+            continue
+        if q.kind != "PFET" and v_src > _AT_RAIL_V:
+            errs.append(f"GATE-VGS: {q.refdes} ({q.kind} {q.mpn}) is a HIGH-SIDE "
+                        f"N-FET -- its source {s!r} sits at {v_src:g} V, so its "
+                        f"gate must be driven ABOVE that and the {v_rail:g} V "
+                        f"logic pin on {driver!r} cannot. This rule computes "
+                        f"|V_GS| only for a source at ground potential; a "
+                        f"bootstrap or charge pump needs a check of its own.")
+            continue
+        spec = next((v for pre, v, why in DATASHEET_VGS_SPEC
+                     if q.mpn.upper().startswith(pre)), None)
+        why = next((why for pre, _v, why in DATASHEET_VGS_SPEC
+                    if q.mpn.upper().startswith(pre)), "")
+        if spec is None:
+            errs.append(f"GATE-VGS: {q.refdes} ({q.kind} {q.mpn}) has its gate "
+                        f"{g!r} commanded through a divider, and "
+                        f"DATASHEET_VGS_SPEC states no V_GS its on-state is "
+                        f"specified at. Read it off the datasheet and add it "
+                        f"there; without it the divider is unchecked.")
+            continue
+        swing = abs(v_src - v_on)
+        vgs = swing * bias / (series + bias) if series + bias > 0 else 0.0
+        if vgs + 1e-9 < spec:
+            errs.append(f"GATE-VGS: {q.refdes} ({q.kind} {q.mpn}) is commanded "
+                        f"from {driver!r} through {series:g} Ω against a "
+                        f"{bias:g} Ω bias, so its gate reaches only {vgs:.3g} V "
+                        f"of a {swing:g} V swing. Its on-state is specified at "
+                        f"|V_GS| = {spec:g} V ({why}). Below that the part "
+                        f"switches somewhere on its transfer curve, where "
+                        f"R_DS(on) is not specified at all.")
+    return errs
+
+
+def _logic_pin_net(ix: _Ix, name: str) -> bool:
+    """A net a logic pin drives: it carries a gpio tag, or an MCU or expander
+    pin lands on it."""
+    if ix.nets[name].gpio:
+        return True
+    return any(ref in ix.parts
+               and ("ESP32" in ix.parts[ref].mpn.upper()
+                    or ix.parts[ref].mpn.upper().startswith("MCP23017"))
+               for ref, _ in ix.nets[name].pins)
+
+
+def _logic_drive(ix: _Ix, gate: str, source: set[str]) -> tuple[float, str] | None:
+    """(series ohms, the net the logic pin drives) for the LIGHTEST resistive
+    path from `gate` to a net a logic pin drives, or None if none does. Two
+    pins on one gate means the stronger one wins, which is what the copper
+    does.
+
+    ⛔ Two kinds of net are never entered, and both matter:
+      * a RAIL -- the bias resistor ends on one, and every rail meets an MCU
+        supply pin, so entering one would find a 'driver' through the very
+        resistor that holds the gate OFF;
+      * a net that LEAVES THE BOX -- the outside world sets it, so a logic pin
+        on the far side is not driving this gate through it. Without this, Q105's
+        84 V level-shifter gate walks out through KSW and back in through the
+        key-sense divider and reports KEY_SENSE_PIN, an ADC input 1.33 MΩ away,
+        as its driver."""
+    import heapq
+    best: dict[str, float] = {gate: 0.0}
+    heap = [(0.0, gate)]
+    while heap:
+        ohms, net = heapq.heappop(heap)
+        if ohms > best.get(net, math.inf):
+            continue
+        if _logic_pin_net(ix, net):
+            return (ohms, net)
+        for other, part, _f, _a, _b in ix.adj.get(net, ()):
+            if (part.dnp or part.kind != "R" or len(part.pins) != 2
+                    or other in source or ix.is_stiff(other)
+                    or ix.leaves_box_directly(other)):
+                continue
+            step = resistance(part.value)
+            if step is None:
+                continue
+            total = ohms + step
+            if total < best.get(other, math.inf):
+                best[other] = total
+                heapq.heappush(heap, (total, other))
+    return None
+
+
 # ── VR: check the voltage line on EVERY part ─────────────────────────────────
 def voltage_ratings(d: Design) -> list[str]:
     ix = _index(d)
@@ -1498,6 +1654,7 @@ ALL_RULES = (
     gpio_rules,
     d14_gate_bias,
     turn_on_path,
+    gate_drive_level,
     voltage_ratings,
     logic_pin_levels,
     protection,
