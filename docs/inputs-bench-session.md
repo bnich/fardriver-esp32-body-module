@@ -5,7 +5,8 @@
 Companion to `can18-investigation.md` (repository `chaojie-display-protocol`, not yet published),
 which is its template. This session closes the **input** side of the ESP32 module — the measurements
 `plan.md` §5 still lists as ⬜ and that every remaining design step waits on. `plan.md` and `bom.md`
-sit beside this file; `brake-circuit.md` is in the build repository (`Revv1-FS-72v-Conversion/docs/`).
+sit beside this file; the work order and checklist are in the build repository
+(`Revv1-FS-72v-Conversion/docs/`).
 
 ---
 
@@ -19,14 +20,14 @@ path is linear:
 The module parts were received 2026-09-18 (`bom.md`). These measurements need **the bike**, not the
 parts.
 
-⚠️ **These are not survey measurements — each one gates a decision, and M3 gates the brake circuit,
-which has to be *built*:**
+⚠️ **These are not survey measurements — each one gates a decision, and M3 gates a connector that
+has to be *ordered*:**
 
 | # | What it decides | What is blocked until it lands |
 |---|---|---|
 | **A2** | The new bar-mount switch sets: contact pairs, momentary vs latching, and how the 3-position lighting slider is wired | IN-01…04 and IN-08…11; the **D21** slider decode depends on OFF/A/B vs OFF/A/A+B |
-| **M2** | Which wires in the handlebar loom (connector "1T3 10") are the **brake-lever** wires | The brake circuit's lever inputs (`brake-circuit.md` §2). Nothing in the loom is cut until they are known; the lever pairs are the only part of it that is re-used |
-| **M3** | Brake lever type: two-wire switch (NO or NC) or three-wire sensor (output type), one pair per lever | ⚠️ **The brake circuit build** (`brake-circuit.md` §4, step 1 in §6) — nothing is wired to the levers until it lands. Also **IN-05/06** |
+| **M2** | Which wires in the handlebar loom (connector "1T3 10") are the **brake-lever** wires | IN-05/06, the module's two fast inputs. Nothing in the loom is cut until they are known; the lever pairs are the only part of it that is re-used |
+| **M3** | Brake lever type: two-wire switch (NO or NC) or three-wire sensor (output type), one pair per lever | ⚠️ **`J306`, the lever terminal** (plan §9.2) — a three-wire Hall lever needs a supply pin, which changes its size, and the size has to be right before the boards are ordered. Also **IN-05/06** and the firmware's brake logic |
 | **M8** | Red button is a true momentary dry contact | **IN-07** and therefore **D4**, the whole boost scheme |
 | **M9** | Which serial line is the controller's **transmit** — the label is ambiguous | ⚠️ **IN-13/IN-14.** Tapping the wrong one gives a listener that hears nothing. Also settles whether the Bluetooth is a dongle or integrated |
 | **M10** | KEY node voltage, and where the module's fused B+ tap physically lands | **IN-12** and the D13 power tap — plan §3.2.5 |
@@ -230,7 +231,7 @@ shared ground. Nothing inside needed cutting (unlike the left pod).
 | `blue` | **ground** — common for all three controls | module GND |
 | `black` | slider — **running light**: closed in positions 2 **and** 3 | IN-08a |
 | `yellow` | slider — **headlight**: closed in position 3 only | IN-08b |
-| `red` | **run/off toggle** | `brake-circuit.md` §2.1 — R4 pull-up + Q2 gate; sensed on IN-11 |
+| `red` | **run/off toggle** | IN-11 on expander #1, a plain class-A contact (closed in RUN). The kill is in firmware (plan D23) |
 | `green` | **start button** (momentary) | a spare sensed input on expander #1. The key switch alone starts the controller (plan D24), so this button drives nothing |
 
 ⭐ **The slider is the `OFF / A / A+B` pattern** — position 1 nothing, position 2 `black`, position 3
@@ -273,14 +274,14 @@ the board is bought, not after.
 
 ## 6. SITTING B — the brake levers (nothing live)
 
-> Nothing is live — ohmmeter only. The levers feed the **brake circuit** (`brake-circuit.md`),
-> which cuts the motor, lights the brake lamp and signals the module. Nothing is wired to the levers
-> until B1 and B2 are recorded.
+>  Nothing is live — ohmmeter only. Each lever is a **plain input to the module** on `J306`
+> (plan D23): the firmware reads it on an interrupt and then cuts the motor and lights the brake
+> lamp. Nothing is wired to the levers until B1 and B2 are recorded.
 
 ### ✔ B1 — M2: find the brake-lever wires in the handlebar loom ("1T3 10")
 
 The lever wires **travel in the handlebar loom** (connector "1T3 10"), not the throttle harness. Only
-the lever pairs are re-used — they become the brake circuit's inputs (§2 there) and IN-05/06; the
+the lever pairs are re-used — they become IN-05/06 on `J306`; the
 rest of the loom is unused.
 
 1. Unplug the loom at both ends. **Photograph both connector faces.**
@@ -290,8 +291,8 @@ rest of the loom is unused.
    is that lever's switch** — this is the whole measurement.
 5. Note whether the change is **open→short** (normally-open) or **short→open** (normally-closed).
 
-⚠️ **A normally-CLOSED lever switch inverts the brake circuit** (motor cut and lamp on at rest). Record
-what you see, not what you expect.
+⚠️ **A normally-CLOSED lever switch inverts the firmware's reading** (it would see "braking" at rest,
+so the cut and the lamp would be on). Record what you see, not what you expect.
 
 | Wire (colour / cavity) | Ω, levers released | Ω, LEFT pulled | Ω, RIGHT pulled | Verdict |
 |---|---|---|---|---|
@@ -302,21 +303,25 @@ what you see, not what you expect.
 **Record:** total wire count ______ · lever wires identified: ______ · **NO or NC** ______ ·
 **one pair per lever, or a shared common** ______
 
-### ✔ B2 — M3: the lever type (`brake-circuit.md` §4)
+### ✔ B2 — M3: the lever type
 
-The brake circuit works as drawn for a **normally-open dry contact** or a **sinking open-collector
-sensor output**. Only a few milliamps flow through the lever, so a reed or microswitch rating is not a
-concern.
+The module's class-A input works as drawn for a **normally-open dry contact** or a **sinking
+open-collector sensor output** — a 1 kΩ pull-up to 3.3 V, 1 kΩ series and 100 nF at the pin, with a
+5 V `SMS05T1G` array at the terminal (plan §4). Only a few milliamps flow through the lever, so a
+reed or microswitch rating is not a concern.
 
 1. **At each lever, count the wires.** Two = a switch. Three = a powered sensor (supply, ground,
    signal).
 2. **Two wires:** ohmmeter across the pair, released vs squeezed.
    - Open → ~0 Ω: **normally open** ✅ — works as drawn.
-   - ~0 Ω → open: **normally closed** ⚠️ — don't wire it as drawn; it needs a different arrangement.
-3. **Three wires:** don't power it here. Record the colours and any marking. The signal must be an
-   **open-collector / open-drain output that sinks, rated ≥15 V**; ⚠️ a **push-pull 5 V output does
-   not work** — it holds the brake lamp half-on. ⬜ Settle the output type from a datasheet or a
-   separate bench test before connecting it.
+   - ~0 Ω → open: **normally closed** ⚠️ — the hardware is unchanged, but the firmware's sense
+     inverts; say so loudly. ⭐ A normally-closed lever would also make a **broken wire detectable**,
+     which the normally-open case is not.
+3. **Three wires:** don't power it here. Record the colours and any marking, and ⚠️ **note that a
+   supply pin makes `J306` a 4-way terminal, not a 3-way** — that is the part of M3 the board order
+   depends on. The signal must be an **open-collector / open-drain output that sinks**; ⚠️ a
+   **push-pull output fights the module's 1 kΩ pull-up**. ⬜ Settle the output type from a datasheet
+   or a separate bench test before connecting it.
 4. If you can, open a lever housing or read the part: **reed or microswitch?**
 
 | Lever | Wires | Colours | Ω released | Ω squeezed | Type · NO / NC |
@@ -324,7 +329,7 @@ concern.
 | Left | | | | | |
 | Right | | | | | |
 
-→ **Results feed the brake circuit build** (step 1, `brake-circuit.md` §6) **and IN-05/06.**
+→ **Results set `J306`'s size** (plan §9.2) **and IN-05/06.**
 
 ---
 
@@ -397,7 +402,8 @@ Two halves. **Only (a) can be done now.**
 
 **(a) Routing — do it now, it is a decision not a reading.** Confirm physically where the module's
 fused B+ tap lands: plan §3.2.5 puts it **downstream of the XT90-S, alongside the key-switch tap**,
-on its own **2 A fast-blow `KLKD002`** in an inline holder. Walk the intended path and confirm there
+on its own **3 A fast-blow `KLKD003`** in an inline holder — ⛔ a different fuse from the key
+branch's, which stays 2 A. Walk the intended path and confirm there
 is room for the holder and that the tap point is reachable with the pack in place.
 **Route confirmed / problem found: ______**
 
@@ -413,8 +419,8 @@ divider ratio**, and that is already fixed by design: **330 k / 10 k, 84 V → 2
 | # | Measurement | Result | Date | Feeds |
 |---|---|---|---|---|
 | **A2** | Switch sets: wire count, contacts per position, momentary/latching, slider wiring (`OFF/A/B` or `OFF/A/A+B`) | | | IN-01…04, IN-08…11, D21 decode, board C |
-| **M2** | Handlebar loom ("1T3 10"): lever wires identified, NO/NC, one pair per lever or shared | | | brake circuit inputs, IN-05/06 |
-| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | | | ⚠️ **brake circuit build** (`brake-circuit.md` §4, §6), IN-05/06 |
+| **M2** | Handlebar loom ("1T3 10"): lever wires identified, NO/NC, one pair per lever or shared | | | IN-05/06 |
+| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | | | ⚠️ **`J306`'s size** (plan §9.2), IN-05/06, the firmware's brake logic |
 | **M8** | Red button: released/pressed Ω, momentary confirmed, clean dry contact | | | IN-07, D4 |
 | **M9** | Controller TX line identified; bitrate; dongle vs integrated | | | IN-13/14 |
 | C1.5 | Boost wire (PIN17) idle voltage | | | boost FET vs PC817 |
@@ -429,9 +435,10 @@ divider ratio**, and that is already fixed by design: **330 k / 10 k, 84 V → 2
   wiring sets the D21 decode. ⚠️ **If high/low is momentary, D21's interlock needs re-specifying.**
 - **M2 → checklist Phase 5 and work order §3.** Mark which wires in "1T3 10" are the lever pairs; the
   rest of the loom is unused. ⚠️ **If the lever switches are normally-CLOSED**, say so loudly — it
-  inverts the brake circuit and the firmware.
-- **M3 → `brake-circuit.md` §4** (record the type there), then **build step 1** (§6) and run the
-  **§7.1–§7.2 tests — issue #8's gate before riding**. Also checklist PHASE 5B and work order §5.3.
+  inverts what the firmware reads.
+- **M3 → plan §5 and §9.2.** Record the type, and **settle `J306`'s size before the boards are
+  ordered**. Then the brake acceptance test — a lever cuts the motor and lights the lamp — is
+  **issue #8's gate before riding**. Also checklist PHASE 5B and work order §5.3.
 - **M8 → plan D4.** If it is not a clean momentary dry contact, the boost mode scheme changes.
 - **M9 → plan §3.1.3.** Assign IN-13 to the measured transmit line. ⭐ **If the Bluetooth is integrated,
   delete IN-14** and note that the module needs only one RX tap — that also frees a UART.

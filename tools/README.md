@@ -21,8 +21,9 @@ After any change to the netlist or the model:
 python3 -m tools.integrity        # is the netlist a circuit at all?  must print "0 integrity problem(s)"
 python3 -m pytest                 # rules and unit tests              hermetic: no library fetch
 python3 -m tools.rules            # every rule, and the warnings      exit 1 on a violation
-python3 -m tools.board_fit        # area, height and plug-room budget exit 1 on FAIL, 2 over the estimate
+python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL, 2 over the estimate
 python3 -m tools.gpio_budget      # pin budget                        exit 1 on FAIL
+python3 -m tools.power_budget     # the 12 V load, choke and tap fuse exit 1 on FAIL
 python3 tools/soft_start.py       # D13 soft start                    exit 1 on FAIL
 python3 tools/build_project.py    # the EasyEDA project, and build-eprj3/layout-rules.txt
 python3 -m tools.jlc_bom          # JLC's BOM, the loose parts, the hand-soldered parts
@@ -44,10 +45,11 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `netlist.py` | **The design** — every part, net and connector, per board, and every LCSC code. The one source every tool below reads |
 | `integrity.py` | Structural gate: every pin lands, every inter-board net has real contacts, every interface is two identical halves on neighbouring boards, facing each other |
 | `rules.py` | Safety and pin rules, each named for the decision it protects (`python3 -m tools.rules` prints them) |
-| `board_params.py` | The cavity, the enclosure allowances and the stack parameters — and the **derived** stack height |
-| `board_fit.py` | Area, height and plug-room budget (`board-fit.py` is a two-line shim for it) |
+| `board_params.py` | The board envelope the design requires, the enclosure allowances, the cavity that envelope implies — and the **derived** stack height |
+| `board_fit.py` | Area, height and connector-row budget, and the cavity the design requires (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
-| `soft_start.py` | The D13 main-switch gate network, simulated |
+| `power_budget.py` | The 12 V load against the parts that carry it: the converter, its input choke and the B+ tap fuse, at the LVC. It states which case it models |
+| `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in |
 | `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
 | `build_project.py` | Generates the EasyEDA Pro project for the three boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
@@ -101,12 +103,22 @@ python3 -m tools.board_fit
 Prints, per board and side, the raw body area and density (**FAIL above 75 %** of the usable
 side) and a naive shelf-pack length against the board's length (**FAIL when it does not fit** —
 the tool then has not shown the board can be built; a placed outline overrules it, an argument
-does not). Then the derived stack, gap by gap, against the height available; every unconfirmed
-height; and each board's harness headers end to end against the envelope's edges, with the room a
-mated plug and the bend of its wire need to the wall. One verdict: exit 1 when a budget fails, 2 when
-the stack is over the estimated envelope. A body with no footprint that is a connector, or 2 mm tall
-or more, fails the run: the budget cannot see it. The first line says PROVISIONAL for as long as M18
-is unmeasured or the enclosure unmodelled.
+does not). Then the derived stack, gap by gap, against the height available, with every unconfirmed
+height and every **keep-out** a bottom-side part imposes on the board below it.
+
+⚠️ **ROWS replaced the per-wall plug verdict** when the connectors were grouped by kind (IO-6). There
+is no longer a budget of "every header's plug against the nearest wall": every harness plug is on
+**one face**, so the check is **one row per face** — that face's harness headers end to end, 1 mm
+apart, against the length of the board they stand on, with a terminal under a board counted in its
+own row and not in the one above it. The room a mated plug and its wire's bend need is no longer a
+budget either: it is a **term of the cavity this design requires**, which the report states on its
+second line against M18's estimate and names the excess.
+
+One verdict: exit 1 when a budget fails, 2 when the stack is over the estimated envelope. A body with
+no footprint that is a connector, or 2 mm tall or more, fails the run: the budget cannot see it. The
+first line says PROVISIONAL for as long as M18 is unmeasured or the enclosure unmodelled — **and
+only the HEIGHT verdict is provisional.** Area, pack and rows answer to the envelope the design
+itself requires (IO-14), which is a fact about the design.
 
 ### `gpio_budget.py`
 
@@ -124,6 +136,27 @@ series parts (stopping at supplies) to find what the net drives, whether it is a
 leaves. `report(design)` fires on a GPIO outside the pool, a GPIO given to two nets, anything driven
 from GPIO43, an analog net off ADC1, and an ADC net that reaches no GPIO. A strapping pin may carry
 its bias parts and the internal service pads only.
+
+### `power_budget.py`
+
+```bash
+python3 -m tools.power_budget
+```
+
+The 12 V load against the parts that carry it, sized at the 60.0 V LVC because a converter is a
+constant-power load. The base is plan §3.2.3's measured-and-estimated budget; **the aux load is
+derived from the netlist** — every 12 V and 5 V aux channel at the design's per-output current, plus
+the 5 V buck's own standing draw — and the 12 V converter and its choke are found **through the
+copper**, never by refdes. It prints three cases and says which one the gates use:
+
+- **NOMINAL** — IO-2's eight channels at 1 A each, **8.47 A**, and the converter, choke and tap fuse
+  against their derates. ⛔ Never call this "worst case": it is not the ceiling.
+- **LIMITED** — every limiter at its upper threshold, ~11.4 A, over the choke's and the fuse's
+  derates by design. That is eight simultaneous output faults, and a fast-blow fuse opening on it is
+  the fuse working.
+- **SHED** — every aux channel released, which the firmware does at key-off (IO-16). This is the load
+  `soft_start` charges `Q101`'s key-off decay with. ⚠️ The buck's standing draw stays in it: `U305`'s
+  `EN` is tied to its own `PVIN`, so no firmware can release the 5 V rail.
 
 ### `soft_start.py`
 
@@ -374,3 +407,7 @@ are renamed to the pins they carry:
 - **A height is confirmed only if it was read off the manufacturer's drawing** — and `source` says
   which. Everything else is reported as unconfirmed, every run.
 - **Every constant states what it protects**, so it cannot be silently re-broken.
+- **Rows and pitches are held by the tests, not by `rules.py`:** `tests/test_rows.py` puts every
+  harness connector on its row's face, gives 3.50 mm, 5.08 mm and 7.62 mm to one group each, refuses
+  a 12 V terminal that shares a size with an input terminal, and requires every class-A network to
+  sit on the board its terminal is on. Each check is proven to fire on a deliberate mistake.

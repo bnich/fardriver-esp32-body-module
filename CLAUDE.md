@@ -5,12 +5,13 @@ Parent guidance: `../CLAUDE.md` — repo map, conventions, public-repo hygiene, 
 ## What this is
 
 Design stage — no firmware, no module hardware built. `docs/plan.md` is the architecture and the
-decision log (D1–D25); its header carries the critical path. `docs/bom.md` **owns procurement** of
+decision log (D1–D27); its header carries the critical path. `docs/bom.md` **owns procurement** of
 what the owner buys: the breadboard parts, the parts JLC cannot place (hand-soldered), and the parts
 ordered loose with the boards and fitted by the owner. Change a part there first, then the plan
 section that line's Notes names. The LCSC part JLC places for each part lives in `tools/netlist.py`.
 
-The custom build is **four stacked boards — HVIN · CONV · DRV · BRAIN** (plan §9.2). `tools/netlist.py`
+The custom build is **three stacked boards — POWER · OUTPUTS · LOGIC** (plan §9.2), each carrying one
+row of harness connectors on one face of the box. `tools/netlist.py`
 **is** that design: parts, nets, connectors, board assignment. The DevKitC-1 pin map in plan §3.1.3 is
 the **prototype's**; the custom board carries the pin *rules*, not those GPIO numbers.
 
@@ -43,7 +44,7 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   symbol pins, footprint title). The tests hold the design to it offline and hold it to the live
   library where reachable, so a code pointing at the wrong part, or a stale fixture, fails.
 - **The build writes `build-eprj3/layout-rules.txt`:** the HV net class (1.25 mm, IPC-2221B B2) over
-  HVIN's and CONV's pack-voltage nets. The generated PCBs carry only the board-wide 0.2 mm, so the
+  POWER's pack-voltage nets. The generated PCBs carry only the board-wide 0.2 mm, so the
   owner sets the class up in the editor before routing. Never try to emit it into the project.
 - After the owner exports a board's netlist from EasyEDA (to `~/Downloads`), prove it:
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
@@ -82,23 +83,32 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   and `VR-POWER` its V²/R against its package (a logic pin's drive capped at 40 mA ESP32, 25 mA MCP).
 - **A TVS states `v_clamp`**, its datasheet clamping voltage: `VR-CLAMP` holds every part it
   protects to that figure (an `MCP23017` pin to its 20 mA I<sub>IK</sub>). A TVS without one fails.
-- **`LISTEN`** (firmware reaches a brake/kill net only through ≥ 100 kΩ), **`VR-CLAMP`**,
-  **`VR-POWER`**, **`PULL-DIR`** (a contact to ground needs a pull-up) and **`BUS-ORDER`** (a power
-  bus reads the same from both ends and never puts two rails side by side) are each proven to fire
-  on a mutation of the real netlist: `tests/test_rules_mutations.py`, and
+- **`VR-CLAMP`**, **`VR-POWER`**, **`PULL-DIR`** (a contact to ground needs a pull-up) and
+  **`BUS-ORDER`** (a power bus reads the same from both ends and never puts two rails side by side)
+  are each proven to fire on a mutation of the real netlist: `tests/test_rules_mutations.py`, and
   `tests/test_rules.py` for `BUS-ORDER`. A new rule is not a rule until a test shows it firing on
   the defect it names.
-- **Board-to-board: one crossing per interface, between neighbouring boards.** The lower half sits
-  on top of the lower board, the upper half **under** the upper board, and its footprint is
-  generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A same-numbered dual-row footprint
-  cannot be aligned by any turn — STACK's signals would land on ground. `integrity` checks each
-  interface is two identical halves on neighbours, facing each other.
-- **Harness terminals come in families by job:** 7.62 mm Kefa for pack voltage (`J101` only),
-  5.08 mm Kangnex for the levers and the brake/kill (`J306`, `J309`), 3.81 mm Kangnex for the rest.
-  A smaller plug seats offset in a larger header of its pitch, so **every safety-relevant terminal
-  (84 V, levers, `BL` / `ACC+`, `RUN`, boost) keeps a (pitch, positions) size nothing else in its
-  family shares** (`tests/test_interconnect.py`). A parked terminal keeps its footprint, not its
-  header.
+- **Board-to-board: four interfaces on two junctions, one crossing each, between neighbouring
+  boards.** POWER ↔ OUTPUTS carries **`PWR-OUT`** (1 × 23: 12 V on ten contacts, ground on ten, the
+  logic 5 V on two, `KEY_SENSE` between grounds) and **`CTRL`** (2 × 11, the controller signals
+  relayed up); OUTPUTS ↔ LOGIC carries **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 28, every signal
+  beside a ground). ⛔ **HV-LINK is gone** — POWER is one board, so no 84 V crosses an interface.
+  The lower half sits on top of the lower board, the upper half **under** the upper board, and its
+  footprint is generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A same-numbered
+  dual-row footprint cannot be aligned by any turn — STACK's signals would land on ground.
+  `integrity` checks each interface is two identical halves on neighbours, facing each other.
+  ⛔ **STACK's pinout is derived from `_STACK_SIGNALS`** and has been renumbered twice: regenerate it
+  from the netlist, never hand-patch a document's copy.
+- **Harness terminals come in families by job, and the families are the rows** (plan §9.2): **7.62 mm
+  Kefa** for pack voltage (`J101` only, the CTRL row) · **5.08 mm Kangnex** for the FarDriver leads
+  and nothing else (`J309`, `J404`, and the parked `J310` / `J405`, also CTRL) · **3.50 mm Kefa** for
+  the 5 V outputs and nothing else (`J314`, the 5 V row under OUTPUTS) · **3.81 mm Kangnex** for the
+  12 V row and the INPUTS row. **Each dangerous group owns its pitch**, because the three dangerous
+  mismates are a 5 V device in a 12 V header, a FarDriver lead anywhere else, and the pack plug
+  anywhere else. Within the shared 3.81 mm family a smaller plug seats offset in a larger header, so
+  **no 12 V terminal may share a size with an input terminal** — 2, 4, 4, 4, 5, 7 against 3, 6, 8, 8,
+  9 (`tests/test_interconnect.py`, `tests/test_rows.py`). A parked terminal keeps its footprint, not
+  its header.
 
 ## ⚠️ The traps that matter most
 
@@ -106,8 +116,11 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   **160 V** input; TVS is `SMCJ90A`, on B+ only — ⛔ never on the key tap `KSW`, where a failed-short
   TVS cuts the FarDriver KEY; 160 V DC is the do-not-exceed including transients.
 - **Pack voltage enters on `J101` alone**, 7.62 mm pitch with an empty position around B+ and around
-  `KSW`; HV-LINK carries it at 5.08 mm effective (a 2.54 mm header, alternate pins skipped).
+  `KSW`, and **never leaves POWER** — no inter-board interface carries it.
 - **Size input protection at the 60.0 V LVC, not full charge** — converters are constant-power loads.
+  The tap draws **1.93 A** there and the 12 V converter's input **1.88 A**, so the tap fuse is the
+  3 A `KLKD003` and `L101` the 3 A `7448023005`. ⛔ **The key branch's own fuse stays 2 A** — it
+  carries ~0.32 mA. `tools/power_budget.py` derives all of it.
 - **`TPS4H160B` are 40 V parts — 12 V rail only**, never the 84 V node. `CL` and `CS` each need a
   resistor; TI's pin names are `VS` / `SEL` / `SEH`.
 - ⛔ **`BSS126` is DEPLETION-mode — on at V<sub>GS</sub> = 0.** Wherever a 600 V small-signal N-FET is
@@ -128,11 +141,13 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   an ESP32. **GPIO44 carries U0RXD and nothing else** — a harness wire there fights the programmer.
 - **ESP32-S3 `R8`/`R16V` are rated to 65 °C only.** Use `-N8` (85 °C) or `-H4` (105 °C).
 - **No wire leaves the box on strapping pins 0/3/45/46**; analog only on GPIO1–10 (ADC2 dies with WiFi).
-- **TVS parts follow the line's idle voltage:** the 5 V `SMS05T1G` goes only on 3.3 V-class lines;
-  the brake-lever nodes (~11.4 V), `BL` / `ACC+` and the boost output take the 15 V `SMS15T1G`; each
-  12 V lamp or load output takes a single-line `SMF18A`, and the 12 V rail an `SMBJ18A` — never a
+- **TVS parts follow the line's idle voltage:** the 5 V `SMS05T1G` goes on every 3.3 V-class line,
+  **the brake levers included** — they are plain contacts now; `BL` / `ACC+` and the boost output
+  take the 15 V `SMS15T1G`; each 12 V lamp, load or aux output takes a single-line `SMF18A`, each
+  5 V aux output an `SMF6.0A`, and the 12 V rail an `SMBJ18A` — never a
   15 V part there (the TDK's over-voltage window is 15.0–17.4 V). A 5 V array on a 12 V line is a
-  short.
+  short. ⚠️ **The `SMF6.0A` clamps at 10.3 V against the `TPS2553`'s 7 V `OUT`** — a recorded
+  residual risk (plan D27/IO-12), deliberately not a rule.
 - **No GPIO that comes out of reset pulled up drives an active-high enable** (`GPIO-RESET-PULL`):
   GPIO39 would light the tail at boot.
 - ⛔ **Never enable CAN on this controller** — on non-CAN units the transceiver lands on A11/A12, the
@@ -141,9 +156,9 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
 ## Safety boundary — state it exactly
 
 ⚠️ **The brake cut, the brake lamp and the run/off kill are FIRMWARE functions** — owner decision
-2026-09-19 (plan D23, design record BD-27). The module's dedicated brake/kill circuit is deleted and
+2026-09-19 (plan D23, design record BD-27). The module's dedicated brake/kill circuit is deleted, and
 rule `LISTEN` with it. ⛔ Do not "restore" that hardware, and do not write that the module only
-listens: the code is the current state, and it says the firmware decides.
+senses the levers: the netlist is the current state, and it says the firmware decides.
 
 - **With the firmware not running — key-on before boot, a watchdog restart, an OTA reboot, a dead or
   unflashed module — the motor cut is RELEASED and the brake lamp is OFF** (the owner's choice; the
@@ -155,10 +170,31 @@ listens: the code is the current state, and it says the firmware decides.
 - All lights OFF at key-on, every gate biases OFF, so a hung module drives no lamps.
 - **The brake lamp is fed from the module's 12 V rail**, so an unpowered module means a dark lamp.
   Never write "works with the module unpowered" about it.
-- **No raw 12 V leaves the box.** Horn, fan and buzzer ride `AUX12` (`U301` OUT1, current-limited,
-  on while the logic runs) and are switched on their return.
+- ⚠️ **`R336`, the 100 kΩ `BL` readback, is the one copper path that can work against this.** An
+  unpowered or output-driven LOGIC board holds `BL_SENSE` near 0.5 V and puts 100 kΩ from `BL` to
+  ground, which cuts only if the FarDriver's own `BL` pull-up is 47 kΩ or weaker — ⬜ unmeasured. That
+  100 kΩ may only ever go up.
+- **No raw 12 V leaves the box.** Horn, fan and buzzer ride `AUX12` (`U301` OUT1, current-limited).
+  ⚠️ `AUX12` is an **ordinary firmware-driven channel** on expander #3 — nothing holds it on, so those
+  three have no `+` until the firmware's first tick.
 - **The module never sources or switches the FarDriver KEY (D10).** The key switch feeds KEY directly
   (D24); there is no start latch, and the start button is a spare sensed input.
+
+### ⛔ The key-off aux shed is a HARDWARE CONTRACT (plan D27/IO-16, 2026-09-20)
+
+**On `KEY_SENSE` going inactive the firmware releases all eight aux outputs**, inside `Q101`'s
+**~774 ms** key-off hold (`C107` bleeding through `R110`). **`Q101`'s SOA margin depends on it:**
+un-shed, the part carries a **162 W** bound against a **138 W** derated DC line; shed, about **53 W**,
+a 2.6× margin. ⛔ **This is the only place in the design where a firmware behaviour holds a part
+inside its rating — never write it as a feature, and never let a change lengthen the decay or raise
+the tap current without re-running `tools/soft_start.py`.**
+
+- ✅ **A watchdog reset, or any restart, sheds the load by itself:** expander #3's pins come out of
+  reset as inputs, the `TPS4H160B` `INx` pull-downs are internal, and the `TPS2553` enables are
+  pulled to GND. **The exposure is narrowly a hang that holds the outputs on and does not trip the
+  watchdog**, through the whole decay.
+- `tools/soft_start.py` gates on the shed case and prints the un-shed bound beside it as the residual
+  risk it is. ⬜ **M17** scopes a deliberate key-off under load.
 
 ## Parked work
 
