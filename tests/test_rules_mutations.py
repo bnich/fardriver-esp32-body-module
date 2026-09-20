@@ -2,6 +2,8 @@
 to the REAL netlist that once passed every gate.  Each must now be caught by
 the rule named, and the real design must stay clean (test_design_clean.py).
 """
+from dataclasses import replace
+
 from tools import netlist, rules
 from tools.model import Net, Part
 
@@ -203,6 +205,31 @@ def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatc
     assert fired(D, "D14") == []
     monkeypatch.setattr(rules, "INTERNAL_PULLDOWN", {})
     assert any("DIAG_EN" in e for e in fired(D, "D14"))
+
+
+# ── BUS-ORDER on the real 23-contact power bus (IO-10) ───────────────────────
+def _rebus(d, iface, nets):
+    """Both halves of an interface re-tabled onto `nets`, contact for contact."""
+    for c in list(d.connectors):
+        if c.interface == iface:
+            d = d.replace_connector(c.refdes, pins=tuple(
+                replace(cp, net=n) for cp, n in zip(c.pins, nets)))
+    return d
+
+
+def test_m40_the_widened_power_bus_passes_because_it_is_a_palindrome():
+    """⚠️ Not by luck, and not because BUS-ORDER looked away. PWR-OUT went from
+    11 contacts to 23 for IO-10's 8.47 A; swap the V5 at contact 10 with the
+    ground beside it and the tuple stops reading the same from both ends, so a
+    half mated reversed — or mirrored by hanging under OUTPUTS — lands the 5 V
+    rail on a ground. The rule says so."""
+    nets = [cp.net for cp in D.connector("J202").pins]
+    assert len(nets) == 23 and nets == nets[::-1]
+    assert fired(D, "BUS-ORDER") == []
+    nets[9], nets[10] = nets[10], nets[9]
+    errs = fired(_rebus(D, "PWR-OUT", nets), "BUS-ORDER")
+    assert any("both ends" in e and "V5 is a supply rail" in e
+               and "SHORTS it to GND" in e for e in errs), errs
 
 
 def test_the_real_design_passes_every_new_rule():

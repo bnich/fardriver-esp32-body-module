@@ -101,14 +101,32 @@ def test_the_cincon_holes_fit_its_largest_pin():
         assert p.hole_mm >= 1.1 + 0.25 and p.w_mm - p.hole_mm >= 1.0
 
 
-# --- Würth 7448022010: 'Recommended Hole Pattern', a TOP view --------------------------
+# --- Würth WE-CMBNC Type S: 'Recommended Hole Pattern', a TOP view ---------------------
+#: Typed from we7448022010.pdf p.1 and we7448023005.pdf p.1.  Both drawings
+#: give the SAME pattern: 7,7 ± 0,5 between the columns, 5,0 ± 0,5 between the
+#: rows, ø1,5 holes, pins 4 · 3 above 1 · 2.
 WURTH_TOP = {"4": [(-3.85, 2.5)], "3": [(3.85, 2.5)], "1": [(-3.85, -2.5)], "2": [(3.85, -2.5)]}
+#: Every Type S code this design uses.  L101 is the 3 A part and L102 the 2 A
+#: one (IO-13); one land pattern serves both, and that only holds while the
+#: two drawings agree, which is what this parametrisation asserts.
+WURTH_TYPE_S = ["7448022010", "7448023005"]
 
 
-def test_the_choke_follows_wurths_recommended_hole_pattern():
-    fp = drawn.BY_MPN["7448022010"]
+@pytest.mark.parametrize("mpn", WURTH_TYPE_S)
+def test_the_choke_follows_wurths_recommended_hole_pattern(mpn):
+    fp = drawn.BY_MPN[mpn]
     assert centres(fp) == {k: sorted(v) for k, v in WURTH_TOP.items()}
     assert all(p.hole_mm == 1.5 for p in fp.pads)       # the pattern's ø1.5
+
+
+def test_both_type_s_codes_share_one_land_pattern():
+    """⛔ Not "they happen to be equal": the same drawing, so a correction to
+    it reaches both.  Type M (7448030417, 7,5 × 10,7 pins, ø1,1 holes) is a
+    different pattern and is deliberately not in BY_MPN at all."""
+    a, b = (drawn.BY_MPN[m] for m in WURTH_TYPE_S)
+    assert a.title == b.title == "WE_CMBNC_TYPE_S"
+    assert a.pads == b.pads
+    assert "7448030417" not in drawn.BY_MPN
 
 
 # --- The net-tie ------------------------------------------------------------------------
@@ -209,7 +227,7 @@ def test_pin_one_is_the_square_pad():
     """These are hand-soldered and carry no silkscreen: the square pad is how
     the part goes in the right way round."""
     for mpn, first in (("CN150B110-12/CO", "-Vin"), ("EC7BW-110S05", "+Vin"),
-                       ("7448022010", "1")):
+                       ("7448022010", "1"), ("7448023005", "1")):
         square = [p.num for p in drawn.BY_MPN[mpn].pads if p.shape == "RECT"]
         assert square == [first], mpn
 

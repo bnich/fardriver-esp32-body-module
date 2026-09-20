@@ -69,6 +69,7 @@ _DS_TDK = "TDK-Lambda CN50/100/150B110 instruction manual (tdk_cn50-150b110_apl.
 _DS_TDK_CAT = "TDK-Lambda CN-B110 datasheet (tdk_cn-b_e.pdf)"
 _DS_CINCON = "Cincon EC7BW-110 datasheet V15 (cincon_Datasheet-EC7BW-110-series.pdf)"
 _DS_WE = "Würth 7448022010 datasheet rev 002.000 (we7448022010.pdf)"
+_DS_WE_3A = "Würth 7448023005 datasheet rev 002.000 (we7448023005.pdf)"
 _DS_TDK_OUT = "TDK-Lambda CN50/100/150B110 outline CA952-02-01A (tdk_cn50-150b110_out.pdf)"
 _DS_IXYS = "IXYS DS99913D (01/13), IXTA/IXTP26P20P (ixys_ds99913d.pdf)"
 _DS_BSS127 = "Infineon BSS127 rev 2.1 (bss127.pdf)"
@@ -399,20 +400,37 @@ _POWER_ENTRY_PARTS = (
        "At the divider: holds the KEY_SENSE node low-impedance at its source "
        "before it crosses three boards. τ ≈ 1 ms with R109. The HDG's 0.1 µF "
        "at the ESP pin is C437"),
-    Part("L101", "7448022010", "THT common-mode choke, vertical", "POWER",
+    Part("L101", "7448023005", "THT common-mode choke, vertical", "POWER",
          "CMCHOKE", ("1", "2", "3", "4"), 22.0, height_confirmed=True,
-         footprint_mm=(18.0, 14.0), value="10 mH · 2 A @ 70 °C · 300 V AC",
+         footprint_mm=(18.0, 14.0), value="5 mH · 3 A @ 70 °C · 300 V AC",
          source=f"DC-DC #1's input filter, ahead of its bulk cap. FOUR "
                 f"terminals, windings 1-4 and 2-3: HV_SW → 1→4 → HV_C1_P, "
                 f"HV_C1_N → 3→2 → GND, so the DC currents cancel in the core. "
-                f"{_DS_WE} p.1: 22,0 max tall, 18,0 max wide, 14,0 max deep; "
-                f"pins 3,5 ± 0,5 below the body. BOM E7", lead_mm=4.0),
+                f"⚠️ RATED FOR THE AUX LOAD, not for inductance (IO-13): with "
+                f"all eight aux outputs at 1 A this winding carries 1.88 A at "
+                f"the 60 V LVC (tools/power_budget.py), which the 2 A Type S "
+                f"on L102 would meet at 94 % of its rating. {_DS_WE_3A} p.1: "
+                f"3 A at 70 °C, 40 mΩ max, 300 V AC, 2100 V AC test; 22,0 max "
+                f"tall, 18,0 max wide, 14,0 max deep; pins 3,5 ± 0,5 below the "
+                f"body — every mechanical dimension identical to {_DS_WE} "
+                f"p.1's, so it is a drop-in and shares its land pattern. "
+                f"⚠️ 5 mH (+50/−30 % at 10 kHz) is HALF the inductance of the "
+                f"part on L102: TDK's manual "
+                f"({_DS_TDK} p.6-8) asks for a choke on each supply input and "
+                f"states NO inductance figure, so 10 mH was this project's own "
+                f"choice and neither value is tested for interference — the "
+                f"owner accepted that (IO-13), and no Type S part carries "
+                f"≥ 3 A with ≥ 10 mH. ⬜ Confirm at the EMI measurement",
+         lead_mm=4.0),
     Part("L102", "7448022010", "THT common-mode choke, vertical", "POWER",
          "CMCHOKE", ("1", "2", "3", "4"), 22.0, height_confirmed=True,
          footprint_mm=(18.0, 14.0), value="10 mH · 2 A @ 70 °C · 300 V AC",
          source=f"DC-DC #2's input filter: HV_SW → 1→4 → HV_C2_P, "
-                f"HV_C2_N → 3→2 → GND. {_DS_WE} p.1: 22,0 max tall, pins "
-                f"3,5 ± 0,5. BOM E7", lead_mm=4.0),
+                f"HV_C2_N → 3→2 → GND. Still the 10 mH / 2 A Type S where "
+                f"L101 is the 3 A part: this one feeds the Cincon alone, whose "
+                f"3 W draws 0.05 A at the 60 V LVC — 2.5 % of the rating, "
+                f"against L101's 94 % (IO-13). {_DS_WE} p.1: 22,0 max tall, "
+                f"pins 3,5 ± 0,5. BOM E7", lead_mm=4.0),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1331,10 +1349,19 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
 # a half mated one contact off shorts a rail at worst -- it never puts 84 V or
 # 12 V on KEY_SENSE. Each is ONE crossing between two neighbouring boards.
 
-#: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS. Four V12 contacts: 2.62 A is 0.66 A
-#: each, and 0.87 A with one open. V5 and KEY_SENSE only pass through OUTPUTS.
-_PWROUT_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
-               "GND", "V12", "V12")
+#: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS. Every 12 V load in the module hangs
+#: off OUTPUTS, so the whole 8.47 A of IO-10 (tools/power_budget.py) crosses
+#: here: 10 × V12 and 10 × GND puts 0.85 A on each contact, and 0.94 A with one
+#: open — inside 1 A either way, which is what a 2.54 mm header contact is good
+#: for. V5 and KEY_SENSE only pass THROUGH OUTPUTS, on up to J307.
+#: ⚠️ A PALINDROME, and by construction, not by luck (rule BUS-ORDER): every
+#: net lands on ITSELF when a half is mated reversed, or mirrored by hanging
+#: under its board. V12 and V5 are rails — a rail opposite anything else is a
+#: short across the interface — and KEY_SENSE takes the one contact that is its
+#: own mirror, the centre, with a ground on each side of it.
+_PWROUT_NETS = ("V12", "V12", "GND", "V12", "V12", "GND", "V12", "GND", "GND", "V5",
+                "GND", "KEY_SENSE", "GND", "V5", "GND", "GND", "V12", "GND", "V12",
+                "V12", "GND", "V12", "V12")
 
 #: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: the rails between those two
 #: boards, in both directions -- V5 and KEY_SENSE up, and 3.3 V back DOWN for
@@ -2307,8 +2334,8 @@ _CONNECTORS = (
         ), pitch=7.62, note="The only 7.62 mm terminal, so no other plug seats "
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
-    Connector("J202", "POWER", "PWR-OUT, POWER side: 4 × V12, 4 × GND, 2 × V5, "
-              "KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
+    Connector("J202", "POWER", "PWR-OUT, POWER side: 10 × V12, 10 × GND, "
+              "2 × V5, KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
               footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54),
               leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
     Connector("J105", "POWER",
@@ -2429,8 +2456,9 @@ _CONNECTORS = (
                  "the same face of the box as every other row's, one row "
                  "below the 12 V terminals"),
         side="bottom"),
-    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
-              "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
+    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: "
+              "10 × V12 for the drivers and the 5 V buck, 10 × GND back, V5 "
+              "and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
               footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54), leaves_box=False,
               interface="PWR-OUT", side="bottom", source=_INTERBOARD),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
@@ -2629,12 +2657,16 @@ def loose_per(mpn: str) -> int:
 #: solders them by hand (owner, 2026-09-18). mpn -> why.
 _HAND_BY_MPN = {
     "CN150B110-12/CO": "nothing on LCSC takes 43-160 V in and gives 12 V at "
-                       ">= 2.62 A with stock: the TDK brick, in hand",
+                       ">= 8.47 A with stock: the TDK brick, in hand",
     "EC7BW-110S05": "the Cincon is in hand; LCSC's nearest 43-160 V 5 V module "
                     "(YLPTEC URB1D05LD-20WR3, C19724292) numbers its pins "
                     "differently and states its isolation two ways",
     "7448022010": "LCSC has none of the Würth choke; its nearest (YDFW1212T, "
-                  "C16197255) has 2.4x the DCR and no voltage rating. Two in hand",
+                  "C16197255) has 2.4x the DCR and no voltage rating. Two in "
+                  "hand, of which L102 now takes one",
+    "7448023005": "the 3 A Type S the aux load needs (IO-13): LCSC lists it as "
+                  "C1534621 with NO STOCK, and no common-mode choke on LCSC is "
+                  "Basic. To buy -- Digi-Key product 9863721, or Mouser",
 }
 
 

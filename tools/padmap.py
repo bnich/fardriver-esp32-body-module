@@ -32,6 +32,7 @@ FOOTPRINT_FROM_MPN = {
     "CN150B110-12/CO": None,        # no library device: generated from TDK's drawing
     "EC7BW-110S05": None,           # no library device: generated from Cincon's drawing
     "7448022010": None,             # no library device: generated from Würth's drawing
+    "7448023005": None,             # the 3 A Type S: same drawing, same land pattern
     "NET-TIE": None,                # copper, generated
     "0001.2504": None,              # the fuse: never on the PCB, a stand-in (drawn_footprints)
 }

@@ -834,13 +834,16 @@ def test_no_rail_rides_a_signal_spine(d):
             assert not (rules.rails(d) & {cp.net for cp in c.pins}), c.refdes
 
 
-def test_pwr_up_shares_the_load_current_over_three_contacts(d):
+def test_pwr_out_shares_the_load_current_over_ten_contacts(d):
     ends = _interface(d, "PWR-OUT")
     assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
     for c in ends:
         nets = [cp.net for cp in c.pins]
-        assert nets.count("V12") >= 3, "2.62 A: one fretted contact of two is 100 %"
-        assert nets.count("GND") >= 4
+        assert nets.count("V12") >= 10, (
+            "8.47 A (IO-10): ten contacts is 0.85 A each and 0.94 A with one "
+            "fretted open. tests/test_interconnect.py holds the count to what "
+            "tools/power_budget.py derives, so the two cannot drift")
+        assert nets.count("GND") >= 10
         assert set(nets) == {"V12", "GND", "V5", "KEY_SENSE"}
     assert ends[0].pins == ends[1].pins
 
@@ -1024,7 +1027,7 @@ DEFECTS = [
      test_no_harness_wire_meets_the_mcu_or_an_expander_without_a_series_element, {}),
     ("12 V over two contacts",
      fewer_v12_contacts,
-     test_pwr_up_shares_the_load_current_over_three_contacts, {}),
+     test_pwr_out_shares_the_load_current_over_ten_contacts, {}),
     ("a confirmed height with nothing behind it",
      lambda d: d.replace_part("R110", height_confirmed=True),
      test_a_confirmed_height_names_the_pdf_and_the_page, {}),
@@ -1074,7 +1077,7 @@ def test_every_diode_points_the_way_its_job_needs(d, ref, anode, cathode, why):
 
 @pytest.mark.parametrize("ref,conv", [("L101", "HV_C1"), ("L102", "HV_C2")])
 def test_each_choke_carries_supply_and_return_through_opposite_windings(d, ref, conv):
-    """Würth 7448022010: windings are 1-4 and 2-3. Supply in on 1, out on 4;
+    """Würth WE-CMBNC Type S: windings are 1-4 and 2-3. Supply in on 1, out on 4;
     return in on 3, out on 2. Cross pins 2 and 3 and the two fluxes ADD instead
     of cancelling: the core saturates on the DC and the choke filters nothing."""
     assert d.net_of(ref, "1").name == "HV_SW"

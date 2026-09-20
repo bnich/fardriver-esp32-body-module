@@ -112,16 +112,23 @@ def cincon_ec7bw_110():
     return Drawn("CINCON_EC7BW_2X1IN", _mirror(bottom))
 
 
-def wurth_7448022010():
-    """Würth 7448022010 rev 002.000 p.1, 'Recommended Hole Pattern', a TOP
-    view (the drawing is first-angle, and the dimension view above the front
-    view is the bottom, its mirror): pins 4 · 3 over 1 · 2, 7.7 × 5.0, ø1.5
-    holes.  Windings 1-4 and 2-3."""
+def wurth_cmbnc_type_s():
+    """Würth WE-CMBNC Type S, rev 002.000 p.1, 'Recommended Hole Pattern', a
+    TOP view (the drawing is first-angle, and the dimension view above the
+    front view is the bottom, its mirror): pins 4 · 3 over 1 · 2, 7.7 × 5.0,
+    ø1.5 holes.  Windings 1-4 and 2-3.
+
+    ⚠️ ONE land pattern for the whole Type S family, because the family shares
+    it: `we7448022010.pdf` p.1 (10 mH, 2 A -- L102) and `we7448023005.pdf` p.1
+    (5 mH, 3 A -- L101) give the same 7,7 ± 0,5 × 5,0 ± 0,5 pattern, the same
+    ø1,5 holes, the same ø1,0 ref pins, the same 18,0 × 14,0 × 22,0 max body
+    and the same 3,5 ± 0,5 pin length.  Type M (`7448030417`, 26,0 mm tall) is
+    a DIFFERENT pattern and must never be pointed here."""
     def at(num, x, y, first=False):
         return Pad(num, x, y, 1.5 + 2 * ANNULAR_MM, 1.5 + 2 * ANNULAR_MM, 1.5,
                    "RECT" if first else "ELLIPSE")
-    return Drawn("WE_7448022010", (at("1", -3.85, -2.5, first=True), at("2", 3.85, -2.5),
-                                   at("3", 3.85, 2.5), at("4", -3.85, 2.5)))
+    return Drawn("WE_CMBNC_TYPE_S", (at("1", -3.85, -2.5, first=True), at("2", 3.85, -2.5),
+                                     at("3", 3.85, 2.5), at("4", -3.85, 2.5)))
 
 
 def net_tie():
@@ -235,7 +242,8 @@ BY_MPN = {
     "PA35V680M10x15": jierr_pa_10x15_lying(),
     "01110501Z": fuse_clip_pair(),
     "EC7BW-110S05": cincon_ec7bw_110(),
-    "7448022010": wurth_7448022010(),
+    "7448022010": wurth_cmbnc_type_s(),
+    "7448023005": wurth_cmbnc_type_s(),
     "NET-TIE": net_tie(),
     "0001.2504": fuse_in_clips(),
 }
