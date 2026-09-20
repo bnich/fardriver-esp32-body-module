@@ -138,17 +138,23 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
 - ⛔ **Never enable CAN on this controller** — on non-CAN units the transceiver lands on A11/A12, the
   Hi/Low speed sense lines.
 
-## Safety boundary — do not erode it
+## Safety boundary — state it exactly
 
-**The brake cutoff and brake light are hardware and must stay hardware.** The module only listens. All
-lights OFF at key-on, every gate biases OFF, so a hung module drives no lamps. Any derivative should
-keep this.
+⚠️ **The brake cut, the brake lamp and the run/off kill are FIRMWARE functions** — owner decision
+2026-09-19 (plan D23, design record BD-27). The module's dedicated brake/kill circuit is deleted and
+rule `LISTEN` with it. ⛔ Do not "restore" that hardware, and do not write that the module only
+listens: the code is the current state, and it says the firmware decides.
 
-- State the brake-lamp claim precisely: **no firmware state can affect it, but it is fed from the
-  module's 12 V rail** — an unpowered module means a dark brake lamp. The motor cut (`BL`) needs
-  nothing from the module. Never write "works with the module unpowered" about the lamp.
-- The stop lamp is `U302` OUT4, a `TPS4H160B` channel whose input only the lever hardware (Q1)
-  drives: current limit and diagnosis, no firmware in the path. `LISTEN` enforces it.
+- **With the firmware not running — key-on before boot, a watchdog restart, an OTA reboot, a dead or
+  unflashed module — the motor cut is RELEASED and the brake lamp is OFF** (the owner's choice; the
+  bike always drives). `Q106`'s gate is held down by a fitted 10 kΩ, and `U302` IN4 by the driver's
+  own internal pull-down. The accepted consequence: a hang or restart while braking loses the cut for
+  up to ~0.8 s, and a dead module loses it entirely, with nothing to warn the rider.
+- **The one hardware kill left is the key switch** (D24, D10): it feeds the FarDriver KEY wire
+  directly, and the module never sources or switches it.
+- All lights OFF at key-on, every gate biases OFF, so a hung module drives no lamps.
+- **The brake lamp is fed from the module's 12 V rail**, so an unpowered module means a dark lamp.
+  Never write "works with the module unpowered" about it.
 - **No raw 12 V leaves the box.** Horn, fan and buzzer ride `AUX12` (`U301` OUT1, current-limited,
   on while the logic runs) and are switched on their return.
 - **The module never sources or switches the FarDriver KEY (D10).** The key switch feeds KEY directly
