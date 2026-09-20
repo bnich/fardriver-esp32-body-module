@@ -33,8 +33,12 @@ from tools.model import ConnPin, Connector, Design, Net, Part
 
 IO_PINS = tuple(f"IO{n}" for n in sorted(rules.MODULE_GPIOS))
 MCP_PORT = tuple(f"GP{b}{i}" for b in "AB" for i in range(8))
-TPS_PINS = ("VS", "GND", "IN1", "IN2", "IN3", "IN4", "OUT1", "OUT2", "OUT3",
-            "OUT4", "CS", "CL", "DIAG_EN", "SEL", "SEH", "FAULT", "THER")
+#: ⚠️ PAD is here because the real part has it: a thermal pad is a GROUND pin
+#: (SLVSCV8E p.31), and rule GND-PIN checks where it lands. A fixture that
+#: leaves one out stops standing in for the design at the pin that matters.
+TPS_PINS = ("VS", "GND", "PAD", "IN1", "IN2", "IN3", "IN4", "OUT1", "OUT2",
+            "OUT3", "OUT4", "CS", "CL", "DIAG_EN", "SEL", "SEH", "FAULT",
+            "THER")
 
 
 # ── fixture construction ─────────────────────────────────────────────────────
@@ -225,9 +229,9 @@ def _good() -> Design:
         _c("C304", "OUTPUTS", "10u", 25.0),
         # ── LOGIC ──
         _ic("U401", "ESP32-S3-WROOM-1-N8", "MODULE", "LOGIC", "MODULE",
-            ("3V3", "GND", "EN") + IO_PINS, set(IO_PINS) - used_io, 3.1),
+            ("3V3", "GND", "EPAD", "EN") + IO_PINS, set(IO_PINS) - used_io, 3.1),
         Part("U405", "TLV76733DGNR", "HVSSOP-8", "LOGIC", "IC",
-             ("IN", "OUT", "GND", "EN"), 1.1, v_max=16.0, source="fixture"),
+             ("IN", "OUT", "GND", "PAD", "EN"), 1.1, v_max=16.0, source="fixture"),
         _c("C404", "LOGIC", "10u", 25.0),
         _c("C402", "LOGIC", "10u", 10.0),
         _c("C403", "LOGIC", "100n", 16.0),
@@ -311,6 +315,7 @@ def _good() -> Design:
          ("Q301", "S"), ("R307", "2"), ("D315", "A"), ("D310", "A2"), ("D310", "A5"),
          ("D406", "A"), ("U301", "GND"), ("U301", "DIAG_EN"), ("U301", "SEL"),
          ("U301", "SEH"), ("R319", "2"), ("R321", "2"), ("C303", "2"), ("C304", "2"),
+         ("U301", "PAD"), ("U401", "EPAD"), ("U405", "PAD"),
          ("U401", "GND"), ("U405", "GND"), ("C404", "2"), ("C402", "2"), ("U202", "-Vout"),
          ("C403", "2"), ("C405", "2"), ("C401", "2"), ("D401", "A2"), ("D401", "A5"),
          ("C410", "2"), ("C301", "2"), ("U402", "VSS"), ("U402", "A0"),
@@ -370,8 +375,8 @@ RULE_IDS = {
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
     "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
-    "D10", "SUPPLY", "BUS-ORDER", "VR-CLAMP", "VR-POWER", "PULL-DIR",
-    "GATE-VGS",
+    "D10", "SUPPLY", "GND-PIN", "BUS-ORDER", "VR-CLAMP", "VR-POWER",
+    "PULL-DIR", "GATE-VGS",
 }
 
 

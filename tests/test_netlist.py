@@ -657,8 +657,22 @@ def test_no_net_lands_on_a_pad_the_module_does_not_have(d):
         assert d.net_of("U401", ghost) is None, f"a net lands on U401.{ghost}"
 
 
+def _expanders(d):
+    """Every MCP23017 in the design, DERIVED.
+
+    ⛔ Never a typed tuple. It was ("U402", "U403") until the aux block added a
+    third on OUTPUTS, and for one commit the chip that commands all nine aux
+    outputs sat outside every check here: its RESET could float against
+    DS20001952D p.11 ("Must be externally biased") with integrity, the rules
+    and all 1342 tests green.
+    """
+    out = [p.refdes for p in d.parts if p.mpn.startswith("MCP23017")]
+    assert len(out) >= 3, f"expanders found: {out}"
+    return out
+
+
 def test_the_mcp23017_output_only_bits_carry_nothing(d):
-    for u in ("U402", "U403"):
+    for u in _expanders(d):
         for bit in ("GPA7", "GPB7"):
             assert d.net_of(u, bit) is None, f"{u}.{bit} is OUTPUT-ONLY (DS20001952D)"
             assert bit in d.part(u).nc
@@ -666,12 +680,13 @@ def test_the_mcp23017_output_only_bits_carry_nothing(d):
 
 def test_the_mcp23017s_are_biased_addressed_apart_and_held_out_of_reset(d, w):
     addresses = []
-    for u in ("U402", "U403"):
+    for u in _expanders(d):
         straps = tuple(w.net(u, a) for a in ("A2", "A1", "A0"))
         assert set(straps) <= {"GND", "V3P3"}, f"{u}: 'Must be externally biased'"
         addresses.append(straps)
         assert w.between(w.net(u, "RESET"), "V3P3", {"R"}), f"{u} RESET floats"
-    assert addresses[0] != addresses[1], "both expanders answer at one address"
+    assert len(set(addresses)) == len(addresses), (
+        f"two expanders answer at one address: {addresses}")
 
 
 def test_the_module_has_its_reset_rc_and_a_recovery_path(d, w):
@@ -708,8 +723,9 @@ def test_the_pin_map_obeys_the_silicon(d, w):
 
 
 def test_no_harness_wire_meets_the_mcu_or_an_expander_without_a_series_element(d, w):
+    logic_refs = {"U401", *_expanders(d)}          # DERIVED: see _expanders
     for net in (n for n in d.nets if n.name not in RAILS):
-        logic = {r for r, _ in net.pins} & {"U401", "U402", "U403"}
+        logic = {r for r, _ in net.pins} & logic_refs
         wires = [c.refdes for c in w.connectors_on(net.name) if c.leaves_box]
         assert not (logic and wires), f"{net.name}: {wires} lands straight on {logic}"
 
@@ -886,6 +902,15 @@ def fewer_v12_contacts(design):
 
 
 DEFECTS = [
+    # ⭐ Review 2026-09-20: this one passed every gate on the real design --
+    # the chip that commands all nine aux outputs was outside the expander
+    # checks, because they iterated a typed ("U402", "U403").
+    ("expander #3's RESET pull-up removed, so RESET floats",
+     lambda d: d.without_part("R364"),
+     test_the_mcp23017s_are_biased_addressed_apart_and_held_out_of_reset, {}),
+    ("expander #3 strapped to expander #2's address",
+     lambda d: move_pin(d, "U304", "A1", "GND"),
+     test_the_mcp23017s_are_biased_addressed_apart_and_held_out_of_reset, {}),
     ("the cut FET has no source",
      lambda d: d.without_pin("Q106", "S"),
      test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross, {}),

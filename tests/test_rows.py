@@ -174,12 +174,20 @@ def test_a_class_a_network_left_on_another_board_is_refused():
 def shared_sizes(d):
     """(pitch, positions) that a 12 V terminal and an input terminal both use.
 
-    They share the 3.81 mm pitch deliberately -- a mismate there is an output
-    into its own current limit, or 3.3 V through 1 kΩ into a lamp, and neither
-    hurts -- so what keeps the two rows apart is SIZE. A plug seats in any
-    header of its pitch at least its own size, so an eight-way 12 V terminal
-    would seat in either general-input header and put 12 V on contacts wired
-    for dry contacts to ground.
+    ⚠️ What this checks is EXACT-SIZE equality, and that is all it claims. A
+    smaller plug does seat, offset, in a larger header of its pitch -- a
+    seven-way 12 V plug still fits an eight-way input header, and the row's
+    4-ways fit several of them -- so this is not a proof that no plug of one
+    row enters a header of the other. The argument that makes exact size worth
+    checking is `tests/test_interconnect.py`'s: with EVERY plug seated, each
+    one is forced into a header of its own size, so a connector whose size
+    nothing shares cannot be swapped without leaving a plug in the hand.
+    What makes the weaker guarantee acceptable here is that 3.81 mm is a
+    SHARED pitch on purpose (see EXCLUSIVE_PITCH above): a 12 V plug in an
+    input header drives an output into its own current limit, which reports
+    the fault, and an input plug in a 12 V header meets 3.3 V through 1 kΩ.
+    Neither hurts, which is exactly why the dangerous groups got pitches of
+    their own instead.
     """
     sizes = {name: {(d.connector(r).pitch_mm, len(d.connector(r).pins))
                     for r in row}
@@ -192,7 +200,9 @@ def test_no_size_is_shared_between_the_12_v_row_and_the_inputs_row():
 
 
 def test_a_12_v_terminal_the_size_of_an_input_terminal_is_caught():
-    """J313 is SEVEN-way for this reason: 3.81 × 8 is what J409 and J410 are."""
+    """J313 is SEVEN-way for this reason: 3.81 × 8 is what J409 and J410 are,
+    and an eight-way 12 V plug would seat in either of them squarely, not
+    offset -- 12 V onto contacts wired for dry contacts to ground."""
     j = D.connector("J313")
     bad = D.replace_connector("J313", pins=j.pins + (ConnPin("8", "GND"),))
     assert shared_sizes(bad) == {(3.81, 8)}

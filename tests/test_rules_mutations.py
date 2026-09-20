@@ -168,6 +168,44 @@ def test_m33_a_gate_tied_to_its_own_source():
                                           "TURN-ON"))
 
 
+# ── review 2026-09-20: the aux block's two new holes ─────────────────────────
+def test_m38_a_ground_pin_landed_on_the_rail_the_part_makes():
+    """U305's PGND on V5AUX passed integrity, every test and every other rule:
+    the buck referenced to its own output. Splitting AGND, PGND and the DAP is
+    the point of this part's layout, and nothing but GND-PIN says where they
+    go."""
+    bad = move(D, "U305", "PGND", "V5AUX")
+    assert any("U305.PGND" in e for e in fired(bad, "GND-PIN"))
+
+
+def test_m38b_an_ic_with_no_ground_pins_entry_is_reported_not_assumed_fine():
+    """As SUPPLY does: a part nobody has typed a return for is a part nobody
+    has checked."""
+    bad = D.replace_part("U306", mpn="SY6280AAC")
+    assert any("U306" in e and "GROUND_PINS" in e for e in fired(bad, "GND-PIN"))
+
+
+def test_m39_an_enable_named_shdn_is_an_enable():
+    """D14 matched the one string "EN" until this review, so a part naming its
+    enable anything else walked past the rule written for it."""
+    part = Part("U310", "TPS26600PWPR", "HTSSOP-16", "OUTPUTS", "IC",
+                ("IN", "OUT", "GND", "SHDN"), 1.2, v_max=60.0)
+    bad = add(D, part, {"IN": "V5AUX", "OUT": ("AUX5V_9", "5V"),
+                        "GND": "GND", "SHDN": ("AUX5V_9_EN", "3V3")})
+    assert any("U310" in e and "SHDN" in e for e in fired(bad, "D14"))
+
+
+def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatch):
+    """DIAG_EN matches the enable family and has no resistor to ground: what
+    makes that correct is TI's own pulldown, typed in INTERNAL_PULLDOWN. Empty
+    the table and the rule fires -- so the design's silence is the datasheet's
+    doing, not the regex's."""
+    assert fired(D, "D14") == []
+    monkeypatch.setattr(rules, "INTERNAL_PULLDOWN", {})
+    assert any("DIAG_EN" in e for e in fired(D, "D14"))
+
+
 def test_the_real_design_passes_every_new_rule():
-    for rule_id in ("VR-CLAMP", "VR-POWER", "PULL-DIR", "GATE-VGS"):
+    for rule_id in ("VR-CLAMP", "VR-POWER", "PULL-DIR", "GATE-VGS", "GND-PIN",
+                    "D14"):
         assert fired(D, rule_id) == [], rule_id

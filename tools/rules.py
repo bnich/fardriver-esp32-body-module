@@ -29,7 +29,7 @@ Every error string starts with a stable rule ID, then a colon:
   D14  TURN-ON  GATE-VGS
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
   LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  BUS-ORDER  VR-CLAMP
+  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  GND-PIN  BUS-ORDER  VR-CLAMP
   VR-POWER  PULL-DIR
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
@@ -629,9 +629,9 @@ SUPPLY_PINS = {
     "TLV767": {"IN": {"5V", "12V"}},                    # 2.5-16 V in (12 V is legal; its heat is board_fit's problem)
     "LM73605": {"PVIN": {"12V"}},                       # 3.5-36 V in, 42 V abs: the 12 V rail, never 84 V
     # 2.5-6.5 V in, 7 V abs. ⛔ `OUT` is deliberately absent: it would make
-    # VR-CLAMP judge the 5 V clamp against the switch's 7 V output, which IO-12
-    # decided NOT to protect (no TVS standing off 5.17 V clamps under 7 V).
-    # The residual risk is recorded in the design record, not checked here.
+    # VR-CLAMP judge the 5 V clamp against a 7 V limit that IO-12 decided not
+    # to protect. What is and is not protected is stated once, on the clamp
+    # itself (netlist._tvs6); the risk is recorded, not checked.
     "TPS2553": {"IN": {"5V"}},
     "TLV803S": {"VDD": {"3V3"}},                        # its 2.93 V threshold watches the 3.3 V rail
     "CN150B110": {"+Vin": {"84V"}},
@@ -662,6 +662,64 @@ def supply_pins(d: Design) -> list[str]:
                 if dom not in allowed:
                     errs.append(f"SUPPLY: {p.refdes}.{pin} ({p.mpn}) is on {name!r} "
                                 f"({dom}); it may only sit on {sorted(allowed)}")
+    return errs
+
+
+#: MPN prefix -> the pins that are the part's RETURN, from its datasheet.
+#: Separate from SUPPLY_PINS on purpose: ⛔ a ground listed there would land
+#: in `rails()`, which would make GND a supply rail and fail BUS-ORDER on
+#: every signal that faces a ground across STACK and CTRL.
+#: ⚠️ A converter's INPUT return is NOT here: both bricks' `-Vin` joins ground
+#: only through its choke's second winding, and is 84 V-section copper.
+GROUND_PINS = {
+    "ESP32-S3-WROOM-1": {"GND", "EPAD"},
+    "SN65HVD230": {"GND"},
+    "MCP23017": {"VSS"},
+    "TPS4H160": {"GND", "PAD"},          # PAD: SLVSCV8E p.31, to the GND copper
+    "TLV767": {"GND", "PAD"},
+    "TLV803S": {"GND"},
+    "TPS2553": {"GND"},
+    # SNVSAH5A p.4: AGND is the reference for every parameter, PGND the LS
+    # FET's source, DAP (our PAD) the heat path -- all three to system ground.
+    # Splitting them is the point of this part's layout, and nothing but this
+    # rule says where they go: a PGND landed on the 5 V rail it makes passed
+    # integrity, every test and every other rule (review 2026-09-20).
+    "LM73605": {"AGND", "PGND", "PAD"},
+    "CN150B110": {"-V", "-S"},           # output return, and its sense leg
+    "EC7BW": {"-Vout"},
+}
+
+
+def ground_pins(d: Design) -> list[str]:
+    """Every IC's, module's and converter's RETURN pin is on the ground net.
+
+    Not "on a net called GND" and not "on a GND-typed net": on a net JOINED to
+    ground by copper, which is what `is_stiff`'s ground component means. A
+    ground-typed island that reaches ground through nothing is GND-ISLAND's
+    error, and a return pin sitting on it is this one's."""
+    ix = _index(d)
+    errs = []
+    for p in d.parts:
+        if p.kind not in _SUPPLY_KINDS:
+            continue
+        pins = next((v for k, v in GROUND_PINS.items() if p.mpn.startswith(k)), None)
+        if pins is None:
+            errs.append(f"GND-PIN: {p.refdes} ({p.mpn}) has no entry in "
+                        f"rules.GROUND_PINS, so nothing checks where its "
+                        f"return goes")
+            continue
+        for pin in sorted(pins):
+            if pin not in p.pins:
+                errs.append(f"GND-PIN: {p.refdes} ({p.mpn}) declares no {pin!r} pin")
+                continue
+            for name in ix.nets_of_pin(p.refdes, pin):
+                if name not in ix.grounded:
+                    dom = ix.nets[name].domain if name in ix.nets else "?"
+                    errs.append(
+                        f"GND-PIN: {p.refdes}.{pin} ({p.mpn}) is on {name!r} "
+                        f"({dom}), which is not joined to the ground net. A "
+                        f"return pin on anything else is a part referenced to "
+                        f"the wrong node, whatever else passes.")
     return errs
 
 
@@ -907,6 +965,27 @@ def bus_order(d: Design) -> list[str]:
 
 
 # ── D14: every gate biases OFF, for the polarity the FET actually is ─────────
+#: What an IC calls the pin that turns its output on, across the families this
+#: board uses: `EN`, `ENABLE`, `SHDN`, `SHUTDOWN`, their inverted spellings
+#: (`nEN`, `/EN`), and a qualified one (`DIAG_EN`). ⛔ Never just "EN": the
+#: branch below matched that one string, so a part naming its enable anything
+#: else walked straight past the rule that exists for it.
+ENABLE_PIN = re.compile(r"(?i)[/n]?(?:EN|ENABLE|SHDN|SHUTDOWN)\d?"
+                        r"|\w+_(?:EN|ENABLE|SHDN)")
+#: Pins a part holds OFF ITSELF, by MPN prefix. ⛔ An entry here is a DATASHEET
+#: STATEMENT, never a convenience: TI SLVSCV8E Table 5-1 (p.4-5) marks INx,
+#: DIAG_EN, SEL, SEH and THER "internal pulldown", and §6.5 (p.8) gives the
+#: resistor -- R(logic,pd) 100/175/250 kΩ on INx, SEL, SEH and THER,
+#: 200/275/350 kΩ on DIAG_EN. That silicon is what holds every lamp and every
+#: 12 V aux channel off through boot and for as long as nothing drives the
+#: pin, so demanding copper as well would be demanding a part the design does
+#: not need.
+INTERNAL_PULLDOWN = {
+    "TPS4H160": frozenset({"IN1", "IN2", "IN3", "IN4", "DIAG_EN",
+                           "SEL", "SEH", "THER"}),
+}
+
+
 def d14_gate_bias(d: Design) -> list[str]:
     ix = _index(d)
     errs = []
@@ -933,20 +1012,40 @@ def d14_gate_bias(d: Design) -> list[str]:
     # An IC's ENABLE is a gate by another name: high-Z on it is a load whose
     # state nobody chose. The rule checked FET gates only until the aux block
     # put four load switches on expander bits that come out of reset as
-    # inputs (IO-1) -- exactly the window D14 exists for. A pin tied straight
-    # to a rail is a deliberate always-on (U405's EN on V5, U305's on V12) and
-    # is not a floating enable, so a stiff net is skipped.
+    # inputs (IO-1) -- exactly the window D14 exists for.
+    #
+    # ⚠️ Two limits this branch does NOT close, stated so neither is mistaken
+    # for covered:
+    #   * It is POLARITY-BLIND. It reads a resistor to ground as "biased off",
+    #     which is true of an active-high enable and FALSE of an active-low
+    #     one (`SHDN`, `/EN`): that part is biased ON by the same copper and
+    #     passes here. What states the polarity is the part's own `source`,
+    #     and choosing the active-high member of a family is a design decision
+    #     (the TPS2553, ⛔ never the TPS2552).
+    #   * `kind != "IC"` is LOAD-BEARING, not tidiness. It keeps `U401.EN` out:
+    #     the S3's CHIP_PU is a reset input that must be pulled UP through its
+    #     RC, not an output enable, and this rule would demand the opposite of
+    #     what Espressif's design guide asks. `test_the_module_has_its_reset_rc`
+    #     is what guards that pin.
+    # A pin tied straight to a rail is a deliberate always-on (U405's EN on V5,
+    # U305's on V12), not a floating enable, so a stiff net is skipped -- and a
+    # pin its own silicon holds off needs no copper (INTERNAL_PULLDOWN).
     for p in ix.parts.values():
-        if p.kind != "IC" or p.dnp or "EN" not in p.pins:
+        if p.kind != "IC" or p.dnp:
             continue
-        for net in ix.nets_of_pin(p.refdes, "EN"):
-            if ix.is_stiff(net):
+        internal = next((v for k, v in INTERNAL_PULLDOWN.items()
+                         if p.mpn.startswith(k)), frozenset())
+        for pin in ix.pins_of(p):
+            if not ENABLE_PIN.fullmatch(pin) or pin in internal:
                 continue
-            if not any(_joins(ix, r, [net], ["GND"]) for r in ix.parts.values()
-                       if r.kind == "R" and not r.dnp):
-                errs.append(f"D14: {p.refdes} ({p.mpn}) EN on {net!r} has no "
-                            f"fitted resistor to GND. Every enable biases OFF "
-                            f"from reset (D14).")
+            for net in ix.nets_of_pin(p.refdes, pin):
+                if ix.is_stiff(net):
+                    continue
+                if not any(_joins(ix, r, [net], ["GND"]) for r in ix.parts.values()
+                           if r.kind == "R" and not r.dnp):
+                    errs.append(f"D14: {p.refdes} ({p.mpn}) {pin} on {net!r} "
+                                f"has no fitted resistor to GND. Every enable "
+                                f"biases OFF from reset (D14).")
     return errs
 
 
@@ -1729,6 +1828,7 @@ ALL_RULES = (
     bd2_voltage_domain_containment,
     d10_key_wire_is_only_listened_to,
     supply_pins,
+    ground_pins,
     bd4_hv_creepage,
     gpio_rules,
     d14_gate_bias,

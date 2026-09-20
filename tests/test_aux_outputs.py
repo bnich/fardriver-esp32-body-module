@@ -6,8 +6,11 @@ switches.  ⚠️ Nothing here is a hardware function: every one of the eight is
 OFF until firmware drives expander #3, and the expander's bits come out of
 reset as inputs.
 """
+import re
+
 from tools import netlist, rules
 from tools.eprj3.schematic import landed_pins
+from tools.model import resistance
 
 D = netlist.current()
 BITS = {  # expander #3 (U304, 0x22)
@@ -46,12 +49,49 @@ def test_expander_3_is_on_the_board_it_drives_and_shares_the_one_i2c_bus():
             {"U401", "U402", "U403", "U304"}
 
 
+#: TI SLVSCV8E eq. 10 (p.29): R_CL = V_CL(th) × K_CL / I_OUT, with 0.8 V and
+#: 2500; §6.5 (p.8) gives dK(CL)/K(CL) = ±15 % for a limit of 0.5-7 A (±20 %
+#: below 0.5 A, which no aux channel is set to). The resistor is 1 %.
+TPS_CL_V, TPS_CL_K, TPS_CL_TOL = 0.8, 2500.0, 0.15
+#: IO-2: every aux output delivers 1 A. Spec §8.6 puts the floor at 1.06 A --
+#: the limit must not bite the load at any corner -- and the lamp channels'
+#: own 2 A is the ceiling a 1 A wire should not be asked to carry.
+AUX_LOAD_A, CL_FLOOR_A, CL_CEILING_A = 1.0, 1.06, 2.0
+
+
 def test_the_third_tps4h160b_shares_cs2_and_fault2_through_its_own_diag_en():
     assert _net("U303", "CS") == _net("U302", "CS") == "CS2_RAW"
     assert _net("U303", "FAULT") == _net("U302", "FAULT") == "FAULT2_DEV"
     assert _net("U303", "DIAG_EN") != _net("U302", "DIAG_EN")
-    cl = [r for r, _ in D.net(_net("U303", "CL")).pins if r.startswith("R")]
-    assert [D.part(r).value for r in cl] == ["1k5 1%"]
+
+
+def _limit_band(d):
+    """(min, max) current U303 limits at, from the resistor actually fitted."""
+    cl = [r for r, _ in d.net("CL3").pins if r.startswith("R")]
+    assert len(cl) == 1, cl
+    nominal = TPS_CL_V * TPS_CL_K / resistance(d.part(cl[0]).value)
+    return nominal * (1 - TPS_CL_TOL), nominal * (1 + TPS_CL_TOL)
+
+
+def test_the_12_v_aux_limit_clears_the_load_at_every_corner():
+    """⚠️ The BAND, not the value: what matters about R359 is that a 1 A load
+    never trips the limit and a fault still trips it well under the lamp
+    channels' 2 A. 1.5 kΩ (JLC Basic) gives 1.12-1.55 A; the 1.6 kΩ first
+    asked for gives 1.06-1.44 A and also clears -- either is a pass, which is
+    what a band is for."""
+    low, high = _limit_band(D)
+    assert low > AUX_LOAD_A and low >= CL_FLOOR_A, (
+        f"limits from {low:.2f} A: a {AUX_LOAD_A:g} A load trips it")
+    assert high <= CL_CEILING_A, f"limits up to {high:.2f} A on a 1 A wire"
+
+
+def test_the_neighbouring_basic_value_would_bite_the_load():
+    """2.0 kΩ is the next JLC Basic value up and limits at 0.85 A worst case:
+    the aux output would fold back under its own rated load. That is the
+    defect the band exists to catch, and it is why 1.5 kΩ was chosen over the
+    Basic part one step away."""
+    low, _ = _limit_band(D.replace_part("R359", value="2k0 1%"))
+    assert low < AUX_LOAD_A
 
 
 def test_every_aux_output_reaches_its_terminal_with_a_clamp():
@@ -62,8 +102,13 @@ def test_every_aux_output_reaches_its_terminal_with_a_clamp():
         v5 = {r for r, _ in D.net(f"AUX5V_{n}").pins}
         assert "J314" in v5 and any(D.part(r).kind == "TVS"
                                     for r in v5 if r.startswith("D"))
+    # ⛔ The 5 V row hangs UNDER the board, so its clamps must be on the board
+    # the terminal is on and not just "on OUTPUTS" -- PROT reads the board,
+    # and the side is what makes this a row of its own. The pitch is
+    # tests/test_rows.py's fact, and is not restated here.
     assert D.connector("J314").side == "bottom"
-    assert D.connector("J314").pitch_mm == 3.50
+    assert all(D.part(f"D{330 + n}").board == D.connector("J314").board
+               for n in range(1, 5))
 
 
 def test_the_12_v_terminal_shares_returns_so_it_can_be_seven_way():
@@ -75,6 +120,61 @@ def test_the_12_v_terminal_shares_returns_so_it_can_be_seven_way():
     assert nets == ["AUX12V_1", "GND", "AUX12V_2", "GND", "AUX12V_3", "GND",
                     "AUX12V_4"]
     assert nets.count("GND") == 3 and len(nets) - nets.count("GND") == 4
+
+
+#: TI SNVSAH5A Table 3 (p.27), 5 V out at 500 kHz: 88 µF of output
+#: capacitance -- and its footnote, "All the COUT values are after derating.
+#: Add more when using ceramics".
+TI_COUT_UF = 88.0
+#: What a 25 V X5R 1206 is ASSUMED to keep at a 5 V DC bias once its ±10 %
+#: tolerance and ageing are counted: half of its marked value.
+#: ⬜ A CLASS figure, not this part's measured curve -- Samsung publishes no
+#: DC-bias data in the catalogue on file -- and deliberately pessimistic, so
+#: the count stands even if the real curve is worse than typical. If a measured
+#: curve ever lands, change this number and let the test re-derive the count:
+#: nominal × this must clear TI_COUT_UF. Today eight 22 µF parts, the 470 nF
+#: and the four switches' own 100 nF are 176.87 µF nominal = 88.4 µF derated,
+#: a hair over. TI's own example of four parts scores 44.4 µF and seven parts
+#: 77.4 µF: both fail here, which is the point.
+DC_BIAS_KEEP = 0.5
+
+
+def _microfarads(value):
+    m = re.match(r"([\d.]+)\s*([munp])F", value)
+    assert m, f"no capacitance in {value!r}"
+    return float(m.group(1)) * {"m": 1e3, "u": 1.0, "n": 1e-3, "p": 1e-6}[m.group(2)]
+
+
+def _v5aux_bulk_uf(d):
+    """Every fitted capacitor from V5AUX to ground, in µF nominal."""
+    total = 0.0
+    for ref, pin in d.net("V5AUX").pins:
+        if not ref.startswith("C") or d.part(ref).dnp:
+            continue
+        far = d.net_of(ref, "2" if pin == "1" else "1")
+        if far is not None and far.name == "GND":
+            total += _microfarads(d.part(ref).value)
+    return total
+
+
+def test_the_5_v_bulk_meets_tis_table_after_dc_bias_derating():
+    """⚠️ The count of output capacitors is the most judgement-heavy number in
+    this block, and TI's TABLE and TI's EXAMPLE disagree: the table asks 88 µF
+    AFTER derating, the example fits four 22 µF parts, which is 88 µF NOMINAL
+    and about half that in circuit. Nothing else here would notice the example
+    being copied, so this test holds the count to the table."""
+    nominal = _v5aux_bulk_uf(D)
+    assert nominal * DC_BIAS_KEEP >= TI_COUT_UF, (
+        f"{nominal:.1f} µF nominal = {nominal * DC_BIAS_KEEP:.1f} µF derated, "
+        f"against TI's {TI_COUT_UF:g} µF after derating")
+
+
+def test_tis_own_four_capacitor_example_does_not_meet_its_own_table():
+    """The defect this exists for: the example copied instead of the table."""
+    bad = D
+    for ref in ("C322", "C323", "C324", "C325"):
+        bad = bad.without_part(ref)
+    assert _v5aux_bulk_uf(bad) * DC_BIAS_KEEP < TI_COUT_UF
 
 
 def test_the_5_v_outputs_come_off_their_own_buck_never_the_logic_rail():
@@ -121,4 +221,4 @@ def test_an_aux_enable_left_floating_is_caught():
 def test_the_real_design_passes_the_enable_rule_it_adds():
     """An assertion that never fires is not a test -- and a rule that fires on
     the real design is not a rule. Both halves, in one file."""
-    assert [e for e in rules.d14_gate_bias(D)] == []
+    assert rules.d14_gate_bias(D) == []

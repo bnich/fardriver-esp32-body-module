@@ -215,19 +215,9 @@ def _tvs6(refdes: str, board: Board, where: str) -> Part:
     stand-off follows the line's idle voltage).  6.0 V clears the buck's
     5.17 V maximum output, where the 5.0 V grade would conduct on it.
 
-    ⚠️ IO-12, the owner's decision and the reason this part is here at all: it
-    does NOT protect the switch's own output.  It clamps at 10.3 V and the
-    TPS2553's OUT is rated 7 V, so a surge big enough to make it conduct is
-    already past what the switch survives.  No TVS with a stand-off above the
-    buck's maximum clamps lower -- silicon clamps at roughly 1.5x its
-    stand-off, and even the 5.0 V grade of this family clamps at 9.2 V.  The
-    owner accepted the residual risk (a large surge on a 5 V aux wire can
-    damage that channel's switch) rather than spend an eFuse and six more
-    parts per channel on it; what the clamp still does is hold the harness's
-    transient off the buck, the expander and the rest of the board.  ⛔ That is
-    why `OUT` is deliberately NOT in rules.SUPPLY_PINS: the risk is recorded,
-    not checked, and adding it there would fail VR-CLAMP on a design the owner
-    has already decided."""
+    ⚠️ What this clamp does NOT protect is IO-12, the owner's accepted risk,
+    and it is stated ONCE -- in the `source` below.  Everything else that
+    touches it points here rather than restating it."""
     return Part(refdes, "SMF6.0A", "SOD-123FL", board, "TVS", ("A", "K"), 1.10,
                 height_confirmed=True, footprint_mm=(3.9, 1.9), v_max=6.0,
                 v_clamp=10.3, value="V_RWM 6.0 V · V_BR 6.67-7.37 V · V_C 10.3 V",
@@ -235,11 +225,29 @@ def _tvs6(refdes: str, board: Board, where: str) -> Part:
                        f"at 10 mA, V_C 10.3 V at 19.4 A (200 W, 10/1000 µs), "
                        f"I_R 400 µA; p.2 outline A = 0.90-1.10 mm high, D = "
                        f"3.60-3.90 over the leads, C = 1.60-1.90 wide, cathode "
-                       f"band on the unidirectional part. ⚠️ IO-12: 10.3 V is "
-                       f"OVER the TPS2553's 7 V OUT rating and no TVS standing "
-                       f"off the buck's 5.17 V clamps lower -- accepted as a "
-                       f"residual risk, so this clamp protects the BOARD from "
-                       f"the harness, not the switch from the harness")
+                       f"band on the unidirectional part. "
+                       f"⚠️⚠️ IO-12, THE ACCEPTED RISK, STATED HERE ONCE: this "
+                       f"clamp lets through 10.3 V, and the parts behind it "
+                       f"are rated 7 V. No TVS that stands off the buck's "
+                       f"5.17 V clamps lower -- silicon clamps at roughly 1.5x "
+                       f"its stand-off, and even this family's 5.0 V grade "
+                       f"clamps at 9.2 V -- so the owner took the risk rather "
+                       f"than the eFuse and six more parts per channel that "
+                       f"would close it. ⛔ The exposure is NOT one switch's "
+                       f"output: on an ENABLED channel the pass FET is "
+                       f"conducting, and {_DS_TPS2553} §9.3.2 p.14 turns it "
+                       f"off only after the reverse-voltage comparator's "
+                       f"deglitch -- 3-7 ms (p.7) -- with '(V_OUT - V_IN) / "
+                       f"r_DS(on)' of reverse current flowing meanwhile. For "
+                       f"those milliseconds the surge is on V5AUX, and so on "
+                       f"the other three switches' IN pins and the buck's "
+                       f"output, every one of them a 7 V part. What the clamp "
+                       f"still buys is the size of that surge: without it the "
+                       f"wire's full transient arrives instead of 10.3 V. ⛔ "
+                       f"Do not 'fix' this by adding OUT to rules.SUPPLY_PINS "
+                       f"-- the risk is recorded in the design record, not "
+                       f"checked, and the rule would fail a design the owner "
+                       f"has already decided")
 
 
 def _tvs5(refdes: str, board: Board, where: str) -> Part:
@@ -681,6 +689,9 @@ _POWER_CTRL_PARTS = (
 # feeds they tap are the lamp channels here.
 #   U301: IN1 AUX12 · IN2 HL_LOW · IN3 HL_HIGH · IN4 HL_DRL
 #   U302: IN1 TAIL_RUN · IN2 TURN_L · IN3 TURN_R · IN4 TAIL_STOP
+#   U303: IN1-4 the four 12 V aux outputs (IO-1), on expander #3
+# The 5 V row is here too, under the board: a buck of its own and four
+# current-limited load switches (IO-1, IO-2).
 # ════════════════════════════════════════════════════════════════════════════
 _MCP_SOURCE = (
     f"{_DS_MCP} p.11 Table 2-1 (one column for SSOP, SOIC and SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
@@ -1026,8 +1037,9 @@ _OUTPUTS_PARTS = (
        f"U305 PVIN high-frequency bypass, right at the PVIN/PGND pins. "
        f"{_DS_LM736} p.29"),
     _c("C314", "OUTPUTS", "470nF", 16.0,
-       f"U305 CBOOT to SW, the high-side driver's bootstrap. {_DS_LM736} p.31: "
-       f"'a high-quality 470-nF capacitor from this pin to the SW pin'"),
+       f"U305 CBOOT to SW, the high-side driver's bootstrap. {_DS_LM736} p.3: "
+       f"'Connect a high-quality 470-nF capacitor from this pin to the SW "
+       f"pin'"),
     _c("C315", "OUTPUTS", "2.2uF", 25.0,
        f"U305 VCC to GND, the internal bias LDO's output. {_DS_LM736} p.31 "
        f"asks 2.2 µF X5R/X7R; ⛔ nothing else may load this pin (p.3)",
@@ -1570,6 +1582,18 @@ _NETS_RAILS = (
                "here (address 001) and U304.A1 is (address 010)"),
 )
 
+#: Said once for every channel expander #3 commands: what holds it off, and
+#: for HOW LONG. ⛔ Not `_LGT`'s sentence, which is written for a native GPIO
+#: and bounds the window at the ~200 ms it spends high-Z at boot. An expander
+#: bit is high-Z until firmware writes the chip -- on an unflashed, dead or
+#: hung module, for ever -- so what holds these channels off has to hold
+#: indefinitely, and the silicon's own pull-down does.
+_AUX_OFF = ("The TPS4H160B's internal 100-250 kΩ input pull-down holds the "
+            "channel OFF for as long as nothing drives the bit: expander #3's "
+            "pins come out of reset as inputs and stay inputs until firmware "
+            "writes them, so an unflashed or hung module never lights this "
+            "output (D14, plan §6.2.2a)")
+
 # ════════════════════════════════════════════════════════════════════════════
 # NETS — the OUTPUTS board's outputs. Every lamp common is GND; there is no separate return.
 # ════════════════════════════════════════════════════════════════════════════
@@ -1587,15 +1611,11 @@ _NETS_12V = (
                "buzzer +: 0.10 + ~0.50 A + a few mA against its 2 A limit. ⛔ "
                "J304.1 is BLUE and it is the POSITIVE — red is not"),
     Net("AUX12_CMD", _p("U304.GPA5 R346.1"), domain="3V3",
-        source="The AUX12 feed's command, expander #3's GPA5 (IO-1). ⚠️ It is "
-               "an ordinary output now: nothing holds the channel on, so horn, "
-               "fan and buzzer have no + until firmware asks for it. Before "
-               "IO-1 a 10 kΩ from V3P3 held it high whenever the logic rail "
-               "was up"),
+        source="The AUX12 feed's command, expander #3's GPA5 (IO-1). ⚠️ An "
+               "ordinary output: nothing holds the channel on, so horn, fan "
+               "and buzzer have no + until firmware asks for it"),
     Net("AUX12_EN", _p("R346.2 U301.IN1"), domain="3V3",
-        source="U301 IN1, behind R346. The channel's own 100-250 kΩ internal "
-               "pull-down holds it OFF while expander #3's bits are still "
-               "inputs, so nothing runs at key-on (D14)"),
+        source=f"U301 IN1, behind R346. {_AUX_OFF}"),
     Net("TAIL_RUN", _p("U302.OUT1 R304.1 J302.2 D320.K"), domain="12V",
         source="J302.2 YELLOW, 0.05 A, a separate feed and not PWM"),
     Net("TURN_L", _p("U302.OUT2 R305.1 J302.4 J303.1 R426.1 D321.K D324.K"),
@@ -1626,13 +1646,13 @@ _NETS_12V = (
                "4.5-6.5 V in any fault — which is why it never meets the ADC "
                "pin without R323"),
     Net("CS2_RAW", _p("U302.CS R322.1 R324.1 U303.CS"), domain="5V",
-        source="U302's current-sense node, as CS1_RAW -- and U303's too. Two "
+        source=f"U302's current-sense node, as CS1_RAW -- and U303's too. Two "
                f"devices share it because a TPS4H160B's CS pin is "
                f"high-impedance while its own DIAG_EN is low ({_DS_TPS} "
                f"Table 7-1, 'Diagnostics disabled, full protection': the "
                f"current LIMIT stays live either way). The firmware raises one "
                f"DIAG_EN at a time, so this node carries one device's sense "
-               f"current and the 3.33 V/A of R322 still means what it says. "
+               f"current and the scale R339 states still means what it says. "
                f"⚠️ Raise both and the two sense currents add: the reading is "
                f"then the sum of two channels, not either one"),
 )
@@ -2046,7 +2066,7 @@ def _aux12_nets(n: int) -> tuple[Net, ...]:
     return (
         Net(f"AUX12_{n}_CMD", _p(f"U304.GPA{n - 1} R{353 + n}.1"), domain="3V3",
             source=f"12 V aux {n}, commanded on expander #3's GPA{n - 1} "
-                   f"(IO-1). {_LGT}"),
+                   f"(IO-1). {_AUX_OFF}"),
         Net(f"AUX12_{n}_IN", _p(f"R{353 + n}.2 U303.IN{n}"), domain="3V3",
             source=f"Device side of R{353 + n}"),
         Net(f"AUX12V_{n}", _p(f"U303.OUT{n} R{359 + n}.1 J313.{2 * n - 1} "
@@ -2068,11 +2088,9 @@ def _aux5v_nets(n: int) -> tuple[Net, ...]:
             domain="5V",
             source=f"5 V aux output {n}: 1 A (IO-2) through U{305 + n}, "
                    f"limited at 1.19-1.39 A, with its return on the GND "
-                   f"contact beside it on J314. ⚠️ IO-12: D{330 + n} clamps "
-                   f"the wire at 10.3 V and the switch's OUT is rated 7 V, so "
-                   f"a surge large enough to fire the clamp can still damage "
-                   f"this channel -- accepted, and recorded, because no TVS "
-                   f"that stands off 5.17 V clamps lower"),
+                   f"contact beside it on J314. ⚠️ What D{330 + n} does and "
+                   f"does not protect is IO-12, stated once in that part's "
+                   f"own source"),
         Net(f"AUX5V_{n}_EN", _p(f"U304.{_AUX5V_EN_BITS[n - 1]} "
                                 f"U{305 + n}.EN R{364 + n}.1"), domain="3V3",
             source=f"5 V aux {n} enable, expander #3's "
@@ -2380,20 +2398,22 @@ _CONNECTORS = (
         _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
-    _tb("J313", "OUTPUTS", "12 V aux 1-4 (IO-1): each output with a return "
-        "beside it, in the 12 V row", tuple(
+    _tb("J313", "OUTPUTS", "12 V aux 1-4 (IO-1): four feeds alternating with "
+        "three shared returns, in the 12 V row", tuple(
             cp for n in range(1, 5)
             for cp in ((_cp(str(2 * n - 1), f"AUX12V_{n}",
                             f"aux {n} +, 1 A, current-limited at 1.12-1.55 A"),)
                        + ((_cp(str(2 * n), "GND",
-                               f"return shared by aux {n} and aux {n + 1}"),)
+                               f"return for aux {n} and aux {n + 1}, whichever "
+                               f"of the two is wired to it"),)
                           if n < 4 else ()))),
         note="SEVEN ways, not eight: 3.81 × 8 is what the two general-input "
-             "terminals are (J409, J410), and a plug of this row must not "
-             "seat in one of theirs. So the fourth output's return is the "
-             "ground it already shares with the third, and every ground "
-             "contact carries at most two outputs -- 2 A against the "
-             "family's 8 A. A size nothing else in the 3.81 family has"),
+             "terminals are (J409, J410), and a plug of this row must not be "
+             "able to seat in one of theirs. So the four feeds alternate with "
+             "THREE grounds rather than four: each load's return goes to a "
+             "ground contact beside its own feed, and since every ground is "
+             "between two feeds no contact can carry more than two loads -- "
+             "2 A against this family's 8 A rating"),
     replace(
         _tb("J314", "OUTPUTS", "5 V aux 1-4 (IO-1): each output with its own "
             "return, in the 5 V row UNDER the board", tuple(
