@@ -50,7 +50,10 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only
   for the netlist it was taken from: after a netlist change, every board it touches is re-exported
-  and re-proven. No board of the current netlist has been proven yet.
+  and re-proven. ✅ **All three boards were proven identical on 2026-09-20** at commit `87163cf` —
+  POWER (40 nets, 215 pins; `F201` off the PCB as intended), OUTPUTS (107 / 509), LOGIC (97 / 451).
+  ⛔ **That proof dies the moment `netlist.py` changes.** Re-export and re-prove every board the
+  change touches; do not carry the ✅ forward.
 
 - `tools.integrity` asks whether the netlist is a circuit at all — every pin of every part lands on a
   net, every inter-board net has real connector contacts. `tools/rules.py` asks whether it obeys the

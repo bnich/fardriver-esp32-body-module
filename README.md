@@ -139,9 +139,11 @@ EasyEDA Pro project. No board is laid out yet.
   it. ⭐ **The gate is live**: `board_fit` and the rules gate now compare a real measurement, so an
   envelope that outgrows the cavity **FAILS**. The requirement itself is not final — the wall, floor
   and lid are allowances until the all-metal enclosure is modelled.
-- ⬜ **The EasyEDA project must be re-proven.** Each board has to be re-imported, its netlist
-  re-exported from the editor and proven identical with `python3 -m tools.tel_check`; no board of
-  the current netlist has been proven yet.
+- ✅ **The EasyEDA project is proven.** All three boards were re-imported, their netlists exported
+  from the editor and checked identical with `python3 -m tools.tel_check` on **2026-09-20** —
+  POWER 40 nets / 215 pins, OUTPUTS 107 / 509, LOGIC 97 / 451, and all three outlines 40 × 241 mm.
+  ⚠️ A proof holds only for the netlist it was taken from: any change to `tools/netlist.py` means
+  re-exporting and re-proving every board it touches. **No board is laid out yet.**
 - ⬜ **The inter-board connector family is open**, and the mated pair sets each board gap.
 
 ---
