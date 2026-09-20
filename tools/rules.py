@@ -817,25 +817,43 @@ _RETURN_NETS = frozenset({"GND", "HV_C1_N", "HV_C2_N"})
 
 
 def bus_order(d: Design) -> list[str]:
-    """Every interface but STACK carries a supply. Mated reversed, or with its
-    upper half mirrored under its board, a palindromic pin order lands every
-    net on itself. Mated one contact off, each contact meets its neighbour, so
-    two different nets may sit side by side only if one is a return: a shift
-    can short a rail, never feed 84 V or 12 V into a logic input. (STACK
-    alternates signal and GND on every contact: reversed, every signal meets
-    ground.)"""
+    """Every inter-board interface, against the two ways a half can be mated
+    wrong. Reversed -- or, the same thing in copper, an upper half mirrored by
+    being mounted under its board -- contact i meets contact n+1-i. One contact
+    off, contact i meets contact i+1. Neither may land a rail or a signal on a
+    DIFFERENT one:
+
+      opposite pairs  a power bus survives reversal by being a palindrome, so
+                      every net lands on itself; a signal spine survives it by
+                      facing every signal with a ground.
+      adjacent pairs  two different nets may sit side by side only if one of
+                      them is a return: a shift can short a rail, never feed
+                      84 V or 12 V into a logic input.
+
+    ⚠️ Both tests are read off the PIN TABLE, for EVERY interface. STACK was
+    exempt BY NAME, on the argument that its alternating grounds make the
+    palindrome unnecessary. True -- and it left the alternation itself unchecked,
+    and it fired on CTRL the day CTRL was added, which is built the same way,
+    contact for contact. A ground opposite a signal satisfies the pair test on
+    its own, so the exemption was never needed."""
     errs = []
     seen = set()
     for c in d.connectors:
-        if not c.interface or c.interface == "STACK" or c.interface in seen:
+        if not c.interface or c.interface in seen:
             continue
         seen.add(c.interface)
         nets = [cp.net for cp in c.pins]
-        if nets != nets[::-1]:
-            errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) reads "
-                        f"{'/'.join(n or '-' for n in nets)}: not the same from "
-                        f"both ends, so a reversed or mirrored half lands nets on "
-                        f"each other")
+        n = len(nets)
+        for i in range(n // 2):
+            a, b = nets[i], nets[n - 1 - i]
+            if a != b and not ({a, b} & _RETURN_NETS):
+                errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) reads "
+                            f"{'/'.join(x or '-' for x in nets)}: not the same "
+                            f"from both ends -- contacts {i + 1}/{n - i} carry "
+                            f"{a or '-'} and {b or '-'}, and neither is a return, "
+                            f"so a reversed or mirrored half lands one on the "
+                            f"other")
+                break
         for i, (a, b) in enumerate(zip(nets, nets[1:]), start=1):
             if a != b and not ({a, b} & _RETURN_NETS):
                 errs.append(f"BUS-ORDER: {c.interface} ({c.refdes}) puts {a or '-'} "

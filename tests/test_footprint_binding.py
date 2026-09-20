@@ -94,7 +94,7 @@ def test_without_a_library_only_generated_footprints_are_bound():
     project.add_board("OUTPUTS")
     sheet = project.boards[0].schematic.sheets[0]
     bs = emit_board(design, "OUTPUTS", sheet)
-    assert set(bs.footprints_bound) == {"J307", "J308", "J311"}
+    assert set(bs.footprints_bound) == {"J307", "J308", "J311", "J312"}
     assert "Q301" in bs.footprints_unbound
 
 

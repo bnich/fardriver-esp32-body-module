@@ -36,6 +36,7 @@ def test_the_power_board_is_built_around_the_brick_on_its_floor_seat():
 def test_every_interface_joins_neighbours():
     assert integrity.INTERFACE_BOARDS == {
         "PWR-OUT": ("POWER", "OUTPUTS"),
+        "CTRL": ("POWER", "OUTPUTS"),
         "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
         "STACK": ("OUTPUTS", "LOGIC"),
     }

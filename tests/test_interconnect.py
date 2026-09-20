@@ -133,7 +133,8 @@ def test_every_sensitive_net_named_here_is_a_net_the_design_has(d):
 def test_the_sensitive_net_guard_fires_when_a_net_it_names_is_renamed(d):
     """The guard is only a check if it fails. Task 2 renamed RUN to
     IN11_RUN_WIRE and the list kept the old name, which cost J403 its unique-size
-    check with every test still green; Task 4 renames connectors again."""
+    check with every test still green. The nets named here move between
+    connectors and boards as the rows are laid out; the names must not."""
     renamed = replace(d, nets=tuple(
         replace(n, name="BL_OUT") if n.name == "BL" else n for n in d.nets))
     assert _named_nets_exist(renamed) == {"BL"}

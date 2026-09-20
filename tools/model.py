@@ -22,7 +22,7 @@ from typing import Literal
 
 Board = Literal["POWER", "OUTPUTS", "LOGIC"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
-Interface = Literal["PWR-OUT", "PWR-LOGIC", "STACK"]
+Interface = Literal["PWR-OUT", "CTRL", "PWR-LOGIC", "STACK"]
 Side = Literal["top", "bottom"]
 Assembly = Literal["", "jlc", "hand", "loose"]
 Kind = Literal[

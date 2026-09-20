@@ -50,6 +50,7 @@ def _nc_ok(mpn: str, pin: str) -> bool:
 #: on a second interface, with parts of its own.
 INTERFACE_BOARDS = {
     "PWR-OUT": ("POWER", "OUTPUTS"),
+    "CTRL": ("POWER", "OUTPUTS"),
     "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
     "STACK": ("OUTPUTS", "LOGIC"),
 }

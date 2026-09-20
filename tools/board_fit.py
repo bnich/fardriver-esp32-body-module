@@ -20,9 +20,11 @@ Three budgets, three plain answers:
             built, and says so -- the number is not explained away. What
             overrules it is a placed outline, not an argument.
   HEIGHT    `board_params.stack_height`, gap by gap, against the height there.
-  PLUGS     each board's harness headers end to end, against the edges of the
-            envelope whose wall is far enough away for a mated plug and the
-            bend of the wire leaving straight out of its back.
+  PLUGS     each FACE's harness headers end to end -- one row per face (IO-6),
+            so a terminal under a board is not summed into the row on top of it
+            -- against the edges of the envelope whose wall is far enough away
+            for a mated plug and the bend of the wire leaving straight out of
+            its back.
 
 ⚠️ Both are provisional until M18 is measured and the enclosure is chosen;
 the report says so on its first line for as long as that is true.
@@ -119,22 +121,35 @@ def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
 @dataclass(frozen=True)
 class Edge:
     board: str
+    side: str                  # the FACE of that board: one row per face (IO-6)
     headers: tuple[str, ...]
     length_mm: float           # the harness headers end to end, HEADER_GAP apart
     room_mm: float             # deepest mated plug's overhang + the wire's bend
 
+    @property
+    def face(self) -> str:
+        return f"{self.board} {self.side}"
+
 
 def edge_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Edge, ...]:
-    """Every board with harness headers: the edge they take and the room to
-    the wall their plugs need. An unfitted header still takes its edge."""
+    """Every FACE with harness headers: the row they take and the room to
+    the wall their plugs need. An unfitted header still takes its row.
+
+    One row per FACE, not per board (IO-6). A terminal hanging UNDER a board
+    is a row of its own, beside the row standing on top of the same board:
+    summed together they would report an edge twice as long as either row is,
+    and a board would fail a length no row of it needs."""
     out = []
     for board in order:
-        hs = [c for c in d.connectors if c.board == board and c.leaves_box]
-        if not hs:
-            continue
-        length = sum(c.footprint_mm[0] for c in hs) + HEADER_GAP * (len(hs) - 1)
-        room = max((c.overhang_mm for c in hs if not c.dnp), default=0.0) + bp.WIRE_BEND
-        out.append(Edge(board, tuple(c.refdes for c in hs), length, room))
+        for side in SIDES:
+            hs = [c for c in d.connectors if c.board == board
+                  and c.side == side and c.leaves_box]
+            if not hs:
+                continue
+            length = sum(c.footprint_mm[0] for c in hs) + HEADER_GAP * (len(hs) - 1)
+            room = max((c.overhang_mm for c in hs if not c.dnp),
+                       default=0.0) + bp.WIRE_BEND
+            out.append(Edge(board, side, tuple(c.refdes for c in hs), length, room))
     return tuple(out)
 
 
@@ -149,7 +164,7 @@ def edge_verdicts(d: Design) -> list[str]:
         if e.length_mm <= ends + sides:
             continue
         out.append(
-            f"plugs: {e.board}'s {len(e.headers)} harness headers take "
+            f"plugs: {e.face}'s {len(e.headers)} harness headers take "
             f"{e.length_mm:.0f} mm of edge and need {e.room_mm:.1f} mm to the wall "
             f"(the mated plug, then the wire's bend); the envelope leaves "
             f"{bp.END_ALLOWANCE:g} mm at each end ({2 * bp.BOARD_W:.0f} mm of edge) "
@@ -266,11 +281,12 @@ def report(d: Design) -> str:
             out.append(f"  {'⭐' if starred else '  '} {board:6} {h:5.1f} mm  "
                        f"{what}: {' '.join(refs)}")
 
-    out.append(f"\nPLUGS   harness headers end to end, {HEADER_GAP:g} mm apart; room = "
-               f"the deepest mated plug + a {bp.WIRE_BEND:g} mm wire bend")
+    out.append(f"\nPLUGS   one row per FACE (IO-6): its harness headers end to end, "
+               f"{HEADER_GAP:g} mm apart; room = the deepest mated plug + a "
+               f"{bp.WIRE_BEND:g} mm wire bend")
     for e in edge_budget(d):
-        out.append(f"  {e.board:6} {e.length_mm:5.0f} mm of edge, {e.room_mm:4.1f} mm to "
-                   f"the wall   {' '.join(e.headers)}")
+        out.append(f"  {e.board:7} {e.side:6} {e.length_mm:5.0f} mm of edge, "
+                   f"{e.room_mm:4.1f} mm to the wall   {' '.join(e.headers)}")
     edges = [] if bp.envelope_is_binding() else edge_verdicts(d)
 
     errs = problems(d)

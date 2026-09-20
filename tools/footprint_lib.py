@@ -21,6 +21,11 @@ from .eprj3.records import serialize_record
 
 TOOL = Path(os.environ.get("LCSC_SEARCH_HOME", Path.home() / "tools" / "lcsc-search"))
 
+#: Interfaces whose land pattern is TWO rows: a signal bus that puts a ground
+#: beside every signal carries twice its signal count, numbered across the rows
+#: (pin 1 signal, pin 2 its ground).  A power bus is one row.
+DUAL_ROW_INTERFACES = frozenset({"STACK", "CTRL"})
+
 
 def allegro_safe(title):
     """A footprint name an Allegro netlist accepts.  EasyEDA's netlist export
@@ -96,7 +101,7 @@ def generated(thing):
         return d.title, d.pads, d.shared, d.outline
     if isinstance(thing, Connector) and thing.interface is not None and not thing.lcsc:
         n = len(thing.pins)
-        rows = 2 if thing.interface == "STACK" else 1
+        rows = 2 if thing.interface in DUAL_ROW_INTERFACES else 1
         cols = n // rows
         title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
         pads = footprints.header(n, thing.pitch_mm, rows=rows)

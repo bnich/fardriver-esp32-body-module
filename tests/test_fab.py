@@ -28,7 +28,7 @@ def _fitted(d):
 
 #: The inter-board connectors wait on the owner's choice of family
 #: (still open). When it is made, empty this set.
-AWAITING_OWNER = {"J202", "J311", "J307", "J407", "J308", "J406"}
+AWAITING_OWNER = {"J202", "J311", "J105", "J312", "J307", "J407", "J308", "J406"}
 
 
 def test_every_fitted_item_has_a_way_onto_the_board(d):
@@ -63,14 +63,16 @@ def test_one_value_one_part(d):
 
 # --- every wire into the box lands on a pluggable screw terminal ---------------------
 #: LOCKING pluggable terminal blocks, Kangnex at 3.81 and 5.08 mm and Kefa at
-#: 7.62 mm (the RM header's flanges carry the nuts the KM plug's two screws draw into), (pitch mm, positions) -> (the right-angle
+#: 3.50 and 7.62 mm (the RM header's flanges carry the nuts the KM plug's two screws draw into), (pitch mm, positions) -> (the right-angle
 #: header JLC places, the loose screw plug the owner wires).  Typed from LCSC.
 TERMINALS = {
+    (3.50, 8): ("C441263", "C441113"),
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
     (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
-    (3.81, 6): ("C160126", "C157470"),
-    (3.81, 7): ("C489994", "C489981"), (3.81, 9): ("C489995", "C384932"),
-    (5.08, 3): ("C49238", "C49239"), (5.08, 4): ("C122715", "C122716"),
+    (3.81, 6): ("C160126", "C157470"), (3.81, 8): ("C189319", "C62102"),
+    (3.81, 9): ("C489995", "C384932"),
+    (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
+    (5.08, 5): ("C49240", "C49241"), (5.08, 9): ("C508920", "C508910"),
     (7.62, 6): ("C441304", "C441154"),
 }
 
@@ -82,16 +84,21 @@ def test_every_wire_into_the_box_lands_on_a_pluggable_screw_terminal(d):
     cannot block a screwdriver.  The plug screws to the header's flanges:
     retention under vibration, as the plan's vibration rule asks."""
     harness = [c for c in d.connectors if c.leaves_box]
-    assert len(harness) == 13
+    assert len(harness) == 15
     for c in harness:
         assert TERMINALS.get((c.pitch_mm, len(c.pins))) == (c.lcsc, c.plug), c.refdes
         assert c.assembly == "jlc" and c.height_confirmed, c.refdes
 
 
-#: A pitch per job, so a plug of one job cannot seat in a header of another:
-#: pack voltage alone at 7.62 mm (400 V IEC); the brake and kill exits alone at
-#: 5.08 mm; lamps, pods and serial at 3.81 mm (160 V IEC).
-FAMILY = {"J101": 7.62, "J306": 5.08, "J309": 5.08}
+#: A pitch per ROW (IO-6), so a plug of one row cannot seat in a header of
+#: another: pack voltage alone at 7.62 mm (400 V IEC); every FarDriver and
+#: display lead alone at 5.08 mm, because 12 V back-fed into the controller's
+#: 3.3 V logic is the one mismate that destroys something; the 12 V outputs and
+#: the inputs together at 3.81 mm (160 V IEC), where a mismate is harmless; and
+#: 3.50 mm reserved for the 5 V row (Task 5). ⚠️ A pitch the design's own
+#: connectors share with a dangerous group would undo it: tests/test_rows.py
+#: holds each exclusive pitch to its owners.
+FAMILY = {"J101": 7.62, "J309": 5.08, "J310": 5.08, "J404": 5.08, "J405": 5.08}
 
 
 def test_each_job_has_its_own_terminal_pitch(d):

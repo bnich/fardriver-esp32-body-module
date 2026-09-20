@@ -563,9 +563,10 @@ def test_unidirectional_clamps_point_the_right_way(d, w):
 # tests/test_plain_io.py holds the FUNCTION (released at reset, off at reset).
 #
 # ⚠️ Not one of these names a board.  Each DERIVES it from the harness terminal
-# the wire arrives on, because Task 4 moves J309 (with Q106/R114/R115) to POWER
-# and J306 (with the lever networks) to LOGIC.  A typed board name would have to
-# be edited in seven places, and the invariant is what gets lost in that edit.
+# the wire arrives on -- which is how they survived the move of J309 (with
+# Q106/R114/R115) to POWER and J306 (with the lever networks) to LOGIC, and how
+# they will survive the next one.  A typed board name would have had to be
+# edited in seven places, and the invariant is what gets lost in that edit.
 
 
 def _terminal_board(w, net):
@@ -721,12 +722,23 @@ STACK_CONTRACT = {
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
     "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2", "HORN_CMD",
-    "FAN_CMD", "BUZZ_CMD", "IN05_BRAKE_L", "IN06_BRAKE_R", "V12_SENSE",
-    "CANH", "CANL", "V3P3",
+    "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "V3P3",
     # the motor cut: the command out, the 100 kΩ-isolated copy back (IO-8)
     "BL_CMD", "BL_SENSE",
-    # ACC+ divided down: LOW with the key on means the controller is not alive
-    "ACC_SENSE",
+    # relayed on to CTRL and the controller row on POWER (IO-5): the serial
+    # pair, the boost command, ACC+ divided down (LOW with the key on means the
+    # controller is not alive) and the parked display's CAN pair
+    "UART1_TX", "UART1_RX", "BOOST_CMD", "ACC_SENSE", "CANH", "CANL",
+    # ⛔ NOT the brake levers: J306 is in the INPUTS row on LOGIC (IO-6), so
+    # IN05_BRAKE_L and IN06_BRAKE_R reach their pins without a crossing.
+}
+
+#: CTRL, POWER ↔ OUTPUTS: the controller row's signals, every one beside a
+#: ground. Eight of them carry on to LOGIC across STACK; the three telltales
+#: stop here, because the lamp feeds that drive them are on OUTPUTS.
+CTRL_CONTRACT = {
+    "BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX", "BOOST_CMD",
+    "CANH", "CANL", "TT_L", "TT_R", "TT_HL",
 }
 
 
@@ -747,6 +759,33 @@ def test_stack_is_one_row_per_signal_and_carries_exactly_the_contracted_nets(d):
         assert len(grounds) == len(STACK_CONTRACT), "alternating grounds"
         assert c.footprint_mm[0] == pytest.approx(2.54 * len(STACK_CONTRACT))
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
+
+
+def test_ctrl_carries_the_controller_row_with_a_ground_beside_every_signal(d):
+    """2 × N like STACK, N derived from the contract: the controller row's
+    connectors are on POWER (IO-5) and everything that commands or reads them
+    is above, so each of these signals faces a ground of its own."""
+    ends = _interface(d, "CTRL")
+    assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
+    for c in ends:
+        assert len(c.pins) == 2 * len(CTRL_CONTRACT)
+        assert {cp.net for cp in c.pins} - {"GND"} == CTRL_CONTRACT
+        assert len([cp for cp in c.pins if cp.net == "GND"]) == len(CTRL_CONTRACT)
+        assert c.footprint_mm[0] == pytest.approx(2.54 * len(CTRL_CONTRACT))
+    assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
+
+
+def test_what_crosses_ctrl_and_stack_both_is_relayed_not_duplicated(d):
+    """A net that starts on LOGIC and ends on POWER crosses both interfaces. It
+    is ONE net with two crossings, and `interface` names the lower one, so a
+    reader looking for the crossing finds the whole path."""
+    relayed = CTRL_CONTRACT & STACK_CONTRACT
+    assert relayed == {"BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX",
+                       "UART1_RX", "BOOST_CMD", "CANH", "CANL"}
+    for name in sorted(relayed):
+        n = d.net(name)
+        assert n.interface == "CTRL", name
+        assert {d.board_of(r) for r, _ in n.pins} >= {"POWER", "LOGIC"}, name
 
 
 def test_pwr_up_shares_the_load_current_over_three_contacts(d):
@@ -814,12 +853,12 @@ DEFECTS = [
     ("the cut FET has no source",
      lambda d: d.without_pin("Q106", "S"),
      test_bl_leaves_the_box_on_its_own_board_and_only_signals_cross, {}),
-    ("the lever pull-up sits on LOGIC, across the interface",
-     lambda d: d.replace_part("R317", board="LOGIC"),
+    ("the lever pull-up sits on OUTPUTS, an interface away from its terminal",
+     lambda d: d.replace_part("R317", board="OUTPUTS"),
      test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board,
      {"wire": "IN05_BRAKE_L", "node": "LEVER_L"}),
-    ("the lever array left behind on another board",
-     lambda d: d.replace_part("D313", board="LOGIC"),
+    ("the lever array left behind on OUTPUTS",
+     lambda d: d.replace_part("D313", board="OUTPUTS"),
      test_each_lever_is_a_class_a_contact_conditioned_on_its_own_board,
      {"wire": "IN05_BRAKE_L", "node": "LEVER_L"}),
     ("the cut FET's bias-OFF an interface away from its gate",

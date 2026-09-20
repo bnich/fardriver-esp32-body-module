@@ -127,8 +127,13 @@ GPIOS = {
 def _good() -> Design:
     # Power buses read the same from both ends, a return beside every rail.
     pwr = ("V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5", "GND", "V12")
+    # A signal spine: a ground beside every signal, and a ground OPPOSITE every
+    # signal too -- an even number of contacts, ending on the ground row. The
+    # trailing GND is not decoration: without it contacts 1 and 9 are two
+    # different commands, and a half mated reversed lands one on the other
+    # (BUS-ORDER, which checks every interface by its pin table).
     stack = ("HORN_CMD", "GND", "CONTACT_SENSE", "GND", "V3P3", "GND", "CS1",
-             "GND", "LGT_LOW")
+             "GND", "LGT_LOW", "GND")
     connectors = (
         # POWER
         _conn("J101", "POWER", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
@@ -650,10 +655,10 @@ def test_strap_fires_when_a_strapping_pin_drives_a_gate():
 def test_strap_fires_when_a_strapping_pin_crosses_to_another_board():
     """A strapping pin may serve its bias parts and the internal service
     header. Across STACK it meets another board's contacts at key-on."""
-    ext = lambda c: c.pins + (ConnPin("10", "SPARE_X"),)
+    ext = lambda c: c.pins + (ConnPin("11", "SPARE_X"), ConnPin("12", "GND"))
     bad = GOOD.replace_connector("J406", pins=ext(GOOD.connector("J406")))
     bad = bad.replace_connector("J308", pins=ext(GOOD.connector("J308")))
-    bad = bad.with_net(Net("SPARE_X", (("J406", "10"), ("J308", "10")),
+    bad = bad.with_net(Net("SPARE_X", (("J406", "11"), ("J308", "11")),
                            domain="SIGNAL", interface="STACK"))
     errs = fired(on_gpio(bad, "SPARE_X", 46), "GPIO-STRAP")
     assert any("crosses STACK" in e for e in errs)
@@ -1123,6 +1128,25 @@ def test_bus_order_leaves_the_stack_to_its_ground_row():
     stack = GOOD.connector("J308")
     odd = _rebus(GOOD, "STACK", tuple(cp.net for cp in stack.pins)[::-1][:-1] + ("GND",))
     assert not fired(odd, "BUS-ORDER")
+
+
+def test_bus_order_fires_on_a_spine_that_loses_a_ground():
+    """What exempts a signal spine is its GROUNDS, not its name. Take one out
+    and two commands sit side by side, where a one-contact shift lands one on
+    the other. ⚠️ STACK was exempt by name, and the day CTRL was added -- built
+    the same way, contact for contact -- the rule fired on it instead."""
+    nets = tuple(cp.net for cp in GOOD.connector("J308").pins)
+    bad = _rebus(GOOD, "STACK", nets[:1] + nets[2:] + ("GND",))
+    assert any("HORN_CMD beside CONTACT_SENSE" in e for e in fired(bad, "BUS-ORDER"))
+
+
+def test_bus_order_fires_on_a_spine_with_a_signal_at_both_ends():
+    """Reversed, contact 1 meets contact n. On a spine that is a ground -- until
+    the spine ends on a signal, and then two commands land on each other. This
+    is the defect the old name-based exemption hid, and the GOOD fixture had it."""
+    nets = tuple(cp.net for cp in GOOD.connector("J308").pins)[:-1]
+    errs = fired(_rebus(GOOD, "STACK", nets), "BUS-ORDER")
+    assert any("both ends" in e and "HORN_CMD and LGT_LOW" in e for e in errs)
 
 
 def _warned(d, wid, ref=None):

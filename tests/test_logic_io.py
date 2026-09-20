@@ -93,13 +93,16 @@ def test_the_parked_can_transceiver_idles_in_standby():
 
 
 def test_the_boost_button_reaches_a_terminal_with_its_own_return():
-    """The throttle's red button (IN-07) is a 2-pin dry contact.  It lands on
-    J404 beside a ground of its own, with a TVS on the wire."""
+    """The throttle's red button (IN-07) is a 2-pin dry contact.  It is an INPUT,
+    so since IO-4 it lands in the INPUTS row on J409 -- not on the serial
+    terminal, which went to POWER with the FarDriver's own wires -- beside a
+    ground of its own, with a line of J409's own array on the wire."""
     d = _d()
     wire = _pins(d, "IN07_BOOST_BTN_WIRE")
-    (j404_pin,) = [p for r, p in wire if r == "J404"]
-    assert ("D404", "K4") in wire
-    j = d.connector("J404")
+    (pin,) = [p for r, p in wire if r == "J409"]
+    j = d.connector("J409")
+    assert j.board == "LOGIC" and d.part("D413").board == "LOGIC"
+    assert any(r == "D413" for r, _ in wire), "the button's line is on J409's array"
     nets = [cp.net for cp in j.pins]
-    assert nets[int(j404_pin)] == "GND"          # the contact beside it
+    assert nets[int(pin) - 2] == "GND"           # the contact beside it
     assert j.lcsc and j.plug

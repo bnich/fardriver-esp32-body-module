@@ -118,8 +118,24 @@ def test_the_edge_a_board_s_headers_take_by_hand():
     d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6),
                         conn("J303", "OUTPUTS", 7.0, overhang=0.0))
     (e,) = bf.edge_budget(d)
-    assert (e.board, e.headers) == ("OUTPUTS", ("J302", "J303"))
+    assert (e.board, e.side, e.headers) == ("OUTPUTS", "top", ("J302", "J303"))
     assert (e.length_mm, e.room_mm) == (pytest.approx(41.0), pytest.approx(19.6))
+
+
+def test_a_terminal_under_a_board_is_a_row_of_its_own(capsys):
+    """IO-6: one row per FACE. The 5 V row hangs under OUTPUTS, under the 12 V
+    row on top of it; summed as one board they would report 41 mm of edge where
+    neither row is longer than 20, and OUTPUTS would fail a length no row needs."""
+    d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6),
+                        replace(conn("J314", "OUTPUTS", 7.0, overhang=8.9),
+                                side="bottom"))
+    rows = {(e.board, e.side): e for e in bf.edge_budget(d)}
+    assert set(rows) == {("OUTPUTS", "top"), ("OUTPUTS", "bottom")}
+    assert rows[("OUTPUTS", "top")].length_mm == pytest.approx(20.0)
+    assert rows[("OUTPUTS", "bottom")].length_mm == pytest.approx(20.0)
+    assert rows[("OUTPUTS", "bottom")].room_mm == pytest.approx(18.9)
+    out = run(capsys, d)[1]
+    assert "OUTPUTS top " in out and "OUTPUTS bottom " in out
 
 
 def test_a_plug_no_wall_has_room_for_is_never_printed_as_a_pass(capsys):
@@ -128,7 +144,7 @@ def test_a_plug_no_wall_has_room_for_is_never_printed_as_a_pass(capsys):
     d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6))
     code, out = run(capsys, d)
     assert code == 2 and "NOT A PASS" in out and "✅ PASS" not in out
-    assert "OUTPUTS's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
+    assert "OUTPUTS top's 1 harness headers take 20 mm of edge and need 19.6 mm" in out
 
 
 def test_a_plug_no_wall_has_room_for_fails_once_the_envelope_is_a_fact(capsys, binding_envelope):

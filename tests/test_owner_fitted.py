@@ -44,9 +44,9 @@ def _attrs(d, ref):
 
 def test_easyeda_is_told_which_parts_jlc_must_not_fit():
     d = netlist.current()
-    for ref in ("C201", "F201", "U201", "L101", "U406", "J409", "D317", "J408"):
+    for ref in ("C201", "F201", "U201", "L101", "U406", "D317", "J408"):
         assert _attrs(d, ref).get("Add into BOM") == "no", ref
-    for ref in ("R401", "U401", "J302"):
+    for ref in ("R401", "U401", "J302", "J409"):
         assert "Add into BOM" not in _attrs(d, ref), ref
 
 

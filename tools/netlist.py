@@ -5,12 +5,13 @@ structural gate: every declared pin of every part lands on exactly one net.
 
 Conventions
   REFDES    board-scoped hundreds: POWER 1xx and 2xx · OUTPUTS 3xx · LOGIC 4xx.
-            Two blocks keep numbers from another board because they are moving:
-            the display block (J405, D405, D406, R426-R429) carries 4xx and sits
-            on OUTPUTS, and the BL driver (Q106, R114, R115) carries 1xx and sits
-            on OUTPUTS until it joins J309 on POWER. A refdes never changes, not
-            even when its part changes board. The documents' informal names
-            (`D13`, `C1`) are quoted in `source` so they stay greppable.
+            A refdes never changes, not even when its part changes board, so
+            POWER's controller row carries the numbers of the boards its parts
+            came from: the FarDriver and display connectors with their clamps
+            and series resistors (J310, J404, J405, D404-D407, Q401, R424, R425,
+            R429, R436, R443) are 4xx on POWER, and R426-R428 stay 4xx on
+            OUTPUTS, where the lamp feeds they tap are. The documents' informal
+            names (`D13`, `C1`) are quoted in `source` so they stay greppable.
   PINS      functional names from the datasheet; where several pads share one
             name (`VS`, `GND`, `OUT1`) the pad numbers are in `source`.
             Passives 1/2 · polarised caps +/- · diodes A/K · FETs G/D/S ·
@@ -23,8 +24,8 @@ Conventions
             ahead of its series resistor.
   DOMAIN    the voltage CLASS of the node. `v_max` is the rating ACROSS a part,
             so a 25 V capacitor between two 84 V-class nodes can be correct.
-  INTERFACE names the lowest crossing (PWR-OUT, below PWR-LOGIC and STACK)
-            when a net crosses more than one.
+  INTERFACE names the lowest crossing (PWR-OUT and CTRL, below PWR-LOGIC and
+            STACK) when a net crosses more than one.
   HEIGHTS   `height_confirmed=True` only where `source` cites the manufacturer
             PDF and the page the figure was read from.
   CONNECTOR pin numbers are a generator-side index. For the pods the binding
@@ -66,6 +67,8 @@ _DS_KX508 = ("Kangnex WJ2EDGRM-5.08 and WJ2EDGKM-5.08 drawings rev A "
              "(kangnex_2EDGRM-5.08.pdf, kangnex_2EDGKM-5.08.pdf)")
 _DS_KF762 = ("Cixi Kefa KF2EDGRM-7.62 and KF2EDGKM-7.62 drawings rev A "
              "(kefa_C441304.pdf, kefa_C441154.pdf)")
+_DS_KF350 = ("Cixi Kefa KF2EDGRM-3.5 and KF2EDGKM-3.5 drawings rev A "
+             "(kefa_C441263.pdf, kefa_C441113.pdf)")
 _BRK = "brake-circuit.md"
 
 # ── generic chip packages: (footprint w × l, height). Heights are envelopes
@@ -195,16 +198,15 @@ def _tvs5(refdes: str, board: Board, where: str) -> Part:
 
 
 def _class_a_parts(pull: str, series: str, cap: str, net: str,
-                   board: Board = "LOGIC", cap_board: Board | None = None,
                    note: str = "") -> tuple[Part, ...]:
     """plan §4 class A: 1 kΩ pull-up · 1 kΩ series · 100 nF at the pin.
 
-    `board` is where the pull-up and the series resistor go -- the board whose
-    harness terminal the contact arrives on, so only the conditioned signal
-    crosses an interface. `cap_board` is where the 100 nF goes when that is a
-    different board: the cap belongs at the MCU pin, and the brake levers land
-    on OUTPUTS while their pin is on LOGIC until Task 4 moves the terminal.
+    All of it on LOGIC, because the INPUTS row is LOGIC's edge (IO-4, IO-6):
+    every contact from the harness arrives on the board that reads it, so the
+    pull-up, the series resistor and the 100 nF at the pin sit together and no
+    unconditioned contact crosses an interface.
     """
+    board: Board = "LOGIC"
     tail = f" {note}" if note else ""
     return (
         _r(pull, board, "1k",
@@ -213,7 +215,7 @@ def _class_a_parts(pull: str, series: str, cap: str, net: str,
            f"through a bought switch (plan §4). BOM C1{tail}"),
         _r(series, board, "1k",
            f"Class-A SERIES into the pin for {net} (plan §4). BOM C1{tail}"),
-        _c(cap, cap_board or board, "100nF", 50.0,
+        _c(cap, board, "100nF", 50.0,
            f"Class-A 100 nF to GND at the pin for {net} (plan §4). BOM C1{tail}"),
     )
 
@@ -505,9 +507,96 @@ _POWER_CONVERTER_PARTS = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — OUTPUTS (L2): 12 V drivers, the motor-cut FET, and the parked display
-# block. ⚠️ 40 V parts: the 12 V rail only, never the 84 V node.
+# PARTS — POWER (L1), continued: the CONTROLLER ROW (IO-5, IO-6). Every wire to
+# the FarDriver and the parked display leaves from POWER's edge, and each one's
+# driver, divider, series resistor and clamp sits here with its connector, so
+# nothing unconditioned crosses an interface: only the commands and the sense
+# nodes cross CTRL. The refdes hundreds are the boards these parts came from
+# (see REFDES above) -- a refdes never changes when a part moves board.
+# ════════════════════════════════════════════════════════════════════════════
+_POWER_CTRL_PARTS = (
+    # ── the motor cut: an open-drain output at J309 (IO-8, IO-9) ─────────────
+    _sot23("Q106", "AO3400A", "POWER", "NFET", 30.0,
+           "BL, the FarDriver's low-brake input, pulled low = motor cut. "
+           "Firmware-driven (IO-8) from GPIO16; the hard gate pull-down R115 "
+           "keeps it RELEASED from reset until firmware drives it (IO-9). On "
+           "POWER with J309, where BL leaves the box"),
+    _r("R114", "POWER", "100R",
+       "BL gate series (plan §6.2.3), as R310-R312 and R424. With R115 it is "
+       "also the gate DIVIDER, and that is what has to switch the cut: "
+       "3.3 V × 10k / (100R + 10k) = 3.27 V, over the AO3400A's specified "
+       "V_GS of 2.5 V (rule GATE-VGS). BOM D9"),
+    _r("R115", "POWER", "10k",
+       "BL gate HARD pull-down: released at reset, through boot and whenever "
+       "the firmware is not running (IO-9, D14). 10 kΩ against R114's 100 Ω "
+       "leaves 3.27 V of gate drive (GATE-VGS). ⛔ It stays on this board with "
+       "Q106: a pull-down behind a connector is a guarantee a bad contact can "
+       "take away, and this one is what keeps the bike driving"),
+    _r("R336", "POWER", "100k",
+       "BL → BL_SENSE: the copy firmware reads back, so a cut that did not take "
+       "and one that will not release both show up. ⚠️ The cut itself is a "
+       "firmware output now (IO-8), so this is a readback, not an isolation "
+       "barrier. ⚠️ AND ITS RISK HAS INVERTED: under D23 a spurious pull here "
+       "moved BL toward a cut, which was the safe direction; under IO-9 the "
+       "bike is meant to drive whenever the firmware is not running, so this "
+       "is the ONE copper path on the module that can work against IO-9. A "
+       "fitted but unpowered LOGIC, or an expander pin left as an output, "
+       "clamps BL_SENSE near 0.5 V and puts 100 kΩ from BL to ground. That only "
+       "cuts if the FarDriver's own BL pull-up is 47 kΩ or weaker, which is "
+       "⬜ UNMEASURED — the 100 kΩ is the whole margin, so it may only ever go "
+       "up, never down"),
+    _r("R343", "POWER", "100k",
+       "ACC+ sense divider, top. The throttle's 5.1 V supply is a sensor only "
+       "(IO-8): nothing on the module is powered from it, and firmware reads it "
+       "to tell a live FarDriver from a dead one. 5.1 V × 180/280 = 3.28 V at "
+       "the expander pin (V_IH 2.64 V)"),
+    _r("R344", "POWER", "180k", "ACC+ sense divider, bottom (with R343)"),
+    # ── the FarDriver serial pair and the boost output at J404 ───────────────
+    _r("R436", "POWER", "1k",
+       "UART1 TX series (plan §4 class E); the pin is tri-stated whenever the "
+       "module is not sending. On POWER with J404: the harness wire meets a "
+       "resistor on the board it arrives on, and only the 3.3 V logic node "
+       "crosses CTRL"),
+    _r("R443", "POWER", "1k",
+       "UART1 RX series (plan §4 class E): the FarDriver's TX level is "
+       "unmeasured (⬜ M9), so the harness wire never meets GPIO18 directly. On "
+       "POWER with J404, as R436"),
+    _sot23("Q401", "AO3400A", "POWER", "NFET", 30.0,
+           "Boost open-drain output to the controller's CruisePin. ⛔ METER THE "
+           "WIRE FIRST: the same 30-pin harness carries pink 60VC at 72-84 V; "
+           "above 15 V (D407's stand-off) the module needs a PC817 opto "
+           "instead of this FET. BOM D3"),
+    _r("R424", "POWER", "100R", "Boost gate series (plan §6.2.3). BOM D9"),
+    _r("R425", "POWER", "10k",
+       "Boost HARD external pull-down (plan §3.1.1). D14: the gate biases OFF "
+       "through the ~200 ms of high-Z at boot, and on POWER with Q401, so no "
+       "contact of CTRL stands between the gate and its pull-down. BOM D9"),
+    _r("R429", "POWER", "1k",
+       "Series in the one-line feed to display pin 9: back-feed protection "
+       "while the FarDriver drives 0-15 V into an unpowered display "
+       "(plan §3.3). Between J310 and J405, both on this board, so the "
+       "controller's 0-15 V one-line never crosses an interface. 1206 as R426. "
+       "BOM B3", pkg="1206"),
+    # ── one clamp per connector of the row, on the row's own board (PROT) ────
+    _tvs15("D316", "POWER", "At J309: BL and ACC+"),
+    _tvs15("D317", "POWER", "At J310: FD_ONELINE, 0-15 V. ⏸️ DNP with the "
+           "parked display (D19)", dnp=True),
+    _tvs5("D404", "POWER", "At J404: the two FarDriver serial wires (K1, K3)"),
+    _tvs15("D407", "POWER",
+           "At J404: BOOST_OUT, whose controller-side pull-up must meter "
+           "≤ 15 V before the wire is connected (plan §7.1): the 15 V array"),
+    _tvs15("D406", "POWER", "At J405: TT_L, TT_R, TT_HL, DISP_ONELINE. ⏸️ DNP "
+           "with the parked display (D19); populate-and-go", dnp=True),
+    _tvs5("D405", "POWER", "At J405: CANH, CANL"),
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# PARTS — OUTPUTS (L2): the 12 V drivers, whose channels are the 12 V row
+# (IO-4). ⚠️ 40 V parts: the 12 V rail only, never the 84 V node.
 # There is no brake or kill circuit here: every channel is plain I/O (IO-8).
+# The motor cut, the FarDriver links and the display block sit on POWER with
+# the connectors they serve (IO-5); only R426-R428 stay, because the telltale
+# feeds they tap are the lamp channels here.
 #   U301: IN1 AUX12 · IN2 HL_LOW · IN3 HL_HIGH · IN4 HL_DRL
 #   U302: IN1 TAIL_RUN · IN2 TURN_L · IN3 TURN_R · IN4 TAIL_STOP
 # ════════════════════════════════════════════════════════════════════════════
@@ -545,17 +634,6 @@ def _open_load_pullup(refdes: str, channel: str) -> Part:
               f"{channel} OUT → V12, for OFF-state open-load detect. "
               f"{_DS_TPS} p.23: 'The recommended pullup resistance is 20 kΩ'. "
               f"BOM D2")
-
-
-#: What the class-A network at J306 protects, said once for both levers.
-_LEVER_NOTE = (
-    "{side} brake lever, IN-{n}: since IO-8 the lever WIRE is the node, so the "
-    "pull-up, the series resistor and the array (D313) all sit on the board "
-    "J306 is on and only the conditioned signal travels to the S3. The series "
-    "resistor is what keeps a negative surge on the lever wire out of the S3's "
-    "input clamp through D313; with the 100 nF at the pin "
-    "\u03c4 = 100 \u00b5s, well inside the <10 ms the boost safety-release wants."
-)
 
 
 _OUTPUTS_PARTS = (
@@ -597,12 +675,6 @@ _OUTPUTS_PARTS = (
        f"and alone it leaves ~3.8 V on a 3.3 V pin. Halved, a fault reads "
        f"2.25-3.25 V: above every real load, below VDD"),
     _r("R324", "OUTPUTS", "10k", "Series from U302's CS node to CS2, as R323 (with R340)"),
-    _r("R343", "OUTPUTS", "100k",
-       "ACC+ sense divider, top. The throttle's 5.1 V supply is a sensor only "
-       "(IO-8): nothing on the module is powered from it, and firmware reads it "
-       "to tell a live FarDriver from a dead one. 5.1 V × 180/280 = 3.28 V at "
-       "the expander pin (V_IH 2.64 V)"),
-    _r("R344", "OUTPUTS", "180k", "ACC+ sense divider, bottom (with R343)"),
     _r("R339", "OUTPUTS", "10k",
        "CS1 to GND on the ADC side of R323: the bottom of the divider. The CS "
        "node is R321 ∥ (R323 + R339) = 952 Ω: 3.17 V/A there, 1.59 V/A at the "
@@ -676,39 +748,6 @@ _OUTPUTS_PARTS = (
                 "29.2 V: under the AO3400A's 30 V and the TPS4H160B's 40 V. "
                 "Littelfuse SMCJ/SMBJ series table (the two series share the "
                 "V_R/V_BR/V_C grid). SMB outline assumed"),
-    # ── the brake levers and the motor cut: plain I/O (IO-8) ────────────────
-    _sot23("Q106", "AO3400A", "OUTPUTS", "NFET", 30.0,
-           "BL, the FarDriver's low-brake input, pulled low = motor cut. "
-           "Firmware-driven (IO-8) from GPIO16; the hard gate pull-down R115 "
-           "keeps it RELEASED from reset until firmware drives it (IO-9)"),
-    _r("R114", "OUTPUTS", "100R",
-       "BL gate series (plan §6.2.3), as R310-R312 and R424. With R115 it is "
-       "also the gate DIVIDER, and that is what has to switch the cut: "
-       "3.3 V × 10k / (100R + 10k) = 3.27 V, over the AO3400A's specified "
-       "V_GS of 2.5 V (rule GATE-VGS). BOM D9"),
-    _r("R115", "OUTPUTS", "10k",
-       "BL gate HARD pull-down: released at reset, through boot and whenever "
-       "the firmware is not running (IO-9, D14). 10 kΩ against R114's 100 Ω "
-       "leaves 3.27 V of gate drive (GATE-VGS)"),
-    *_class_a_parts("R317", "R341", "C421", "IN05_BRAKE_L", board="OUTPUTS",
-                    cap_board="LOGIC",
-                    note=_LEVER_NOTE.format(side="Left", n="05")),
-    *_class_a_parts("R318", "R342", "C422", "IN06_BRAKE_R", board="OUTPUTS",
-                    cap_board="LOGIC",
-                    note=_LEVER_NOTE.format(side="Right", n="06")),
-    _r("R336", "OUTPUTS", "100k",
-       "BL → BL_SENSE: the copy firmware reads back, so a cut that did not take "
-       "and one that will not release both show up. ⚠️ The cut itself is a "
-       "firmware output now (IO-8), so this is a readback, not an isolation "
-       "barrier. ⚠️ AND ITS RISK HAS INVERTED: under D23 a spurious pull here "
-       "moved BL toward a cut, which was the safe direction; under IO-9 the "
-       "bike is meant to drive whenever the firmware is not running, so this "
-       "is the ONE copper path on the module that can work against IO-9. A "
-       "fitted but unpowered LOGIC, or an expander pin left as an output, "
-       "clamps BL_SENSE near 0.5 V and puts 100 kΩ from BL to ground. That only "
-       "cuts if the FarDriver's own BL pull-up is 47 kΩ or weaker, which is "
-       "⬜ UNMEASURED — the 100 kΩ is the whole margin, so it may only ever go "
-       "up, never down"),
     # ── IN-15: 12 V rail sense (plan §4 class D) ────────────────────────────
     _r("R337", "OUTPUTS", "47k",
        "IN-15 divider top, from V12. 47 k / 10 k: 12 V → 2.11 V, and TDK's "
@@ -731,15 +770,8 @@ _OUTPUTS_PARTS = (
     _tvs18("D324", "OUTPUTS", "At J303: front TURN_L"),
     _tvs18("D325", "OUTPUTS", "At J303: front TURN_R"),
     _tvs18("D326", "OUTPUTS", "At J304/J305: AUX12, the horn/fan/buzzer + feed"),
-    _tvs5("D313", "OUTPUTS",
-          "At J306: LEVER_L, LEVER_R — 3.3 V class-A lines (IO-8)"),
-    _tvs15("D316", "OUTPUTS", "At J309: BL and ACC+"),
-    _tvs15("D317", "OUTPUTS", "At J310: FD_ONELINE, 0-15 V. ⏸️ DNP with the "
-           "parked display (D19)", dnp=True),
-    # ── display block, parked with D19: footprints fitted ───────────────────
-    _tvs15("D406", "OUTPUTS", "At J405: TT_L, TT_R, TT_HL, DISP_ONELINE. ⏸️ DNP "
-           "with the parked display (D19); populate-and-go", dnp=True),
-    _tvs5("D405", "OUTPUTS", "At J405: CANH, CANL"),
+    # ── the telltale feeds: the display's own block is on POWER (IO-5), but
+    # ── these three resistors tap the LAMP FEEDS, which are here ────────────
     _r("R426", "OUTPUTS", "1k",
        "LEFT telltale series to display pin 1, fed from the TURN_L lamp feed, "
        "not a driver channel (plan §6.2.1). 1206: a display wire shorted to "
@@ -751,14 +783,12 @@ _OUTPUTS_PARTS = (
        "Headlight telltale series to display pin 5, fed from HL_HIGH so a "
        "flash lights it with no firmware (plan §7); LOW beam does not. 1206 "
        "as R426. BOM B3", pkg="1206"),
-    _r("R429", "OUTPUTS", "1k",
-       "Series in the one-line feed to display pin 9: back-feed protection "
-       "while the FarDriver drives 0-15 V into an unpowered display "
-       "(plan §3.3). 1206 as R426. BOM B3", pkg="1206"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# PARTS — LOGIC (L3): logic. The module footprint serves -WROOM-1 and -1U.
+# PARTS — LOGIC (L3): logic, and the INPUTS row (IO-4, IO-6). Every contact
+# from the harness arrives here, on the board that reads it, so each class-A
+# network sits with its own pin. The module footprint serves -WROOM-1 and -1U.
 # ════════════════════════════════════════════════════════════════════════════
 _U401_PINS = (
     "3V3", "EN", "GND", "EPAD",
@@ -768,18 +798,36 @@ _U401_PINS = (
     "IO42", "IO43", "IO44", "IO47", "IO48",
 )
 
-#: Expander #2's spare input-capable bits: on J409, unfitted.  GPA7/GPB7 are
-#: output-only and stay nc.
+#: Expander #2's spare input-capable bits: the 13 free inputs of the INPUTS row
+#: (IO-1), on J409 and J410.  GPA7/GPB7 are output-only and stay nc.
 _U403_SPARES = tuple(f"GPA{i}" for i in range(1, 7)) + tuple(f"GPB{i}" for i in range(7))
+#: The general-inputs terminals, in row order: A carries a ground, the boost
+#: button and the six GPA spares; B carries the seven GPB spares and a ground.
+#: ⛔ Two 8-way terminals, not one 16-way: the Kangnex 3.81 × 16 header has 2 in
+#: stock at JLC, and this row's headers are FITTED.
+_INPUTS_A, _INPUTS_B = "J409", "J410"
+#: Where each spare bit's wire lands: the six GPA spares behind A's ground and
+#: boost button (pins 3-8), the seven GPB spares on B's pins 1-7.
+_SPARE_PINS = tuple(f"{_INPUTS_A}.{i + 3}" for i in range(6)) \
+    + tuple(f"{_INPUTS_B}.{i + 1}" for i in range(7))
 #: Each spare is class A (plan §4), as the bar inputs are, and the network is
-#: fitted: a header soldered into J409 later is ready to wire.  (bit, J409 pin,
-#: pull-up, series, cap, TVS line); four SMS05T1G quads, the last three lines
-#: of D413 grounded as on the other arrays.
+#: fitted, so a wire pushed into the plug later needs no board change.
+#: (bit, terminal contact, pull-up, series, cap, TVS line); four SMS05T1G
+#: quads, the last two lines of D413 grounded as on the other arrays.
 _SPARE_TVS = ("D410", "D411", "D412", "D413")
 _SPARE_LINES = tuple(
-    (bit, n, f"R{446 + i}", f"R{459 + i}", f"C{423 + i}",
+    (bit, _SPARE_PINS[i], f"R{446 + i}", f"R{459 + i}", f"C{423 + i}",
      f"{_SPARE_TVS[i // 4]}.{('K1', 'K3', 'K4', 'K6')[i % 4]}")
-    for i, (n, bit) in enumerate(enumerate(_U403_SPARES, start=3)))
+    for i, bit in enumerate(_U403_SPARES))
+
+
+def _spare_cps(terminal: str) -> tuple[ConnPin, ...]:
+    """One terminal's spare contacts, DERIVED from `_SPARE_LINES`, so the
+    connector table and the nets cannot disagree about a pin number."""
+    return tuple(_cp(where.split(".")[1], f"SPARE_{bit[2:]}_WIRE",
+                     f"U403.{bit}, class A")
+                 for bit, where, *_ in _SPARE_LINES
+                 if where.startswith(f"{terminal}."))
 
 
 _MCP_SOURCE = (
@@ -792,6 +840,17 @@ _MCP_SOURCE = (
     f"GPA7/GPB7 as outputs (p.18), so neither floats; every input bit has an "
     f"external pull. p.35 (drawing C04-073): SSOP-28 A 2.00 mm max, D 10.50, "
     f"E 8.20. 400 kHz at 3.3 V. BOM C3")
+
+#: What the class-A network at J306 protects, said once for both levers.
+_LEVER_NOTE = (
+    "{side} brake lever, IN-{n}: since IO-8 the lever WIRE is the node, so the "
+    "pull-up, the series resistor and the array (D313) all sit on LOGIC with "
+    "J306 in the INPUTS row (IO-6) and with the S3 pin itself, so the lever "
+    "signal crosses no interface at all. The series resistor is what keeps a "
+    "negative surge on the lever wire out of the S3's input clamp through D313; "
+    "with the 100 nF at the pin "
+    "τ = 100 µs, well inside the <10 ms the boost safety-release wants."
+)
 
 
 _LOGIC_PARTS = (
@@ -888,29 +947,19 @@ _LOGIC_PARTS = (
     _tvs5("D403", "LOGIC",
           "At J403: IN08A, IN08B, IN11 (the run/off toggle, a plain contact "
           "since IO-8) and START — four 3.3 V class-A lines"),
-    _tvs5("D404", "LOGIC", "At J404: the two FarDriver serial wires (K1, K3) "
-          "and the throttle's boost button (K4)"),
-    _tvs15("D407", "LOGIC",
-           "At J404: BOOST_OUT, whose controller-side pull-up must meter "
-           "≤ 15 V before the wire is connected (plan §7.1): the 15 V array"),
-    _sot23("Q401", "AO3400A", "LOGIC", "NFET", 30.0,
-           "Boost open-drain output to the controller's CruisePin. ⛔ METER THE "
-           "WIRE FIRST: the same 30-pin harness carries pink 60VC at 72-84 V; "
-           "above 15 V (D407's stand-off) the module needs a PC817 opto "
-           "instead of this FET. BOM D3"),
-    _r("R424", "LOGIC", "100R", "Boost gate series (plan §6.2.3). BOM D9"),
-    _r("R425", "LOGIC", "10k",
-       "Boost HARD external pull-down (plan §3.1.1). D14: the gate biases OFF "
-       "through the ~200 ms of high-Z at boot. BOM D9"),
     *_class_a_parts("R477", "R478", "C438", "IN11_RUN"),
+    # ── the brake levers: two plain contacts in the INPUTS row (IO-8) ────────
+    *_class_a_parts("R317", "R341", "C421", "IN05_BRAKE_L",
+                    note=_LEVER_NOTE.format(side="Left", n="05")),
+    *_class_a_parts("R318", "R342", "C422", "IN06_BRAKE_R",
+                    note=_LEVER_NOTE.format(side="Right", n="06")),
+    _tvs5("D313", "LOGIC",
+          "At J306: LEVER_L, LEVER_R — 3.3 V class-A lines (IO-8)"),
 
     _r("R434", "LOGIC", "2k2",
        "I²C SDA pull-up. I²C at 3.3 V / 400 kHz allows 967 Ω-3.5 kΩ at "
        "100 pF; D16 wants the STRONG end beside 80 A of chopped phase current"),
     _r("R435", "LOGIC", "2k2", "I²C SCL pull-up, as R434"),
-    _r("R436", "LOGIC", "1k",
-       "UART1 TX series (plan §4 class E); the pin is tri-stated whenever the "
-       "module is not sending"),
     _r("R437", "LOGIC", "10k",
        f"MCP23017 RESET (both devices) pull-up to V3P3. {_DS_MCP} p.11: RESET "
        f"'Must be externally biased'"),
@@ -944,9 +993,6 @@ _LOGIC_PARTS = (
        f"U0TXD series, at U401, on its way to J408 pad 3. {_DS_HDG}, UART: 'a "
        f"499 Ω series resistor to the U0TXD line to suppress harmonics'. "
        f"470 Ω is the nearest JLC Basic value"),
-    _r("R443", "LOGIC", "1k",
-       "UART1 RX series (plan §4 class E): the FarDriver's TX level is "
-       "unmeasured (⬜ M9), so the harness wire never meets GPIO18 directly"),
     _c("C412", "LOGIC", "1uF", 16.0,
        f"U401 EN to GND, the C of the reset RC. {_DS_HDG} p.11"),
     _c("C413", "LOGIC", "10uF", 16.0,
@@ -962,7 +1008,8 @@ _LOGIC_PARTS = (
     _c("C420", "LOGIC", "100nF", 50.0, "U404 VCC decoupling"),
 )
 
-_PARTS = _POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _OUTPUTS_PARTS + _LOGIC_PARTS
+_PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
+          + _OUTPUTS_PARTS + _LOGIC_PARTS)
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFACE PIN MAPS — the three inter-board spines (BD-3, BD-4).
@@ -982,15 +1029,27 @@ _PWROUT_NETS = ("V12", "V12", "GND", "V5", "GND", "KEY_SENSE", "GND", "V5",
 #: return is also every even STACK contact.
 _PWRLOGIC_NETS = ("V5", "GND", "KEY_SENSE", "GND", "V5")
 
+#: CTRL, J105 ↔ J312, POWER to OUTPUTS: the controller row's signals, every one
+#: beside a ground.  Odd contacts carry these in order, every even contact is
+#: GND.  Nothing here is a rail: the row's own connectors are on POWER (IO-5),
+#: so only commands and sense nodes cross.
+_CTRL_SIGNALS = ("BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX",
+                 "BOOST_CMD", "CANH", "CANL", "TT_L", "TT_R", "TT_HL")
+#: Contacts per row, and the header's length on the 2.54 mm grid.
+_CTRL_ROWS = len(_CTRL_SIGNALS)
+_CTRL_FP = (2.54 * _CTRL_ROWS, 2 * 2.54)
+
 #: STACK, J308 ↔ J406, 2 × len(_STACK_SIGNALS): odd contacts carry these in
 #: order, every even contact is GND, so each signal (CS1/CS2 above all) faces a
 #: ground.  The connector's size is DERIVED from this tuple, never typed.
+#: Eight of these are RELAYED from CTRL: they start or end on POWER, cross to
+#: OUTPUTS on CTRL and carry on to LOGIC here (the lower crossing names them).
 _STACK_SIGNALS = (
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
     "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2",
     "HORN_CMD", "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "BL_SENSE", "BL_CMD",
-    "IN05_BRAKE_L", "IN06_BRAKE_R", "CANH", "CANL", "V3P3",
+    "UART1_TX", "UART1_RX", "BOOST_CMD", "CANH", "CANL", "V3P3",
     "ACC_SENSE",
 )
 #: Contacts per row, and the header's length on the 2.54 mm grid.
@@ -1014,10 +1073,18 @@ def _pwrlogic(net: str) -> tuple[tuple[str, str], ...]:
                  if n == net for c in ("J307", "J407"))
 
 
+def _ctrl(net: str) -> tuple[tuple[str, str], ...]:
+    i = _CTRL_SIGNALS.index(net)
+    return (("J105", str(2 * i + 1)), ("J312", str(2 * i + 1)))
+
+
 def _stack(net: str) -> tuple[tuple[str, str], ...]:
     i = _STACK_SIGNALS.index(net)
     return (("J308", str(2 * i + 1)), ("J406", str(2 * i + 1)))
 
+
+_CTRL_GND = tuple((c, str(n)) for c in ("J105", "J312")
+                  for n in range(2, 2 * _CTRL_ROWS + 1, 2))
 
 _STACK_GND = tuple((c, str(n)) for c in ("J308", "J406")
                    for n in range(2, 2 * _STACK_ROWS + 1, 2))
@@ -1095,38 +1162,41 @@ _NETS_RAILS = (
         # POWER: converters
         + _p("U201.-V U201.-S C207.- C208.2 C210.1 U202.-Vout C211.2 C212.2 "
              "R211.2")
+        # POWER: the controller row
+        + _p("Q106.S R115.2 R344.2 Q401.S R425.2 "
+             "J309.2 J310.2 J404.4 J405.3 "
+             "D316.A2 D316.A5 D316.K4 D316.K6 "
+             "D317.A2 D317.A5 D317.K3 D317.K4 D317.K6 "
+             "D404.A2 D404.A5 D404.K4 D404.K6 "
+             "D405.A2 D405.A5 D405.K4 D405.K6 D406.A2 D406.A5 "
+             "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6")
         # OUTPUTS
         + _p("U301.GND U301.PAD U301.THER U302.GND U302.PAD U302.THER "
              "R319.2 R320.2 R321.2 R322.2 "
-             "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 R344.2 "
+             "C301.2 C302.2 C303.2 C304.2 C305.2 C306.2 C307.2 R338.2 R339.2 R340.2 "
              "Q301.S Q302.S Q303.S R307.2 R308.2 R309.2 D315.A "
-             "Q106.S R115.2 "
-             "J301.1 J302.1 J303.2 J303.4 J306.2 J306.4 J309.2 J310.2 J405.3 "
+             "J301.1 J302.1 J303.2 J303.4 "
              "D308.A D309.A D310.A D311.A D312.A D319.A D320.A D321.A D322.A "
-             "D323.A D324.A D325.A D326.A "
-             "D313.A2 D313.A5 D313.K4 D313.K6 "
-             "D316.A2 D316.A5 D316.K4 D316.K6 "
-             "D317.A2 D317.A5 D317.K3 D317.K4 D317.K6 "
-             "D405.A2 D405.A5 D405.K4 D405.K6 D406.A2 D406.A5")
+             "D323.A D324.A D325.A D326.A")
         # LOGIC
         + _p("U401.GND U401.EPAD C412.2 C413.2 C414.2 "
              "U402.VSS U402.A0 U402.A1 U402.A2 C418.2 "
              "U403.VSS U403.A1 U403.A2 C419.2 "
              "U404.GND R442.2 C420.2 U405.GND U405.PAD C415.2 C416.2 C417.2 "
-             "Q401.S R425.2 "
              "C401.2 C402.2 C403.2 C404.2 C405.2 C406.2 C407.2 C408.2 C409.2 "
              "C410.2 C411.2 C421.2 C422.2 C438.2 "
              "D401.A2 D401.A5 D402.A2 D402.A5 D402.K6 D403.A2 D403.A5 "
-             "D404.A2 D404.A5 D404.K6 U406.GND C436.2 C437.2 "
-             "D407.A2 D407.A5 D407.K3 D407.K4 D407.K6 "
-             "J402.1 J403.1 J404.4 J404.7 J408.4 J409.2 J409.16")
+             "D313.A2 D313.A5 D313.K4 D313.K6 "
+             "U406.GND C436.2 C437.2 "
+             "J306.2 J402.1 J403.1 J408.4 J409.1 J410.8")
         + _p(" ".join(f"{cap}.2" for *_, cap, _ in _SPARE_LINES))
         + _p(" ".join(f"{d}.A2 {d}.A5" for d in _SPARE_TVS))
-        + _p("D413.K3 D413.K4 D413.K6") + _pwrout("GND") + _pwrlogic("GND") + _STACK_GND,
+        + _p("D413.K4 D413.K6") + _pwrout("GND") + _CTRL_GND + _pwrlogic("GND")
+        + _STACK_GND,
         domain="GND", interface="PWR-OUT",
-        source="The star net, on all three boards and across all three "
-               "interfaces (PWR-OUT × 4, PWR-LOGIC × 2, every even STACK "
-               "contact); "
+        source="The star net, on all three boards and across all four "
+               "interfaces (PWR-OUT × 4, every even CTRL contact, PWR-LOGIC × 2, "
+               "every even STACK contact); "
                "`interface` names the lowest. Both converters' -Vout, every "
                "lamp common (plan §6.0.2), both B− conductors of J101, and "
                "both anode pads of every TVS array land here. ⛔ Display pin 3 "
@@ -1157,11 +1227,14 @@ _NETS_RAILS = (
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
            "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 R477.2 "
-           "R472.2 U406.VDD C436.1 J409.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _stack("V3P3") + _p("R317.2 R318.2 R346.2 R349.2 R351.2"),
+           "R317.2 R318.2 "
+           "R472.2 U406.VDD C436.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
+        + _stack("V3P3") + _p("R346.2 R349.2 R351.2"),
         domain="3V3", interface="STACK",
-        source="LOGIC's 3.3 V rail. Crosses STACK to OUTPUTS for R317/R318, the "
-               "IN-05/06 pull-ups. U403.A0 is strapped here (address 001)"),
+        source="LOGIC's 3.3 V rail. Crosses STACK to OUTPUTS for the AUX12 "
+               "enable (R346) and the two FAULT pull-ups (R349, R351) -- every "
+               "class-A pull-up, the levers' included, is on LOGIC with its own "
+               "terminal now. U403.A0 is strapped here (address 001)"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1239,25 +1312,30 @@ _NETS_BRAKE = (
                f"({_BRK} §7.1), so it is RELEASED unless Q106 pulls it low = "
                f"motor cut. ⚠️ With the firmware stopped Q106's gate is held "
                f"down by R115 and the bike drives (IO-9). It leaves the box from "
-               f"OUTPUTS on J309. The 100 nF brake C1 belongs at the controller, "
-               f"not here"),
-    Net("BL_CMD", _p("U401.IO16 R114.1") + _stack("BL_CMD"), domain="3V3",
-        gpio="GPIO16", interface="STACK",
+               f"POWER on J309, in the controller row (IO-5), and its FET, gate "
+               f"divider and clamp are all on that board with it. The 100 nF "
+               f"brake C1 belongs at the controller, not here"),
+    Net("BL_CMD", _p("U401.IO16") + _stack("BL_CMD") + _ctrl("BL_CMD")
+        + _p("R114.1"), domain="3V3", gpio="GPIO16", interface="CTRL",
         source="The motor-cut command (IO-8). GPIO16 comes out of reset with no "
                "pull and only a low glitch at power-up (S3 datasheet v2.2 "
-               "Table 2-2), so BL stays released through boot (IO-9)"),
+               "Table 2-2), so BL stays released through boot (IO-9). From the "
+               "S3 on LOGIC it crosses STACK and then CTRL to reach Q106's gate "
+               "resistor on POWER; `interface` names the lower crossing. ⚠️ Both "
+               "crossings are open-circuit failures, and an open here RELEASES "
+               "the cut -- the direction IO-9 chose"),
     Net("BL_GATE", _p("R114.2 Q106.G R115.1"), domain="3V3",
         source="Q106's gate, behind its 100 Ω series resistor and over R115's "
                "hard 10 kΩ pull-down: the gate is biased OFF (D14), so the cut "
                "is released whenever nothing drives it"),
-    Net("BL_SENSE", _p("R336.2") + _stack("BL_SENSE") + _p("U402.GPB5"),
-        domain="3V3", interface="STACK",
+    Net("BL_SENSE", _p("R336.2") + _ctrl("BL_SENSE") + _stack("BL_SENSE")
+        + _p("U402.GPB5"), domain="3V3", interface="CTRL",
         source="BL read back through R336's 100 kΩ, so a stuck cut or a missing "
                "one can be reported. A readback, NOT an isolation barrier: "
                "firmware commands the cut directly on BL_CMD (IO-8), and R336 "
                "is sized to keep this node from loading BL (see R336)"),
-    Net("ACC_SENSE", _p("R343.2 R344.1") + _stack("ACC_SENSE") + _p("U403.GPA0"),
-        domain="3V3", interface="STACK",
+    Net("ACC_SENSE", _p("R343.2 R344.1") + _ctrl("ACC_SENSE")
+        + _stack("ACC_SENSE") + _p("U403.GPA0"), domain="3V3", interface="CTRL",
         source="ACC+ divided to 3.28 V for expander #2: LOW with the key on "
                "means the throttle's 5.1 V is not arriving. ⚠️ What that costs "
                "is the MOTOR CUT and nothing else — BL only means something to a "
@@ -1267,18 +1345,19 @@ _NETS_BRAKE = (
                "controller from a broken ACC+ sense wire: both read LOW, and a "
                "lamp policy built on it would be lost to one chafed wire"),
     Net("ACC_PLUS", _p("J309.3 R343.1 D316.K3"), domain="5V",
-        source="The throttle's 5.1 V supply, in from the FarDriver harness. It "
-               "feeds the R343/R344 sense divider and nothing else: a sensor, "
-               "not a rail"),
-    Net("IN05_BRAKE_L",
-        _p("R341.2") + _stack("IN05_BRAKE_L") + _p("U401.IO15 C421.1"),
-        domain="3V3", interface="STACK", gpio="GPIO15",
+        source="The throttle's 5.1 V supply, in from the FarDriver harness on "
+               "POWER. It feeds the R343/R344 sense divider, on that board with "
+               "it, and nothing else: a sensor, not a rail, and only the divided "
+               "node crosses CTRL"),
+    Net("IN05_BRAKE_L", _p("R341.2 U401.IO15 C421.1"),
+        domain="3V3", gpio="GPIO15",
         source="Stays NATIVE: the brake must cut the motor from an interrupt, "
                "and the boost safety-release wants it in <10 ms (plan §3.1.1). "
-               "The lever wire's TVS is D313 at J306"),
-    Net("IN06_BRAKE_R",
-        _p("R342.2") + _stack("IN06_BRAKE_R") + _p("U401.IO20 C422.1"),
-        domain="3V3", interface="STACK", gpio="GPIO20",
+               "The lever wire's TVS is D313 at J306, and since J306 joined the "
+               "INPUTS row on LOGIC (IO-6) this signal crosses no interface at "
+               "all: no contact of the stack stands between a lever and its pin"),
+    Net("IN06_BRAKE_R", _p("R342.2 U401.IO20 C422.1"),
+        domain="3V3", gpio="GPIO20",
         source="As IN05_BRAKE_L, for the right lever. GPIO20 comes out of reset "
                "with USB_PU, the USB D+ pull-up (S3 datasheet v2.2 Table 2-1): "
                "harmless on an input already pulled up to 3.3 V, and ⛔ nothing "
@@ -1394,15 +1473,18 @@ _NETS_STACK = (
         _p("R337.2 R338.1 C307.1") + _stack("V12_SENSE") + _p("U401.IO2"),
         domain="3V3", interface="STACK", gpio="GPIO2",
         source="IN-15, ADC1_CH1: V12 through 47 k / 10 k on OUTPUTS"),
-    Net("CANH", _p("U404.CANH R401.1") + _stack("CANH") + _p("J405.8 D405.K1"),
-        domain="3V3", interface="STACK",
+    Net("CANH", _p("U404.CANH R401.1") + _stack("CANH") + _ctrl("CANH")
+        + _p("J405.8 D405.K1"), domain="3V3", interface="CTRL",
         source="Display pin 8, RED-BLACK. The panel terminates its own end "
                "(132.4 Ω). A 3.3 V transceiver's pair; even a 5 V part at the "
                "panel end drives CANH to 4.5 V at most, under D405's 5 V "
-               "V_RWM. The transceiver is on LOGIC and J405 on OUTPUTS, so the "
-               "pair crosses STACK"),
-    Net("CANL", _p("U404.CANL R401.2") + _stack("CANL") + _p("J405.7 D405.K3"),
-        domain="3V3", interface="STACK",
+               "V_RWM. The transceiver is on LOGIC and J405 on POWER, so the "
+               "pair crosses STACK and then CTRL. ⚠️ Two more contacts in a "
+               "differential pair: it is parked (D19), and if it is ever "
+               "un-parked the pair's two crossings are the first thing to "
+               "measure"),
+    Net("CANL", _p("U404.CANL R401.2") + _stack("CANL") + _ctrl("CANL")
+        + _p("J405.7 D405.K3"), domain="3V3", interface="CTRL",
         source="Display pin 7, GREEN-BLACK. As CANH"),
 )
 
@@ -1410,13 +1492,20 @@ _NETS_STACK = (
 # NETS — the parked display block on OUTPUTS (D19).
 # ════════════════════════════════════════════════════════════════════════════
 _NETS_DISPLAY = (
-    Net("TT_L", _p("R426.2 J405.1 D406.K1"), domain="12V",
+    Net("TT_L", _p("R426.2") + _ctrl("TT_L") + _p("J405.1 D406.K1"),
+        domain="12V", interface="CTRL",
         source="Display pin 1, telltale LEFT: a 0-15 V input fed from the "
-               "TURN_L lamp feed through R426"),
-    Net("TT_R", _p("R427.2 J405.4 D406.K3"), domain="12V",
-        source="Display pin 4, telltale RIGHT"),
-    Net("TT_HL", _p("R428.2 J405.5 D406.K4"), domain="12V",
-        source="Display pin 5, telltale HEADLIGHT, fed from HL_HIGH"),
+               "TURN_L lamp feed through R426. The feed is a lamp channel on "
+               "OUTPUTS and the display plug is on POWER, so the three telltales "
+               "cross CTRL behind their 1 kΩ resistors -- the resistor stays with "
+               "the channel, so a shorted display wire is 12 V across a 1206 on "
+               "OUTPUTS and not into a contact"),
+    Net("TT_R", _p("R427.2") + _ctrl("TT_R") + _p("J405.4 D406.K3"),
+        domain="12V", interface="CTRL",
+        source="Display pin 4, telltale RIGHT. As TT_L"),
+    Net("TT_HL", _p("R428.2") + _ctrl("TT_HL") + _p("J405.5 D406.K4"),
+        domain="12V", interface="CTRL",
+        source="Display pin 5, telltale HEADLIGHT, fed from HL_HIGH. As TT_L"),
     Net("DISP_ONELINE", _p("R429.2 J405.9 D406.K6"), domain="12V",
         source="Display pin 9, the one-line feed behind R429. 0-15 V"),
     Net("FD_ONELINE", _p("J310.1 R429.1 D317.K1"), domain="12V",
@@ -1478,8 +1567,12 @@ _NETS_LOGIC = (
     Net("CAN_RS", _p("U404.RS R442.1 R472.1"), domain="3V3",
         source="Mode pin, held high by R472: standby, the driver off, while "
                "CAN is parked (D19). R442 to GND is slope control, unfitted"),
-    Net("UART1_TX", _p("U401.IO17 R436.1"), domain="3V3", gpio="GPIO17",
-        source="Class E: tri-stated whenever the module is not sending"),
+    Net("UART1_TX", _p("U401.IO17") + _stack("UART1_TX") + _ctrl("UART1_TX")
+        + _p("R436.1"), domain="3V3", gpio="GPIO17", interface="CTRL",
+        source="Class E: tri-stated whenever the module is not sending. The pin "
+               "is on LOGIC and R436 on POWER with J404, so the 3.3 V logic node "
+               "crosses STACK and then CTRL and the harness wire crosses "
+               "nothing"),
     Net("UART1_TX_WIRE", _p("R436.2 J404.2 D404.K3"), domain="3V3",
         source="J404.2, RED/BLACK, labelled 'RXD'. Class E: direct 3.3 V on "
                "the shared ground (plan §4). ⬜ M9: direction and level are "
@@ -1487,11 +1580,17 @@ _NETS_LOGIC = (
     Net("UART1_RX_WIRE", _p("J404.1 D404.K1 R443.1"), domain="3V3",
         source="J404.1, BROWN/BLUE, labelled 'TXD'. IN-13, a listen-only tap "
                "on the shared ground. ⬜ M9 as UART1_TX_WIRE"),
-    Net("UART1_RX", _p("R443.2 U401.IO18"), domain="3V3", gpio="GPIO18",
-        source="IN-13 behind its 1 kΩ"),
-    Net("BOOST_CMD", _p("U401.IO48 R424.1"), domain="3V3", gpio="GPIO48",
+    Net("UART1_RX", _p("R443.2") + _ctrl("UART1_RX") + _stack("UART1_RX")
+        + _p("U401.IO18"), domain="3V3", gpio="GPIO18", interface="CTRL",
+        source="IN-13 behind its 1 kΩ, which sits on POWER with J404: the "
+               "controller's unmeasured TX level (⬜ M9) never reaches a contact "
+               "of the stack, let alone the pin"),
+    Net("BOOST_CMD", _p("U401.IO48") + _stack("BOOST_CMD") + _ctrl("BOOST_CMD")
+        + _p("R424.1"), domain="3V3", gpio="GPIO48", interface="CTRL",
         source="A DEDICATED native pin, never on a bus: a garbled bus frame "
-               "must not be able to assert boost (plan §3.1.1)"),
+               "must not be able to assert boost (plan §3.1.1). It crosses STACK "
+               "and CTRL to Q401's gate resistor on POWER; an open contact leaves "
+               "the gate on R425's pull-down, which is boost OFF (D14)"),
     Net("BOOST_GATE", _p("R424.2 Q401.G R425.1"), domain="3V3",
         source="R425 is the hard pull-down: boost defaults OFF through the "
                "boot's high-Z window (D14)"),
@@ -1531,10 +1630,13 @@ _NETS_CLASS_A = (
     *_class_a_nets("R408", "R419", "C407", "IN10_HAZARD", "GPA6",
                    "J402.9 D402.K4", "Left pod 'green-black' (hazard trio)"),
     *_class_a_nets("R409", "R420", "C408", "IN07_BOOST_BTN", "GPB3",
-                   "J404.6 D404.K4",
-                   "The throttle's red button, a 2-pin dry-contact lead: J404.6, "
-                   "its return on J404.7. ⬜ M8 confirms the lead. GPB3, never "
-                   "GPA7: that bit is output-only"),
+                   f"{_INPUTS_A}.2 D413.K3",
+                   f"The throttle's red button, a 2-pin dry-contact lead: it is "
+                   f"an INPUT, so it joins the inputs row on {_INPUTS_A}.2 with "
+                   f"the row's return on {_INPUTS_A}.1 -- not the serial "
+                   f"terminal, whose other four wires go to the controller. ⬜ M8 "
+                   f"confirms the lead. GPB3, never GPA7: that bit is "
+                   f"output-only"),
     *_class_a_nets("R410", "R421", "C409", "IN08A_RUNNING", "GPB0",
                    "J403.2 D403.K1", "Right pod 'black', slider 2 and 3"),
     *_class_a_nets("R411", "R422", "C410", "IN08B_HEADLIGHT", "GPB1",
@@ -1550,10 +1652,13 @@ _NETS_CLASS_A = (
                "bar contact"),
     Net("START_SENSE", _p("R423.2 C411.1 U402.GPB4"), domain="3V3",
         source="The conditioned start-button node at expander #1's GPB4"),
-    *(net for bit, n, pull, series, cap, tvs in _SPARE_LINES
+    *(net for bit, where, pull, series, cap, tvs in _SPARE_LINES
       for net in _class_a_nets(pull, series, cap, f"SPARE_{bit[2:]}", bit,
-                               f"J409.{n} {tvs}", "J409, internal: a spare of "
-                               "expander #2, header not fitted", expander="U403")),
+                               f"{where} {tvs}",
+                               f"{where.split('.')[0]}, a free input of the "
+                               f"INPUTS row: one of expander #2's spare bits, "
+                               f"conditioned and ready to wire (IO-1)",
+                               expander="U403")),
 )
 
 _NETS = (_NETS_84V + _NETS_RAILS + _NETS_12V + _NETS_BRAKE + _NETS_STACK
@@ -1573,12 +1678,20 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
 #: (the right-angle header JLC places, the loose screw plug the owner wires).
 #: One maker's pair, so they mate by construction; the LOCKING version, whose
 #: plug screws to the header's flanges, because a bike vibrates.
+#: ⛔ No 16-way 3.81: the Kangnex header (C508942) has 2 in stock at JLC, so the
+#: inputs row is two 8-way terminals instead (J409, J410).
+#: A size no connector uses is REMOVED, so every code here is a code the design
+#: orders and the LCSC fixture records: 3.81 × 7 went with J404's move to the
+#: 5.08 row and 5.08 × 4 with J306's to the 3.81 one. (3.50, 8) is the 5 V row's
+#: and is the one entry ahead of its connector.
 _TERMINALS = {
+    (3.50, 8): ("C441263", "C441113"),
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
     (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
-    (3.81, 7): ("C489994", "C489981"), (3.81, 9): ("C489995", "C384932"),
-    (3.81, 6): ("C160126", "C157470"),
-    (5.08, 3): ("C49238", "C49239"), (5.08, 4): ("C122715", "C122716"),
+    (3.81, 6): ("C160126", "C157470"), (3.81, 8): ("C189319", "C62102"),
+    (3.81, 9): ("C489995", "C384932"),
+    (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
+    (5.08, 5): ("C49240", "C49241"), (5.08, 9): ("C508920", "C508910"),
     (7.62, 6): ("C441304", "C441154"),
 }
 #: Per family, from its drawings: header height and depth, the length N x pitch +
@@ -1587,6 +1700,10 @@ _TERMINALS = {
 #: header's face (its length less the part inside the header), and what the
 #: plug takes.
 _TB_FAMILY = {
+    3.50: dict(maker="Kefa", ds=_DS_KF350, h=7.00, deep=9.20, extra=10.40, hole=1.40,
+               lead=3.70 + 0.30, overhang=15.60 - 6.70,
+               plug="28-16 AWG (1.5 mm²), strip 7-8 mm, 0.2 N·m",
+               rating="300 V / 8 A UL, 160 V / 7 A IEC"),
     3.81: dict(maker="Kangnex", ds=_DS_KX381, h=7.25, deep=9.20, extra=0.88 + 2 * 4.80, hole=1.40,
                lead=3.50 + 0.20, overhang=16.30 - 6.70,
                plug="28-16 AWG (1.5 mm²), strip 6-7 mm, 0.2 N·m",
@@ -1628,15 +1745,29 @@ def _bus(nets: tuple[str, ...]) -> tuple[ConnPin, ...]:
     return tuple(ConnPin(str(i + 1), n) for i, n in enumerate(nets))
 
 
-def _stack_pins() -> tuple[ConnPin, ...]:
-    """2 × _STACK_ROWS: odd = signal, even = GND. One row per signal, so the
-    header cannot silently run out of contacts or carry an empty one."""
+def _signal_gnd_pins(signals: tuple[str, ...]) -> tuple[ConnPin, ...]:
+    """2 × len(signals): odd = signal, even = GND. One column per signal, so a
+    signal spine cannot silently run out of contacts or carry an empty one.
+    Both signal spines are built from it, so neither can drift from its list."""
     pins = []
-    for i in range(_STACK_ROWS):
-        pins.append(ConnPin(str(2 * i + 1), _STACK_SIGNALS[i]))
+    for i, net in enumerate(signals):
+        pins.append(ConnPin(str(2 * i + 1), net))
         pins.append(ConnPin(str(2 * i + 2), "GND"))
     return tuple(pins)
 
+
+#: Said once for both general-input terminals: the INPUTS row's spare capacity.
+_INPUTS_NOTE = (
+    "The INPUTS row's general terminals (IO-4): 13 free class-A inputs and the "
+    "boost button, on TWO 8-way headers rather than one 16-way, because the "
+    "Kangnex 3.81 × 16 header has 2 in stock at JLC and these are FITTED. Every "
+    "contact is conditioned on this board (1 kΩ pull-up to 3V3, an SMS05T1G "
+    "line, 1 kΩ series and 100 nF at the pin), so a wire needs no board change: "
+    "for a dry contact to ground or 3.3 V logic, ⛔ nothing above 5 V. The two "
+    "are the same size ON PURPOSE -- they carry the same class of contact, and a "
+    "plug swapped between them misreads spares and the boost button, which the "
+    "firmware's own input health catches"
+)
 
 _INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board "
                "gap rather than fitting under a ceiling. Samtec ESQ elevated "
@@ -1665,6 +1796,60 @@ _CONNECTORS = (
     Connector("J202", "POWER", "PWR-OUT, POWER side: 4 × V12, 4 × GND, 2 × V5, "
               "KEY_SENSE", _bus(_PWROUT_NETS), 8.5, footprint_mm=(27.94, 2.54),
               leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
+    Connector("J105", "POWER",
+              f"CTRL, POWER side: 2 × {_CTRL_ROWS}, the controller row's "
+              f"signals with a ground beside each", _signal_gnd_pins(_CTRL_SIGNALS),
+              8.5, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
+              source=f"{_INTERBOARD}. Taken at PWR-OUT's mated height, because "
+                     f"both pairs cross the SAME gap: two pairs of different "
+                     f"heights in one gap cannot both be seated"),
+    _tb("J309", "POWER", "FarDriver motor cut and throttle supply sense: BL "
+        "out, ACC+ in", (
+            _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
+                           "stays capped"),
+            _cp("2", "GND", "BL's only neighbour: a strand bridging them "
+                            "grounds BL, which CUTS the motor -- fail-safe. Land "
+                            "it at the controller's B− stud (brake-circuit §9), "
+                            "not a signal ground: it parallels J101's returns"),
+            _cp("3", "ACC_PLUS", "the throttle's 5.1 V, IN — the ACC_SENSE "
+                                 "divider's source, a sensor only"),
+        ), pitch=5.08, note="5.08 mm is the FarDriver row's pitch and nothing "
+                            "else's (IO-6): a 12 V plug cannot seat here, which "
+                            "is what keeps 12 V out of the controller's 3.3 V "
+                            "logic. The only 3-way at this pitch"),
+    _tb("J404", "POWER", "FarDriver serial + boost (5 conductors)", (
+        _cp("1", "UART1_RX_WIRE", "brown/blue, labelled 'TXD' — ⬜ M9, measure"),
+        _cp("2", "UART1_TX_WIRE", "red/black, labelled 'RXD' — ⬜ M9"),
+        _cp("3", "", "brown/green = BW5V, 5 V OUT of the controller; unused. "
+                     "⚠️ Never feed a 3.3 V-only adapter from it"),
+        _cp("4", "GND", "black — serial ground, the reference for every "
+                        "measurement"),
+        _cp("5", "BOOST_OUT", "CruisePin PIN17, colour unknown. ⛔ METER FIRST"),
+    ), pitch=5.08, note="The FarDriver row's pitch (IO-6); the only 5-way in it"),
+    _tb("J310", "POWER", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
+        "with the display (D19)", (
+            _cp("1", "FD_ONELINE", "brown, 0-15 V"),
+            _cp("2", "GND"),
+        ), parked=True, pitch=5.08,
+        note="The FarDriver row's pitch (IO-6): its lead comes off the same "
+             "controller harness as J404's and J309's"),
+    _tb("J405", "POWER", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
+        _cp("1", "TT_L", "telltale LEFT, 0-15 V in"),
+        _cp("2", "", "display supply. ⏸️ D11 parked: under D19 the dash feeds "
+                     "from switched B+ in the harness"),
+        _cp("3", "GND", "⛔ NEVER SWITCH PIN 3 / B−: floated, current "
+                        "back-feeds through the signal wires"),
+        _cp("4", "TT_R", "telltale RIGHT"),
+        _cp("5", "TT_HL", "telltale HEADLIGHT"),
+        _cp("6", "", "red — 'reserved' on the panel; its five keys are all "
+                     "internal (M11)"),
+        _cp("7", "CANL", "green-black"),
+        _cp("8", "CANH", "red-black — the panel terminates its own end"),
+        _cp("9", "DISP_ONELINE", "brown — behind R429's 1 kΩ"),
+    ), parked=True, pitch=5.08,
+        note="In the controller row with the rest of the dash wiring (IO-5), at "
+             "the FarDriver pitch: the panel's CAN pair and its one-line share "
+             "the controller's grounds"),
     # ── OUTPUTS ─────────────────────────────────────────────────────────────
     _tb("J301", "OUTPUTS", "Headlight (M4). ⛔ The assembly's RED lead is unused: "
         "do not land it", (
@@ -1698,16 +1883,6 @@ _CONNECTORS = (
         _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
-    _tb("J306", "OUTPUTS", "Brake levers, two plain contacts (IO-8). "
-        "⬜ GATED ON M3", (
-        _cp("1", "LEVER_L", "⬜ M2 identifies the wires in loom '1T3 10'"),
-        _cp("2", "GND", "left lever return"),
-        _cp("3", "LEVER_R"),
-        _cp("4", "GND", "right lever return. ⬜ M3: a 3-wire sensor changes "
-                        "this connector's width"),
-    ), pitch=5.08, note="In the 5.08 mm family with J309 alone: no lamp or "
-                        "pod plug seats here, and no other header in the "
-                        "family is 4-way"),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
               "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
               footprint_mm=(27.94, 2.54), leaves_box=False,
@@ -1718,39 +1893,13 @@ _CONNECTORS = (
               interface="PWR-LOGIC", source=_INTERBOARD),
     Connector("J308", "OUTPUTS",
               f"STACK, OUTPUTS side: 2 × {_STACK_ROWS}, alternating grounds",
-              _stack_pins(), 4.06, footprint_mm=_STACK_FP,
+              _signal_gnd_pins(_STACK_SIGNALS), 4.06, footprint_mm=_STACK_FP,
               leaves_box=False, interface="STACK", source=_INTERBOARD),
-    _tb("J309", "OUTPUTS", "FarDriver motor cut and throttle supply sense: BL "
-        "out, ACC+ in", (
-            _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
-                           "stays capped"),
-            _cp("2", "GND", "BL's only neighbour: a strand bridging them "
-                            "grounds BL, which CUTS the motor -- fail-safe. Land "
-                            "it at the controller's B− stud (brake-circuit §9), "
-                            "not a signal ground: it parallels J101's returns"),
-            _cp("3", "ACC_PLUS", "the throttle's 5.1 V, IN — the ACC_SENSE "
-                                 "divider's source, a sensor only"),
-        ), pitch=5.08, note="In the 5.08 mm family with J306 alone, the only "
-                            "3-way there"),
-    _tb("J310", "OUTPUTS", "FarDriver one-line in. ⏸️ Footprint fitted, parked "
-        "with the display (D19)", (
-            _cp("1", "FD_ONELINE", "brown, 0-15 V"),
-            _cp("2", "GND"),
-        ), parked=True),
-    _tb("J405", "OUTPUTS", "Display, 9-pin. ⏸️ Footprint fitted, parked with D19", (
-        _cp("1", "TT_L", "telltale LEFT, 0-15 V in"),
-        _cp("2", "", "display supply. ⏸️ D11 parked: under D19 the dash feeds "
-                     "from switched B+ in the harness"),
-        _cp("3", "GND", "⛔ NEVER SWITCH PIN 3 / B−: floated, current "
-                        "back-feeds through the signal wires"),
-        _cp("4", "TT_R", "telltale RIGHT"),
-        _cp("5", "TT_HL", "telltale HEADLIGHT"),
-        _cp("6", "", "red — 'reserved' on the panel; its five keys are all "
-                     "internal (M11)"),
-        _cp("7", "CANL", "green-black"),
-        _cp("8", "CANH", "red-black — the panel terminates its own end"),
-        _cp("9", "DISP_ONELINE", "brown — behind R429's 1 kΩ"),
-    ), parked=True),
+    Connector("J312", "OUTPUTS",
+              f"CTRL, OUTPUTS side, under the board: 2 × {_CTRL_ROWS}, "
+              f"alternating grounds", _signal_gnd_pins(_CTRL_SIGNALS), 2.54,
+              footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
+              side="bottom", source=_INTERBOARD),
     # ── LOGIC ───────────────────────────────────────────────────────────────
     _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
@@ -1785,23 +1934,21 @@ _CONNECTORS = (
                          "IN11_RUN_WIRE to ground through a lamp) always leaves "
                          "a plug in the hand"),
         )),
-    _tb("J404", "LOGIC", "FarDriver serial + boost (5 conductors), and the "
-        "throttle's boost button (2)", (
-        _cp("1", "UART1_RX_WIRE", "brown/blue, labelled 'TXD' — ⬜ M9, measure"),
-        _cp("2", "UART1_TX_WIRE", "red/black, labelled 'RXD' — ⬜ M9"),
-        _cp("3", "", "brown/green = BW5V, 5 V OUT of the controller; unused. "
-                     "⚠️ Never feed a 3.3 V-only adapter from it"),
-        _cp("4", "GND", "black — serial ground, the reference for every "
-                        "measurement"),
-        _cp("5", "BOOST_OUT", "CruisePin PIN17, colour unknown. ⛔ METER FIRST"),
-        _cp("6", "IN07_BOOST_BTN_WIRE", "the throttle's red button (IN-07), "
-                                         "one leg of its 2-pin lead"),
-        _cp("7", "GND", "the button's other leg: its own return, never "
-                        "shared with the serial ground on 4"),
-    )),
+    _tb("J306", "LOGIC", "Brake levers — plain inputs (IO-8), in the INPUTS "
+        "row. ⬜ GATED ON M3", (
+            _cp("1", "LEVER_L", "⬜ M2 identifies the wires in loom '1T3 10'"),
+            _cp("2", "GND", "the levers' shared return, between the two "
+                            "contacts: a strand off either lever wire meets "
+                            "ground, which READS AS BRAKING -- the safe way for "
+                            "an input to fail"),
+            _cp("3", "LEVER_R", "⬜ M3: a 3-wire Hall lever adds a supply "
+                                "contact and changes this terminal's size"),
+        ), note="3.81 mm with the rest of the INPUTS row (IO-6): a mismated "
+                "input plug puts 3.3 V through 1 kΩ somewhere harmless, and the "
+                "only 3-way at this pitch, so the plug seats nowhere else"),
     Connector("J406", "LOGIC",
               f"STACK, LOGIC side, under the board: 2 × {_STACK_ROWS}, "
-              f"alternating grounds", _stack_pins(), 2.54,
+              f"alternating grounds", _signal_gnd_pins(_STACK_SIGNALS), 2.54,
               footprint_mm=_STACK_FP, leaves_box=False, interface="STACK",
               side="bottom", source=_INTERBOARD),
     Connector("J407", "LOGIC", "PWR-LOGIC, LOGIC side, under the board",
@@ -1833,22 +1980,20 @@ _CONNECTORS = (
                "whose DTR/RTS drive EN and IO0 for an automatic download. "
                "Any USB-serial adapter at 3.3 V does as well, wired to the "
                "IDC end. 0 mm: nothing stands above the board"),
-    Connector("J409", "LOGIC", "Spare inputs, INTERNAL: expander #2's thirteen "
-              "spare bits, each class-A conditioned on the board", (
-        _cp("1", "V3P3"),
-        _cp("2", "GND"),
-        *(_cp(str(n), f"SPARE_{bit[2:]}_WIRE", f"U403.{bit}, class A")
-          for bit, n, *_ in _SPARE_LINES),
-        _cp("16", "GND"),
-    ), 8.5, footprint_mm=(20.32, 5.08), leaves_box=False, dnp=True,
-        source="2 × 8 vertical 2.54 mm pin header, the footprint only: fit a "
-               "header when a spare is wanted. Every spare is class A (plan §4), "
-               "fitted: a 1 kΩ pull-up to 3V3 and an SMS05T1G line on the header "
-               "side, 1 kΩ series and 100 nF at the pin. For a dry contact to "
-               "ground or 3.3 V logic; nothing above 5 V. LCSC lists it 2.5 mm of body and a "
-               "6 mm pin, so 8.5 mm fitted, unconfirmed -- and the tallest body "
-               "on LOGIC, above its 7.25 mm terminals, so fitted it sets the gap "
-               "to the lid"),
+    _tb(_INPUTS_A, "LOGIC", "General inputs A: the boost button and expander "
+        "#2's GPA spares, class-A contacts to ground (IO-1)", (
+            _cp("1", "GND", "the row's return: every contact on this terminal "
+                            "and on J410 closes to it"),
+            _cp("2", "IN07_BOOST_BTN_WIRE", "the throttle's red button (IN-07), "
+                                            "beside its own return. ⬜ M8 "
+                                            "confirms the 2-pin lead"),
+            *_spare_cps(_INPUTS_A),
+        ), note=_INPUTS_NOTE),
+    _tb(_INPUTS_B, "LOGIC", "General inputs B: expander #2's GPB spares, "
+        "class-A contacts to ground (IO-1)", (
+            *_spare_cps(_INPUTS_B),
+            _cp("8", "GND", "this terminal's return"),
+        ), note=_INPUTS_NOTE),
 )
 
 
@@ -1958,13 +2103,12 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     return tuple(out)
 
 
-#: Connectors, by refdes: (LCSC, maker part, note), or "hand" and why. The
-#: inter-board connectors are absent on purpose: their family is the owner's
-#: open decision.
-_FAB_CONN = {
-    "J409": ("C492425", "XFCN PZ254V-12-16P", "2 × 8 vertical; not fitted, the "
-                                             "footprint and the part to fit"),
-}
+#: Connectors, by refdes: (LCSC, maker part, note), or "hand" and why. Empty
+#: today, and that is a statement: every harness connector takes its codes from
+#: `_TERMINALS` (its pitch and size), and the inter-board connectors are absent
+#: on purpose -- their family is the owner's open decision. A connector that is
+#: neither goes here.
+_FAB_CONN: dict[str, tuple[str, ...]] = {}
 
 
 def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
