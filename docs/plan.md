@@ -55,8 +55,14 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time. With
   the brake cut in firmware (D23) it is also what bounds a lost cut.
 - **M3** — the brake-lever switch type gates `J306`, the lever terminal, and its wire count.
-- **The enclosure model (§9.7)** — an all-metal CNC box, not yet drawn. Its wall, floor and lid are
-  allowances until it exists, so the cavity the design requires is checked but not final.
+- **The enclosure model (§9.7)** — an all-metal CNC box, **deliberately not drawn until the boards
+  are laid out** (owner, 2026-09-20): the pack and density budgets are *proxies* for whether a board
+  can be routed, and layout is what settles the size the box has to hold. Its wall, floor and lid
+  stay allowances until then, so the cavity the design requires is checked but not final.
+  ⚠️ **One enclosure number does not wait, because it is an INPUT to the board width, not an output:
+  the wall.** `BOARD_W` ≤ `CAVITY_W − 2·wall − SIDE_CLEARANCE − FACE_ROOM`, so at 3 mm the ceiling is
+  43.35 mm, at 4 mm it is 41.35, and **at 5 mm it is 39.35 — narrower than the board is today.**
+  Today's 40 mm board tolerates a wall up to **4.67 mm**; past that the boards shrink, not the box.
 - **DC-DC #1's dissipation at the real 101.7 W load** — unverified, ~10 W derived; measure it before
   any thermal budget is trusted (§3.2.3, owner item 4, at 8.5 A).
 - Measurements: **M2 · M3 · M8 · M9 · M10** (bench session), M14 current at exactly 12 V, M15, M17,
@@ -69,7 +75,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 | **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Block F is not in this order — it parks with D11 |
 | **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ✅ **right pod in hand 2026-09-12 — its lighting slider measured `OFF / A / A+B`, which is what D21's decode needs (§2.0)** — procedure: **`inputs-bench-session.md`** | Gates the input conditioning (**block C**) and the firmware's input map. Needs the *bike*, not the parts. ⚠️ **M3** (unpowered lever-type check) gates `J306`: a three-wire Hall lever adds a supply pin to the terminal |
 | **3** | ⬜ **Firmware** — lighting lookup (§7), read-the-slider-at-boot, the **≤300 ms** watchdog, the brake function (cut, lamp, kill), the **key-off aux shed** (D27/IO-16), boost HOLD/TOGGLE, the **WiFi status page** | The brake cut and the brake lamp are firmware (D23), and `Q101`'s key-off SOA margin depends on the shed (§3.2.5). The WiFi page is the only readout for temps, bus current, boost mode and lamp-out |
-| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ✅ **M18 measured the cavity at 260 × 70 × 100** (2026-09-20) and the boards are shaped to it, **40 × 241 mm** (§9.2); ⬜ the enclosure model is what remains |
+| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ✅ **M18 measured the cavity at 260 × 70 × 100** (2026-09-20) and the boards are shaped to it, **40 × 241 mm** (§9.2). ⬜ **Layout is next, and it is what settles the size** — the enclosure is drawn after it, by owner decision; layout may grow the boards to **43.35 × 246 mm** before the cavity gate fails |
 
 ## Contents
 

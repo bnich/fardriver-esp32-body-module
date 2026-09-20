@@ -138,7 +138,11 @@ EasyEDA Pro project. No board is laid out yet.
   plug-and-bend room in front of the connector face, so anything that deepens a harness plug spends
   it. ⭐ **The gate is live**: `board_fit` and the rules gate now compare a real measurement, so an
   envelope that outgrows the cavity **FAILS**. The requirement itself is not final — the wall, floor
-  and lid are allowances until the all-metal enclosure is modelled.
+  and lid are allowances until the all-metal enclosure is modelled, **which happens after the boards
+  are laid out, not before** — the pack and density budgets predict that a board can be routed;
+  layout proves it, and proves the size the box has to hold. Layout has room to grow the boards to
+  **43.35 × 246 mm** before the cavity gate fails. ⚠️ The wall is the exception to that order: it is
+  an input to the board width, and today's 40 mm board tolerates a wall up to **4.67 mm**.
 - ✅ **The EasyEDA project is proven.** All three boards were re-imported, their netlists exported
   from the editor and checked identical with `python3 -m tools.tel_check` on **2026-09-20** —
   POWER 40 nets / 215 pins, OUTPUTS 107 / 509, LOGIC 97 / 451, and all three outlines 40 × 241 mm.
