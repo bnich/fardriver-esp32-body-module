@@ -128,8 +128,10 @@ EasyEDA Pro project. No board is laid out yet.
   derives the stack at **62.4 mm of 64.0 available**. The cavity that implies is **233.0 mm along ×
   74.65 across × 68.4 tall**, against a working estimate of 200 × 50 × 70 — **33.0 mm longer and
   24.7 mm wider**, with 1.6 mm of height to spare. That is a finding for the cavity measurement
-  (M18), which confirms it or forces a rethink. The height verdict stays provisional until M18 lands
-  and the all-metal enclosure is modelled.
+  (M18), which confirms it or forces a rethink. ⭐ **M18 arms a gate**: while the cavity is an
+  estimate the tool states the excess and passes, but once the cavity is measured a box that cannot
+  hold the design is a **FAIL**, in `board_fit` and in the rules gate alike. The height verdict stays
+  provisional until M18 lands and the all-metal enclosure is modelled.
 - ⬜ **The EasyEDA project must be re-proven.** Each board has to be re-imported, its netlist
   re-exported from the editor and proven identical with `python3 -m tools.tel_check`; no board of
   the current netlist has been proven yet.
