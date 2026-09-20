@@ -66,6 +66,32 @@ def test_the_tlv767_matches_its_source(d):
     assert [m[str(n)] for n in range(1, 10)] == ["OUT", "SNS", "NC", "GND", "EN", "GND", "NC", "IN", "PAD"]
 
 
+def test_the_buck_matches_its_source(d):
+    """netlist.py U305 and TI SNVSAH5A p.3-4: SW 1-5, CBOOT 6, VCC 7, BIAS 8,
+    RT 9, SS/TRK 10, FB 11, NC 12-15 and 27-30, PGOOD 16, SYNC/MODE 17, EN 18,
+    AGND 19, PVIN 20-22, PGND 23-26, DAP.  A swapped PVIN and SW would put the
+    12 V rail on the inductor and the switch node on the input capacitors."""
+    m = padmap.pad_map(d.part("U305"))
+    assert [m[str(n)] for n in range(1, 12)] == \
+        ["SW"] * 5 + ["CBOOT", "VCC", "BIAS", "RT", "SS/TRK", "FB"]
+    assert [m[str(n)] for n in (16, 17, 18, 19)] == \
+        ["PGOOD", "SYNC/MODE", "EN", "AGND"]
+    assert [m[str(n)] for n in (20, 21, 22)] == ["PVIN"] * 3
+    assert [m[str(n)] for n in (23, 24, 25, 26)] == ["PGND"] * 4
+    assert {m[str(n)] for n in (12, 13, 14, 15, 27, 28, 29, 30)} == {"NC"}
+    assert m["31"] == "PAD"
+
+
+def test_the_load_switch_matches_its_source(d):
+    """netlist.py U306-U309 and TI SLVS841F p.5, DBV: IN 1, GND 2, EN 3,
+    FAULT 4, ILIM 5, OUT 6.  IN and OUT reversed would back-feed the buck
+    through the switch's body diode with its enable low."""
+    for n in range(6, 10):
+        m = padmap.pad_map(d.part(f"U30{n}"))
+        assert [m[str(i)] for i in range(1, 7)] == \
+            ["IN", "GND", "EN", "FAULT", "ILIM", "OUT"], f"U30{n}"
+
+
 # --- the independent check: EasyEDA's library symbol --------------------------------
 # From tests/fixtures/lcsc.json (tools/lcsc_fixture.py), so the check runs
 # offline and cannot skip: offline it once did, and a reversed brake-lamp FET

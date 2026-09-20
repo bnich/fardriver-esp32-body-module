@@ -12,21 +12,32 @@ pitch, and everything else shares 3.81 mm, where a mismate is harmless.
 import pytest
 
 from tools import board_fit as bf, netlist
+from tools.model import ConnPin
 
 D = netlist.current()
 
-#: Which board's edge each harness connector's row is.
-ROW_BOARD = {
+#: Which FACE each harness connector's row is: (board, side).  The 5 V row is
+#: the underside of OUTPUTS (IO-7), which is why this is a face and not a board.
+ROW_FACE = {
     # CTRL: the pack plug and the controller leads
-    "J101": "POWER", "J309": "POWER", "J404": "POWER", "J405": "POWER",
-    "J310": "POWER",
-    # 12 V: every lamp, horn, fan and buzzer channel
-    "J301": "OUTPUTS", "J302": "OUTPUTS", "J303": "OUTPUTS", "J304": "OUTPUTS",
-    "J305": "OUTPUTS",
+    "J101": ("POWER", "top"), "J309": ("POWER", "top"),
+    "J404": ("POWER", "top"), "J405": ("POWER", "top"),
+    "J310": ("POWER", "top"),
+    # 12 V: every lamp, horn, fan and buzzer channel, and the four 12 V aux
+    "J301": ("OUTPUTS", "top"), "J302": ("OUTPUTS", "top"),
+    "J303": ("OUTPUTS", "top"), "J304": ("OUTPUTS", "top"),
+    "J305": ("OUTPUTS", "top"), "J313": ("OUTPUTS", "top"),
+    # 5 V: the four 5 V aux outputs, under OUTPUTS
+    "J314": ("OUTPUTS", "bottom"),
     # INPUTS: the pods, the levers and the general inputs
-    "J402": "LOGIC", "J403": "LOGIC", "J306": "LOGIC", "J409": "LOGIC",
-    "J410": "LOGIC",
+    "J402": ("LOGIC", "top"), "J403": ("LOGIC", "top"),
+    "J306": ("LOGIC", "top"), "J409": ("LOGIC", "top"),
+    "J410": ("LOGIC", "top"),
 }
+#: The 3.81 mm pitch is shared by two rows on purpose, so the SIZES must not
+#: be: a plug of one row seats in any header of its pitch at least its size.
+TWELVE_VOLT_ROW = {"J301", "J302", "J303", "J304", "J305", "J313"}
+INPUT_ROW = {"J306", "J402", "J403", "J409", "J410"}
 
 #: A pitch owned by ONE group: nothing outside it may use that pitch, because a
 #: plug seats in any header of its own pitch that is at least its size.
@@ -66,10 +77,10 @@ def pitch_problems(d):
 
 
 def test_every_harness_connector_is_on_its_row_board():
-    assert {c.refdes for c in harness()} == set(ROW_BOARD), (
+    assert {c.refdes for c in harness()} == set(ROW_FACE), (
         "a harness connector this file does not place in a row")
-    for ref, board in ROW_BOARD.items():
-        assert D.connector(ref).board == board, ref
+    for ref, (board, side) in ROW_FACE.items():
+        assert (D.connector(ref).board, D.connector(ref).side) == (board, side), ref
 
 
 def test_the_pitches_follow_the_rows():
@@ -89,9 +100,9 @@ def test_the_pack_pitch_on_any_other_header_is_caught():
 
 
 def test_the_five_volt_pitch_on_an_input_terminal_is_caught():
-    """Nothing carries AUX5V yet (Task 5), so the 3.50 mm pitch is owned by a
-    row that does not exist: anything using it fires, which is what keeps it
-    free until the 5 V outputs arrive."""
+    """The 3.50 mm pitch belongs to whatever carries AUX5V -- J314 and nothing
+    else -- so an input terminal that took it would let a 12 V or an input
+    plug seat where a 5 V device belongs."""
     bad = D.replace_connector("J409", pitch_mm=FIVE_VOLT_PITCH)
     assert any("J409" in p and "5 V row" in p for p in pitch_problems(bad))
 
@@ -100,7 +111,7 @@ def test_the_controller_row_is_the_only_one_that_leaves_power():
     """IO-5: the pack plug and every FarDriver and display lead, and nothing
     else, leave the box from the bottom board."""
     assert {c.refdes for c in harness() if c.board == "POWER"} == \
-        {r for r, b in ROW_BOARD.items() if b == "POWER"}
+        {r for r, (b, _) in ROW_FACE.items() if b == "POWER"}
     for ref in ("J309", "J404", "J405", "J310"):
         assert D.connector(ref).pitch_mm == 5.08, ref
 
@@ -132,11 +143,13 @@ def test_each_row_is_one_face_of_one_board():
     Task 5 hangs the 5 V row under OUTPUTS and it becomes a row here by itself."""
     rows = bf.edge_budget(D)
     assert [(e.board, e.side) for e in rows] == [
-        ("POWER", "top"), ("OUTPUTS", "top"), ("LOGIC", "top")]
+        ("POWER", "top"), ("OUTPUTS", "top"), ("OUTPUTS", "bottom"),
+        ("LOGIC", "top")]
     placed = [r for e in rows for r in e.headers]
-    assert sorted(placed) == sorted(ROW_BOARD), "a header in two rows or none"
+    assert sorted(placed) == sorted(ROW_FACE), "a header in two rows or none"
     for e in rows:
-        assert set(e.headers) == {r for r, b in ROW_BOARD.items() if b == e.board}
+        assert set(e.headers) == {r for r, f in ROW_FACE.items()
+                                  if f == (e.board, e.side)}
 
 
 def test_every_class_a_network_sits_at_its_own_terminal():
@@ -156,6 +169,33 @@ def test_a_class_a_network_left_on_another_board_is_refused():
                for p in problems), problems
     # ...and every other network is still clean, so the message names the one.
     assert len(problems) == 1
+
+
+def shared_sizes(d):
+    """(pitch, positions) that a 12 V terminal and an input terminal both use.
+
+    They share the 3.81 mm pitch deliberately -- a mismate there is an output
+    into its own current limit, or 3.3 V through 1 kΩ into a lamp, and neither
+    hurts -- so what keeps the two rows apart is SIZE. A plug seats in any
+    header of its pitch at least its own size, so an eight-way 12 V terminal
+    would seat in either general-input header and put 12 V on contacts wired
+    for dry contacts to ground.
+    """
+    sizes = {name: {(d.connector(r).pitch_mm, len(d.connector(r).pins))
+                    for r in row}
+             for name, row in (("12 V", TWELVE_VOLT_ROW), ("inputs", INPUT_ROW))}
+    return sizes["12 V"] & sizes["inputs"]
+
+
+def test_no_size_is_shared_between_the_12_v_row_and_the_inputs_row():
+    assert shared_sizes(D) == set()
+
+
+def test_a_12_v_terminal_the_size_of_an_input_terminal_is_caught():
+    """J313 is SEVEN-way for this reason: 3.81 × 8 is what J409 and J410 are."""
+    j = D.connector("J313")
+    bad = D.replace_connector("J313", pins=j.pins + (ConnPin("8", "GND"),))
+    assert shared_sizes(bad) == {(3.81, 8)}
 
 
 def test_a_row_is_as_long_as_its_headers_and_the_gaps_between_them():

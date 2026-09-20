@@ -74,6 +74,10 @@ _DS_IXYS = "IXYS DS99913D (01/13), IXTA/IXTP26P20P (ixys_ds99913d.pdf)"
 _DS_BSS127 = "Infineon BSS127 rev 2.1 (bss127.pdf)"
 _DS_SMS = "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf)"
 _DS_SMCJ = "Littelfuse SMCJ series datasheet (littelfuse_smcj_series_2025_wayback.pdf)"
+_DS_SMF = "SMF series rev 2.2, Zhuhai Hongjiacheng (smf_series_C19077499.pdf)"
+_DS_LM736 = "TI SNVSAH5A (ti_lm73605.pdf), LM73605/LM73606"
+_DS_TPS2553 = "TI SLVS841F (ti_tps2553.pdf), TPS2552/TPS2553"
+_DS_IHLP = "Vishay IHLP-2525CZ-01, rev. 09-Dec-2019 (vishay_ihlp2525cz01.pdf)"
 _DS_VY2 = "Vishay doc 28535 (vishay_vy2_series_doc28535.pdf)"
 _DS_KXJ = "Chemi-Con KXJ series (kxj.pdf)"
 _DS_SPT = "Schurter SPT 5x20 (spt.pdf)"
@@ -105,6 +109,9 @@ _R_LCSC = {
     ("120R", "0805"): ("C17437", "UNI-ROYAL 0805W8F1200T5E", 150.0, "Basic"),
     ("1k", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
     ("1k00 1%", "0805"): ("C17513", "UNI-ROYAL 0805W8F1001T5E", 150.0, "Basic"),
+    ("1k5 1%", "0805"): ("C4310", "UNI-ROYAL 0805W8F1501T5E", 150.0, "Basic"),
+    ("3k", "0805"): ("C17661", "UNI-ROYAL 0805W8F3001T5E", 150.0, "Basic"),
+    ("12k", "0805"): ("C17444", "UNI-ROYAL 0805W8F1202T5E", 150.0, "Basic"),
     ("470R", "0805"): ("C17710", "UNI-ROYAL 0805W8F4700T5E", 150.0, "Basic"),
     ("2k0 1%", "0805"): ("C17604", "UNI-ROYAL 0805W8F2001T5E", 150.0, "Basic"),
     ("2k2", "0805"): ("C17520", "UNI-ROYAL 0805W8F2201T5E", 150.0, "Basic"),
@@ -128,8 +135,13 @@ _R_LCSC = {
 _C_LCSC = {
     ("100nF", 50.0, "0805"): ("C49678", "YAGEO CC0805KRX7R9BB104", 50.0, "Basic"),
     ("1uF", 16.0, "0805"): ("C28323", "Samsung CL21B105KBFNNNE, X7R", 50.0, "Basic"),
+    ("22nF", 50.0, "0805"): ("C1729", "Samsung CL21B223KBANNNC, X7R", 50.0, "Basic"),
+    ("470nF", 16.0, "0805"): ("C13967", "Samsung CL21B474KBFNNNE, X7R", 50.0, "Basic"),
+    ("470nF", 35.0, "0805"): ("C13967", "Samsung CL21B474KBFNNNE, X7R", 50.0, "Basic"),
     ("10uF", 16.0, "1206"): ("C13585", "Samsung CL31A106KBHNNNE, X5R", 50.0, "Basic"),
     ("10uF", 25.0, "1206"): ("C13585", "Samsung CL31A106KBHNNNE, X5R", 50.0, "Basic"),
+    ("10uF", 35.0, "1206"): ("C13585", "Samsung CL31A106KBHNNNE, X5R", 50.0, "Basic"),
+    ("22uF", 16.0, "1206"): ("C12891", "Samsung CL31A226KAHNNNE, X5R", 25.0, "Basic"),
     ("2.2uF", 25.0, "1206"): ("C50254", "Samsung CL31B225KBHNNNE, X7R", 50.0, "Basic"),
     ("4.7uF 50V X7R", 50.0, "1206"): ("C29823", "FH 1206B475K500NT, X7R", 50.0, "Basic"),
     ("22nF", 250.0, "1206"): ("C3862155", "Murata GCM31C5C2E223JX03L, C0G", 250.0, "Extended"),
@@ -196,6 +208,38 @@ def _tvs18(refdes: str, board: Board, where: str) -> Part:
                 source=f"{where}. SMF18A family table: V_RWM 18 V, V_BR 20.0-"
                        f"22.1 V, V_C 29.2 V at 6.8 A, 200 W 10/1000 µs. ⬜ SOD-123FL "
                        f"envelope, not read off a drawing")
+
+
+def _tvs6(refdes: str, board: Board, where: str) -> Part:
+    """SMF6.0A, the single-line clamp for a 5 V AUX output wire (BD-16: the
+    stand-off follows the line's idle voltage).  6.0 V clears the buck's
+    5.17 V maximum output, where the 5.0 V grade would conduct on it.
+
+    ⚠️ IO-12, the owner's decision and the reason this part is here at all: it
+    does NOT protect the switch's own output.  It clamps at 10.3 V and the
+    TPS2553's OUT is rated 7 V, so a surge big enough to make it conduct is
+    already past what the switch survives.  No TVS with a stand-off above the
+    buck's maximum clamps lower -- silicon clamps at roughly 1.5x its
+    stand-off, and even the 5.0 V grade of this family clamps at 9.2 V.  The
+    owner accepted the residual risk (a large surge on a 5 V aux wire can
+    damage that channel's switch) rather than spend an eFuse and six more
+    parts per channel on it; what the clamp still does is hold the harness's
+    transient off the buck, the expander and the rest of the board.  ⛔ That is
+    why `OUT` is deliberately NOT in rules.SUPPLY_PINS: the risk is recorded,
+    not checked, and adding it there would fail VR-CLAMP on a design the owner
+    has already decided."""
+    return Part(refdes, "SMF6.0A", "SOD-123FL", board, "TVS", ("A", "K"), 1.10,
+                height_confirmed=True, footprint_mm=(3.9, 1.9), v_max=6.0,
+                v_clamp=10.3, value="V_RWM 6.0 V · V_BR 6.67-7.37 V · V_C 10.3 V",
+                source=f"{where}. {_DS_SMF} p.2: V_RWM 6.0 V, V_BR 6.67-7.37 V "
+                       f"at 10 mA, V_C 10.3 V at 19.4 A (200 W, 10/1000 µs), "
+                       f"I_R 400 µA; p.2 outline A = 0.90-1.10 mm high, D = "
+                       f"3.60-3.90 over the leads, C = 1.60-1.90 wide, cathode "
+                       f"band on the unidirectional part. ⚠️ IO-12: 10.3 V is "
+                       f"OVER the TPS2553's 7 V OUT rating and no TVS standing "
+                       f"off the buck's 5.17 V clamps lower -- accepted as a "
+                       f"residual risk, so this clamp protects the BOARD from "
+                       f"the harness, not the switch from the harness")
 
 
 def _tvs5(refdes: str, board: Board, where: str) -> Part:
@@ -638,6 +682,18 @@ _POWER_CTRL_PARTS = (
 #   U301: IN1 AUX12 · IN2 HL_LOW · IN3 HL_HIGH · IN4 HL_DRL
 #   U302: IN1 TAIL_RUN · IN2 TURN_L · IN3 TURN_R · IN4 TAIL_STOP
 # ════════════════════════════════════════════════════════════════════════════
+_MCP_SOURCE = (
+    f"{_DS_MCP} p.11 Table 2-1 (one column for SSOP, SOIC and SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
+    f"SCK 12 · SDA 13 · NC 14 · A0-A2 15-17 · RESET 18 · INTB 19 · INTA 20 · "
+    f"GPA0-7 21-28. A0-A2 and RESET 'Must be externally biased'. ⛔ GPA7 and "
+    f"GPB7 are 'Output only (MCP23017)' and carry nothing. nc NC11/NC14: 'NC "
+    f"(MCP23017)'. nc INTB: p.20 'When MIRROR = 1, the INTn pins are "
+    f"functionally OR'ed', so INTA alone reports both ports. Firmware drives "
+    f"GPA7/GPB7 as outputs (p.18), so neither floats; every input bit has an "
+    f"external pull. p.35 (drawing C04-073): SSOP-28 A 2.00 mm max, D 10.50, "
+    f"E 8.20. 400 kHz at 3.3 V. BOM C3")
+
+
 _TPS_PINS = ("GND", "IN1", "IN2", "IN3", "IN4", "SEH", "SEL", "FAULT", "CS",
              "CL", "THER", "DIAG_EN", "OUT1", "OUT2", "OUT3", "OUT4", "VS",
              "PAD")
@@ -674,9 +730,59 @@ def _open_load_pullup(refdes: str, channel: str) -> Part:
               f"BOM D2")
 
 
+def _aux5v_parts(n: int) -> tuple[Part, ...]:
+    """One 5 V aux channel (IO-1, IO-2): a current-limited load switch, the
+    pull-down that holds its enable OFF, the pull-up on its open-drain fault
+    flag, the resistor that sets its limit, its input capacitor and the clamp
+    on the wire.  Typed once for all four, so no channel can quietly differ
+    from its neighbours."""
+    return (
+        Part(f"U{305 + n}", "TPS2553DBVR", "SOT-23-6", "OUTPUTS", "IC",
+             ("IN", "GND", "EN", "FAULT", "ILIM", "OUT"), 1.45,
+             height_confirmed=True, footprint_mm=(3.05, 3.0), v_max=6.5,
+             value=f"5 V aux {n}: 1.19-1.39 A limit, active-high EN",
+             source=f"5 V aux {n} (IO-1), switching V5AUX onto AUX5V_{n}. "
+                    f"{_DS_TPS2553} p.5 pin table, DBV: IN 1 · GND 2 · EN 3 · "
+                    f"FAULT 4 · ILIM 5 · OUT 6, and it is the TPS2553, whose "
+                    f"'EN: logic high turns on' -- ⛔ never the TPS2552, whose "
+                    f"enable is inverted, and never the '-1' latch-off part: "
+                    f"this one limits current and keeps reporting. p.6-7: IN "
+                    f"2.5-6.5 V (7 V absolute, p.5), I_OUT 1.2 A continuous to "
+                    f"T_J 125 °C, over the 1 A of IO-2; FAULT is an active-low "
+                    f"open drain for over-current, over-temperature and "
+                    f"reverse voltage, V_OL ≤ 180 mV at 1 mA; EN thresholds "
+                    f"0.66/1.1 V with I_EN ≤ ±0.5 µA. In a hard short it "
+                    f"thermal-cycles in current limit with FAULT low (p.15) "
+                    f"and the firmware drops EN. p.41 DBV0006A: SOT-23-6, "
+                    f"1.45 mm max, 2.6-3.0 mm over the leads"),
+        _r(f"R{364 + n}", "OUTPUTS", "100k",
+           f"AUX5V_{n} enable pull-down: the switch is OFF from reset and "
+           f"whenever firmware is not driving expander #3's bit (D14). "
+           f"{_DS_TPS2553} p.7: I_EN is ±0.5 µA, so 100 kΩ holds the pin "
+           f"under 50 mV against a 0.66 V V_IL"),
+        _r(f"R{368 + n}", "OUTPUTS", "10k",
+           f"AUX5V_{n} FAULT pull-up to V3P3, at the pin. {_DS_TPS2553} p.5: "
+           f"the flag is an open drain; p.7 gives V_OL ≤ 180 mV at 1 mA and "
+           f"≤ 1 µA of leakage, so 0.33 mA reads a clean 0/1 on an expander "
+           f"bit. ⚠️ V3P3, never V5AUX: the bit belongs to a 3.3 V expander"),
+        _r(f"R{372 + n}", "OUTPUTS", "20k",
+           f"AUX5V_{n} ILIM to GND, which sets the limit. {_DS_TPS2553} p.7: "
+           f"20 kΩ gives 1200/1295/1375 mA over -40…125 °C, and 1190-1388 mA "
+           f"once the resistor's own 1 % goes through eq. 1 (p.15, which "
+           f"excludes it). Over the 1 A of IO-2 at every corner and under the "
+           f"1.6 A a 1 A wire is sized for; p.6 allows 15-232 kΩ"),
+        _c(f"C{325 + n}", "OUTPUTS", "100nF", 50.0,
+           f"AUX5V_{n} switch input decoupling, at the pin. {_DS_TPS2553} p.5: "
+           f"'connect a 0.1 µF or greater ceramic capacitor from IN to GND as "
+           f"close to the IC as possible'"),
+        _tvs6(f"D{330 + n}", "OUTPUTS", f"At J314: AUX5V_{n}"),
+    )
+
+
 _OUTPUTS_PARTS = (
     _tps4h160("U301", "Headlight: LOW, HIGH, DRL. OUT1 is AUX12, the "
-              "current-limited feed to horn +, fan + and buzzer +"),
+              "current-limited feed to horn +, fan + and buzzer +, commanded "
+              "by expander #3 (IO-1) like any other channel"),
     _tps4h160("U302", "Tail running + turn L/R. OUT4 is the STOP lamp, "
               "firmware-driven from GPIO19 (IO-8)"),
     _open_load_pullup("R301", "HL_LOW"),
@@ -686,14 +792,7 @@ _OUTPUTS_PARTS = (
     _open_load_pullup("R305", "TURN_L"),
     _open_load_pullup("R306", "TURN_R"),
     _open_load_pullup("R345", "TAIL_STOP"),
-    _r("R346", "OUTPUTS", "10k",
-       "AUX12 enable: U301 IN1 → V3P3. The channel is on whenever LOGIC's "
-       "3.3 V is up and off when it is not; 3.3 V × 100-250k / (10k + 100-250k) "
-       "= 3.0-3.2 V against V_IH 2 V. What it feeds is switched low-side "
-       "(Q301-Q303), each gate biased OFF (D14), so no load runs at key-on. "
-       "The channel is a FEED: it current-limits horn +, fan + and buzzer + at "
-       "2 A, where raw V12 would put the 12.75-18.75 A brick into the harness "
-       "and hiccup the rail the stop lamp shares"),
+    _tps_series("R346", "AUX12_CMD → U301 IN1"),
     _r("R319", "OUTPUTS", "1k00 1%",
        f"U301 CL → GND: 0.8 V × 2500 / 1.00 kΩ = 2.0 A per channel, over the "
        f"0.71 A / 0.54 A loads. {_DS_TPS} p.29 eq. 10. This is the lamp-scale "
@@ -821,6 +920,154 @@ _OUTPUTS_PARTS = (
        "Headlight telltale series to display pin 5, fed from HL_HIGH so a "
        "flash lights it with no firmware (plan §7); LOW beam does not. 1206 "
        "as R426. BOM B3", pkg="1206"),
+    # ── the aux block (IO-1, IO-2): four 12 V and four 5 V outputs at 1 A ────
+    # A third TPS4H160B gives the 12 V four, identical in hardware to the lamp
+    # channels; a buck and four load switches give the 5 V four; expander #3
+    # commands all of it, and both terminals are in the rows on OUTPUTS' two
+    # faces (12 V on top, 5 V underneath).
+    _tps4h160("U303", "12 V aux 1-4 (IO-1). Commanded by expander #3, and its "
+              "CS and FAULT pins share U302's nodes: with DIAG_EN low a "
+              "TPS4H160B's CS and FAULT are high-impedance while the current "
+              "limit stays live, so the firmware reads one device at a time "
+              "and no second ADC pin is needed (SLVSCV8E Table 7-1)"),
+    _tps_series("R354", "AUX12_1_CMD → U303 IN1"),
+    _tps_series("R355", "AUX12_2_CMD → U303 IN2"),
+    _tps_series("R356", "AUX12_3_CMD → U303 IN3"),
+    _tps_series("R357", "AUX12_4_CMD → U303 IN4"),
+    _tps_series("R358", "DIAG3_CMD → U303 DIAG_EN, this device's own"),
+    _r("R359", "OUTPUTS", "1k5 1%",
+       f"U303 CL → GND: 0.8 V × 2500 / 1.5 kΩ = 1.33 A per channel, and "
+       f"1.12-1.55 A with the ±15 % accuracy {_DS_TPS} p.8 gives for 0.5-7 A "
+       f"and the resistor's 1 %. Over the 1 A each aux output delivers (IO-2) "
+       f"at every corner, and under the 2 A the lamps get. {_DS_TPS} p.29 "
+       f"eq. 10. ⚠️ 1.5 kΩ, not the 1.6 kΩ first asked for: no 1.6 kΩ 1 % part "
+       f"is JLC Basic in 0805 or 0603 and this one is, and the next Basic "
+       f"value up (2.0 kΩ) limits at 1.0 A nominal and 0.85 A at -15 %, "
+       f"which is under the load"),
+    _open_load_pullup("R360", "AUX12V_1"),
+    _open_load_pullup("R361", "AUX12V_2"),
+    _open_load_pullup("R362", "AUX12V_3"),
+    _open_load_pullup("R363", "AUX12V_4"),
+    _c("C309", "OUTPUTS", "100nF", 50.0, "U303 VS decoupling, at the pins"),
+    _c("C310", "OUTPUTS", "10uF", 25.0, "U303 VS bulk decoupling", pkg="1206"),
+    _tvs18("D327", "OUTPUTS", "At J313: AUX12V_1"),
+    _tvs18("D328", "OUTPUTS", "At J313: AUX12V_2"),
+    _tvs18("D329", "OUTPUTS", "At J313: AUX12V_3"),
+    _tvs18("D330", "OUTPUTS", "At J313: AUX12V_4"),
+    # ── expander #3: everything the aux block is commanded by ───────────────
+    Part("U304", "MCP23017T-E/SS", "SSOP-28", "OUTPUTS", "IC",
+         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET")
+         + tuple(f"GPA{i}" for i in range(7)) + tuple(f"GPB{i}" for i in range(7)),
+         2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
+         nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
+         value="I²C address 0x22 (A2..A0 = 010)",
+         source=f"Expander #3, on OUTPUTS with what it drives: the third "
+                f"TPS4H160B's four inputs and its own DIAG_EN, the AUX12 "
+                f"enable, the four 5 V switch enables and the four 5 V fault "
+                f"flags (IO-1). 14 of 16 bits. It shares the input expanders' "
+                f"I²C bus -- no native pin is free for a second -- so the "
+                f"module's two bus wires cross STACK to reach it. ⚠️ At "
+                f"power-up its bits are inputs, and every enable it drives "
+                f"has its own pull-down (the TPS4H160B's are internal), so "
+                f"every aux output starts OFF; nothing resets it on an S3 "
+                f"restart, so it keeps driving what it last drove until "
+                f"firmware writes it. nc INTA and INTB: it is polled every "
+                f"tick, and nothing here needs an interrupt. {_MCP_SOURCE}"),
+    _r("R364", "OUTPUTS", "10k",
+       f"U304 RESET pull-up to V3P3, its own and not the pair on LOGIC: a "
+       f"reset line is not worth a contact of the stack. {_DS_MCP} p.11: "
+       f"RESET 'Must be externally biased'"),
+    _c("C308", "OUTPUTS", "100nF", 50.0, "U304 VDD decoupling"),
+    # ── the 5 V aux supply: its OWN buck off V12 (spec §8.4) ────────────────
+    # Separate from the logic's 5 V, which comes from the Cincon on POWER, so
+    # a 5 V aux fault cannot brown out the S3.
+    Part("U305", "LM73605RNPR", "WQFN-30 (RNP), 0.5 mm", "OUTPUTS", "IC",
+         ("SW", "CBOOT", "VCC", "BIAS", "SS/TRK", "FB", "NC", "PGOOD",
+          "SYNC/MODE", "EN", "AGND", "PVIN", "PGND", "PAD"),
+         0.8, height_confirmed=True, footprint_mm=(6.1, 4.1), nc=("RT",),
+         v_max=36.0, value="V12 → V5AUX, 5 A synchronous buck at 500 kHz",
+         source=f"The 5 V aux rail: 4 × 1 A (IO-2) plus margin, off V12. "
+                f"{_DS_LM736} p.3-4 pin table: SW 1-5 · CBOOT 6 · VCC 7 · "
+                f"BIAS 8 · RT 9 · SS/TRK 10 · FB 11 · NC 12-15 and 27-30 · "
+                f"PGOOD 16 · SYNC/MODE 17 · EN 18 · AGND 19 · PVIN 20-22 · "
+                f"PGND 23-26 · DAP. NC lands on GND, not left open: p.4 'No "
+                f"internal connection. Connect to ground net and copper to "
+                f"improve heat sinking'; PAD is the DAP, p.4 'Must be used "
+                f"for heat sinking by soldering to ground copper'. nc RT: "
+                f"p.3 'If floating, the default switching frequency is "
+                f"500 kHz', which is the frequency this design is sized at, "
+                f"and ⛔ 'Do not short to ground'. EN straight to V12: p.4 "
+                f"'Do not float. High = ON… Can be tied to PVIN' -- the rail "
+                f"is on whenever the 12 V rail is, and no expander bit is "
+                f"spent on it. SYNC/MODE to GND: p.4 'Tie to ground if not "
+                f"used' = auto mode. Ratings: PVIN 3.5-36 V operating and "
+                f"42 V absolute (p.5-6), over D315's 29.2 V clamp on V12; "
+                f"I_OUT 0-5 A (p.5). p.51 RNP0030A: WQFN 0.8 mm max height, "
+                f"3.9-4.1 × 5.9-6.1 mm"),
+    Part("L301", "IHLP2525CZER4R7M01", "SMD, 6.9 × 6.5 mm", "OUTPUTS", "L",
+         ("1", "2"), 3.0, height_confirmed=True, footprint_mm=(8.26, 6.9),
+         v_max=75.0, value="4.7 µH ±20 % · 5.5 A at ΔT 40 °C · I_sat 10 A",
+         source=f"U305's output inductor. {_DS_LM736} Table 3 p.27 asks 4.7 µH "
+                f"at 500 kHz and 5 V, and p.30 wants I_sat above the 8.35 A "
+                f"worst-case high-side limit. {_DS_IHLP} p.1: 4.7 µH ±20 %, "
+                f"DCR 37 mΩ typ / 40 max, 5.5 A for ΔT 40 °C, I_sat 10 A at a "
+                f"20 % drop, 75 V across the winding, shielded composite "
+                f"construction; body 6.47 × 6.86 mm, 3.0 mm max, pads 3.43 mm "
+                f"square over an 8.26 mm layout -- booked at the pad layout, "
+                f"not the body. The 4 A this rail can draw peaks at ~4.8 A "
+                f"with 25 % ripple, well inside both current figures"),
+    _c("C311", "OUTPUTS", "10uF", 35.0,
+       f"U305 PVIN bulk, one of two. {_DS_LM736} p.29 asks 2 × 10 µF 50 V "
+       f"X7R (X5R accepted) at PVIN; 50 V is well over the 29.2 V D315 lets "
+       f"onto V12, and TI's own rule is 'a voltage rating of twice the "
+       f"maximum input voltage' to cover DC-bias derating (p.29)", pkg="1206"),
+    _c("C312", "OUTPUTS", "10uF", 35.0, "U305 PVIN bulk, the second", pkg="1206"),
+    _c("C313", "OUTPUTS", "470nF", 35.0,
+       f"U305 PVIN high-frequency bypass, right at the PVIN/PGND pins. "
+       f"{_DS_LM736} p.29"),
+    _c("C314", "OUTPUTS", "470nF", 16.0,
+       f"U305 CBOOT to SW, the high-side driver's bootstrap. {_DS_LM736} p.31: "
+       f"'a high-quality 470-nF capacitor from this pin to the SW pin'"),
+    _c("C315", "OUTPUTS", "2.2uF", 25.0,
+       f"U305 VCC to GND, the internal bias LDO's output. {_DS_LM736} p.31 "
+       f"asks 2.2 µF X5R/X7R; ⛔ nothing else may load this pin (p.3)",
+       pkg="1206"),
+    _c("C316", "OUTPUTS", "22nF", 50.0,
+       f"U305 SS/TRK to GND: 22 nF gives ~11 ms of soft start off the pin's "
+       f"2 µA ({_DS_LM736} p.31), so the rail ramps rather than inrushing "
+       f"into four load switches and their cables"),
+    _c("C317", "OUTPUTS", "470nF", 16.0,
+       f"V5AUX high-frequency bypass beside the bulk. {_DS_LM736} p.30"),
+    *(_c(f"C{317 + i}", "OUTPUTS", "22uF", 16.0,
+         f"V5AUX bulk, {i} of 8. ⚠️ Sized on TI's TABLE, not TI's example: "
+         f"{_DS_LM736} Table 3 p.27 asks 88 µF at 5 V and 500 kHz and its "
+         f"footnote says 'All the COUT values are after derating. Add more "
+         f"when using ceramics', while the worked example on p.30 fits four "
+         f"22 µF parts -- 88 µF NOMINAL, which is under the table's figure "
+         f"the moment DC bias is counted. Eight parts are 176 µF nominal and "
+         f"hold ≥ 88 µF even at a 50 % loss to DC bias, tolerance and ageing, "
+         f"which is the pessimistic end for a 25 V X5R 1206 biased at 5 V "
+         f"(a fifth of its rating). ⬜ The derating is a class figure, not "
+         f"this part's measured curve: Samsung publishes no DC-bias data in "
+         f"the catalogue on file, so confirm it on the part's own curve or "
+         f"on the bench before the boards are ordered", pkg="1206")
+      for i in range(1, 9)),
+    _r("R377", "OUTPUTS", "12k",
+       f"U305 feedback divider, top (FB to V5AUX). With R378 and V_FB "
+       f"0.987/1.006/1.017 V ({_DS_LM736} p.6), V_OUT is 4.86/5.03/5.17 V -- "
+       f"under the 5.25 V the 5 V clamp is chosen against and over the "
+       f"TPS2553's 2.5 V floor. TI's own 100 k/24.9 k pair (p.28) has no JLC "
+       f"Basic 24.9 kΩ; 12 k/3 k does, and p.31 needs no C_FF while R_FBT is "
+       f"under 100 kΩ"),
+    _r("R378", "OUTPUTS", "3k", "U305 feedback divider, bottom (FB to GND), with R377"),
+    _r("R379", "OUTPUTS", "100k",
+       f"U305 PGOOD pull-up to V5AUX. {_DS_LM736} p.31: the flag is an open "
+       f"drain and wants 'a suitable voltage supply through a current "
+       f"limiting resistor'. ⚠️ Nothing reads it -- expander #3 has no input "
+       f"bit left and no native pin is free -- so it is a test point and a "
+       f"defined level, not a signal"),
+    # ── the four 5 V channels ───────────────────────────────────────────────
+    *(part for n in range(1, 5) for part in _aux5v_parts(n)),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -890,17 +1137,6 @@ def _spare_cps(terminal: str) -> tuple[ConnPin, ...]:
                  for bit, where, *_ in _SPARE_LINES
                  if where.startswith(f"{terminal}."))
 
-
-_MCP_SOURCE = (
-    f"{_DS_MCP} p.11 Table 2-1 (one column for SSOP, SOIC and SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
-    f"SCK 12 · SDA 13 · NC 14 · A0-A2 15-17 · RESET 18 · INTB 19 · INTA 20 · "
-    f"GPA0-7 21-28. A0-A2 and RESET 'Must be externally biased'. ⛔ GPA7 and "
-    f"GPB7 are 'Output only (MCP23017)' and carry nothing. nc NC11/NC14: 'NC "
-    f"(MCP23017)'. nc INTB: p.20 'When MIRROR = 1, the INTn pins are "
-    f"functionally OR'ed', so INTA alone reports both ports. Firmware drives "
-    f"GPA7/GPB7 as outputs (p.18), so neither floats; every input bit has an "
-    f"external pull. p.35 (drawing C04-073): SSOP-28 A 2.00 mm max, D 10.50, "
-    f"E 8.20. 400 kHz at 3.3 V. BOM C3")
 
 #: What the class-A network at J306 protects, said once for both levers.
 _LEVER_NOTE = (
@@ -1123,6 +1359,11 @@ _STACK_SIGNALS = (
     "HORN_CMD", "FAN_CMD", "BUZZ_CMD", "V12_SENSE", "BL_SENSE", "BL_CMD",
     "UART1_TX", "UART1_RX", "BOOST_CMD", "CANH", "CANL",
     "ACC_SENSE",
+    # The I²C bus comes DOWN to expander #3, which commands the aux block on
+    # OUTPUTS (IO-1). It is the input expanders' own bus: no native pin is
+    # free for a second one, and a fault that holds it stalls input reading
+    # until the driver's nine-clock recovery frees it (spec §6).
+    "SDA", "SCL",
 )
 #: Contacts per row, and the header's length on the 2.54 mm grid.
 _STACK_ROWS = len(_STACK_SIGNALS)
@@ -1250,6 +1491,16 @@ _NETS_RAILS = (
              "J301.1 J302.1 J303.2 J303.4 "
              "D308.A D309.A D310.A D311.A D312.A D319.A D320.A D321.A D322.A "
              "D323.A D324.A D325.A D326.A")
+        # OUTPUTS: the aux block (IO-1)
+        + _p("U303.GND U303.PAD U303.THER R359.2 C309.2 C310.2 "
+             "D327.A D328.A D329.A D330.A "
+             "U304.VSS U304.A0 U304.A2 C308.2 "
+             "U305.AGND U305.PGND U305.PAD U305.NC U305.SYNC/MODE "
+             "C311.2 C312.2 C313.2 C315.2 C316.2 C317.2 R378.2 "
+             "J313.2 J313.4 J313.6 J314.2 J314.4 J314.6 J314.8")
+        + _p(" ".join(f"C{317 + i}.2" for i in range(1, 9)))
+        + _p(" ".join(f"U{305 + n}.GND R{364 + n}.2 R{372 + n}.2 "
+                      f"C{325 + n}.2 D{330 + n}.A" for n in range(1, 5)))
         # LOGIC
         + _p("U401.GND U401.EPAD C412.2 C413.2 C414.2 "
              "U402.VSS U402.A0 U402.A1 U402.A2 C418.2 "
@@ -1283,11 +1534,16 @@ _NETS_RAILS = (
         _p("U201.+V U201.+S C207.+ C208.1 C209.1") + _pwrout("V12")
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
              "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 R345.2 "
-             "D315.K R337.1"),
+             "D315.K R337.1")
+        + _p("U303.VS C309.1 C310.1 R360.2 R361.2 R362.2 R363.2 "
+             "U305.PVIN U305.EN C311.1 C312.1 C313.1"),
         domain="12V", interface="PWR-OUT",
         source="DC-DC #1's output, +S strapped to +V at the brick. 2.62 A "
-               "measured (plan §3.2.3). It never leaves the box: every 12 V "
-               "wire out is a TPS4H160B channel. D315 is its clamp"),
+               "measured (plan §3.2.3), and 8.47 A worst case now the aux "
+               "block hangs off it (spec §8). It never leaves the box: every "
+               "12 V wire out is a TPS4H160B channel, aux 1-4 included, and "
+               "the 5 V aux rail is a buck off it. D315 is its clamp, and "
+               "U305's 42 V absolute input rating clears that clamp's 29.2 V"),
     Net("V5",
         _p("U202.+Vout C211.1 C212.1") + _pwrout("V5") + _pwrlogic("V5")
         + _p("U405.IN U405.EN C415.1"),
@@ -1301,15 +1557,17 @@ _NETS_RAILS = (
            "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 R477.2 "
            "R317.2 R318.2 "
            "R472.2 U406.VDD C436.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _pwrlogic("V3P3") + _p("R346.2 R349.2 R351.2"),
+        + _pwrlogic("V3P3") + _p("R349.2 R351.2 U304.VDD U304.A1 C308.1 R364.2")
+        + _p(" ".join(f"R{368 + n}.2" for n in range(1, 5))),
         domain="3V3", interface="PWR-LOGIC",
-        source="LOGIC's 3.3 V rail. It goes DOWN to OUTPUTS for the AUX12 "
-               "enable (R346) and the two FAULT pull-ups (R349, R351) -- every "
+        source="LOGIC's 3.3 V rail. It goes DOWN to OUTPUTS for the two "
+               "TPS4H160B FAULT pull-ups (R349, R351), expander #3 and its "
+               "RESET pull-up, and the four 5 V FAULT pull-ups -- every "
                "class-A pull-up, the levers' included, is on LOGIC with its own "
                "terminal now -- and it goes on the POWER BUS, two contacts of "
                "it, never on the signal spine: a rail has to land on itself "
                "when a half is mated reversed (BUS-ORDER). U403.A0 is strapped "
-               "here (address 001)"),
+               "here (address 001) and U304.A1 is (address 010)"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1328,8 +1586,16 @@ _NETS_12V = (
         source="U301 OUT1, the current-limited feed to horn +, fan + and "
                "buzzer +: 0.10 + ~0.50 A + a few mA against its 2 A limit. ⛔ "
                "J304.1 is BLUE and it is the POSITIVE — red is not"),
-    Net("AUX12_EN", _p("U301.IN1 R346.1"), domain="3V3",
-        source="U301 IN1, held high from V3P3 by R346"),
+    Net("AUX12_CMD", _p("U304.GPA5 R346.1"), domain="3V3",
+        source="The AUX12 feed's command, expander #3's GPA5 (IO-1). ⚠️ It is "
+               "an ordinary output now: nothing holds the channel on, so horn, "
+               "fan and buzzer have no + until firmware asks for it. Before "
+               "IO-1 a 10 kΩ from V3P3 held it high whenever the logic rail "
+               "was up"),
+    Net("AUX12_EN", _p("R346.2 U301.IN1"), domain="3V3",
+        source="U301 IN1, behind R346. The channel's own 100-250 kΩ internal "
+               "pull-down holds it OFF while expander #3's bits are still "
+               "inputs, so nothing runs at key-on (D14)"),
     Net("TAIL_RUN", _p("U302.OUT1 R304.1 J302.2 D320.K"), domain="12V",
         source="J302.2 YELLOW, 0.05 A, a separate feed and not PWM"),
     Net("TURN_L", _p("U302.OUT2 R305.1 J302.4 J303.1 R426.1 D321.K D324.K"),
@@ -1359,8 +1625,16 @@ _NETS_12V = (
         source="U301's current-sense node: 0-4 V linear across R321, and "
                "4.5-6.5 V in any fault — which is why it never meets the ADC "
                "pin without R323"),
-    Net("CS2_RAW", _p("U302.CS R322.1 R324.1"), domain="5V",
-        source="U302's current-sense node, as CS1_RAW"),
+    Net("CS2_RAW", _p("U302.CS R322.1 R324.1 U303.CS"), domain="5V",
+        source="U302's current-sense node, as CS1_RAW -- and U303's too. Two "
+               f"devices share it because a TPS4H160B's CS pin is "
+               f"high-impedance while its own DIAG_EN is low ({_DS_TPS} "
+               f"Table 7-1, 'Diagnostics disabled, full protection': the "
+               f"current LIMIT stays live either way). The firmware raises one "
+               f"DIAG_EN at a time, so this node carries one device's sense "
+               f"current and the 3.33 V/A of R322 still means what it says. "
+               f"⚠️ Raise both and the two sense currents add: the reading is "
+               f"then the sum of two channels, not either one"),
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1504,13 +1778,13 @@ _NETS_STACK = (
     Net("SEL", _p("U401.IO8") + _stack("SEL") + _p("R334.1"),
         domain="3V3", interface="STACK", gpio="GPIO8",
         source="CS channel-select LOW bit (TI's SEL, pad 8), bussed"),
-    Net("SEL_IN", _p("R334.2 U301.SEL U302.SEL"), domain="3V3",
-        source="Device side of R334"),
+    Net("SEL_IN", _p("R334.2 U301.SEL U302.SEL U303.SEL"), domain="3V3",
+        source="Device side of R334, all three devices"),
     Net("SEH", _p("U401.IO9") + _stack("SEH") + _p("R335.1"),
         domain="3V3", interface="STACK", gpio="GPIO9",
         source="CS channel-select HIGH bit (TI's SEH, pad 7), bussed"),
-    Net("SEH_IN", _p("R335.2 U301.SEH U302.SEH"), domain="3V3",
-        source="Device side of R335"),
+    Net("SEH_IN", _p("R335.2 U301.SEH U302.SEH U303.SEH"), domain="3V3",
+        source="Device side of R335, all three devices"),
     Net("CS1", _p("R323.2 R339.1 C301.1") + _stack("CS1") + _p("U401.IO4"),
         domain="3V3", interface="STACK", gpio="GPIO4",
         source="U301's current sense behind R323. ⚠️ ADC1 ONLY (ADC2 dies with "
@@ -1524,8 +1798,12 @@ _NETS_STACK = (
         domain="3V3", interface="STACK", gpio="GPIO39",
         source="U301's global fault behind R350. Digital only. GPIO39's reset "
                "pull-up only adds to R349's"),
-    Net("FAULT2_DEV", _p("U302.FAULT R351.1 R352.1"), domain="3V3",
-        source="U302's open-drain FAULT, pulled up at the pin by R351"),
+    Net("FAULT2_DEV", _p("U302.FAULT R351.1 R352.1 U303.FAULT"), domain="3V3",
+        source="U302's open-drain FAULT, pulled up at the pin by R351 -- and "
+               "U303's, which shares it the way they share CS2_RAW: the pin is "
+               "high-impedance while that device's DIAG_EN is low. ⚠️ Low here "
+               "means 'whichever of the two has diagnostics enabled has a "
+               "fault', so firmware reads it against the DIAG_EN it raised"),
     Net("FAULT2", _p("R352.2") + _stack("FAULT2") + _p("U401.IO12"),
         domain="3V3", interface="STACK", gpio="GPIO12", source="As FAULT1"),
     Net("HORN_CMD", _p("U401.IO42") + _stack("HORN_CMD") + _p("R310.1"),
@@ -1627,10 +1905,19 @@ _NETS_LOGIC = (
                "listen-only tap, exists; every native pin is now in service, so "
                "it costs a pin move (the horn command to an expander) and no "
                "harness connector carries it"),
-    Net("SDA", _p("U401.IO13 U402.SDA U403.SDA R434.1"), domain="3V3",
-        gpio="GPIO13", source="I²C data: bar inputs only (BD-5)"),
-    Net("SCL", _p("U401.IO14 U402.SCK U403.SCK R435.1"), domain="3V3",
-        gpio="GPIO14", source="I²C clock, onto the MCP23017's pin 12 'SCK'"),
+    Net("SDA", _p("U401.IO13 U402.SDA U403.SDA R434.1") + _stack("SDA")
+        + _p("U304.SDA"), domain="3V3", gpio="GPIO13", interface="STACK",
+        source="I²C data. The two input expanders are on LOGIC and expander "
+               "#3 is on OUTPUTS with the aux block it drives (IO-1), so the "
+               "bus crosses STACK, a ground beside it. ⚠️ ONE bus for all "
+               "three: no native pin is free for a second, so a device that "
+               "holds SDA down stalls input reading as well as the aux "
+               "outputs until the driver's nine-clock recovery frees it. "
+               "⛔ Still no lamp on it: lighting stays native (BD-5)"),
+    Net("SCL", _p("U401.IO14 U402.SCK U403.SCK R435.1") + _stack("SCL")
+        + _p("U304.SCK"), domain="3V3", gpio="GPIO14", interface="STACK",
+        source="I²C clock, onto the MCP23017's pin 12 'SCK'. Crosses STACK to "
+               "expander #3, as SDA does"),
     Net("MCP_INT", _p("U402.INTA U401.IO35"), domain="3V3", gpio="GPIO35",
         source="Interrupt from expander #1, IOCON.MIRROR = 1. GPIO35 is free "
                "because the module is an -N8 (no octal PSRAM)"),
@@ -1738,8 +2025,137 @@ _NETS_CLASS_A = (
                                expander="U403")),
 )
 
+# ════════════════════════════════════════════════════════════════════════════
+# NETS — the aux block on OUTPUTS (IO-1, IO-2): four 12 V outputs on a third
+# TPS4H160B, four 5 V outputs on a buck and four load switches, all commanded
+# by expander #3.  ⚠️ Every one of them is OFF until firmware drives the
+# expander: its bits come out of reset as inputs, each TPS4H160B channel input
+# has its own 100-250 kΩ pull-down, and each load switch's enable has R365-R368
+# to ground (D14).  Nothing here is a hardware function.
+# ════════════════════════════════════════════════════════════════════════════
+#: Which bit of expander #3 carries each 5 V channel's enable and fault, in
+#: channel order. GPA6 then GPB0-2 for the enables, GPB3-6 for the flags: the
+#: bits left once the third TPS4H160B's five and the AUX12 enable have theirs,
+#: and ⛔ never GPA7 or GPB7, which are output-only and could not read a flag.
+_AUX5V_EN_BITS = ("GPA6", "GPB0", "GPB1", "GPB2")
+_AUX5V_FAULT_BITS = ("GPB3", "GPB4", "GPB5", "GPB6")
+
+def _aux12_nets(n: int) -> tuple[Net, ...]:
+    """One 12 V aux channel: the command from expander #3, the device side of
+    its series resistor, and the output on its way to the terminal."""
+    return (
+        Net(f"AUX12_{n}_CMD", _p(f"U304.GPA{n - 1} R{353 + n}.1"), domain="3V3",
+            source=f"12 V aux {n}, commanded on expander #3's GPA{n - 1} "
+                   f"(IO-1). {_LGT}"),
+        Net(f"AUX12_{n}_IN", _p(f"R{353 + n}.2 U303.IN{n}"), domain="3V3",
+            source=f"Device side of R{353 + n}"),
+        Net(f"AUX12V_{n}", _p(f"U303.OUT{n} R{359 + n}.1 J313.{2 * n - 1} "
+                              f"D{326 + n}.K"), domain="12V",
+            source=f"12 V aux output {n}: 1 A (IO-2) out of a TPS4H160B "
+                   f"channel identical to the lamp channels -- current limit "
+                   f"at 1.12-1.55 A (R359), current sense on CS2_RAW, "
+                   f"OFF-state open-load detect through R{359 + n}, and a "
+                   f"clamp at the terminal. Its return is the GND contact "
+                   f"beside it on J313"),
+    )
+
+
+def _aux5v_nets(n: int) -> tuple[Net, ...]:
+    """One 5 V aux channel: the switched output, its enable, its fault flag
+    and the node that sets its current limit."""
+    return (
+        Net(f"AUX5V_{n}", _p(f"U{305 + n}.OUT J314.{2 * n - 1} D{330 + n}.K"),
+            domain="5V",
+            source=f"5 V aux output {n}: 1 A (IO-2) through U{305 + n}, "
+                   f"limited at 1.19-1.39 A, with its return on the GND "
+                   f"contact beside it on J314. ⚠️ IO-12: D{330 + n} clamps "
+                   f"the wire at 10.3 V and the switch's OUT is rated 7 V, so "
+                   f"a surge large enough to fire the clamp can still damage "
+                   f"this channel -- accepted, and recorded, because no TVS "
+                   f"that stands off 5.17 V clamps lower"),
+        Net(f"AUX5V_{n}_EN", _p(f"U304.{_AUX5V_EN_BITS[n - 1]} "
+                                f"U{305 + n}.EN R{364 + n}.1"), domain="3V3",
+            source=f"5 V aux {n} enable, expander #3's "
+                   f"{_AUX5V_EN_BITS[n - 1]}. Active high, and R{364 + n} "
+                   f"holds it down: the switch is OFF from reset and stays "
+                   f"off through any window where nothing drives the "
+                   f"expander (D14)"),
+        Net(f"AUX5V_{n}_FAULT", _p(f"U304.{_AUX5V_FAULT_BITS[n - 1]} "
+                                   f"U{305 + n}.FAULT R{368 + n}.1"),
+            domain="3V3",
+            source=f"5 V aux {n} fault flag, read on expander #3's "
+                   f"{_AUX5V_FAULT_BITS[n - 1]}: LOW means over-current, "
+                   f"over-temperature or reverse voltage on that channel, "
+                   f"after the part's 5-10 ms deglitch. Pulled up by "
+                   f"R{368 + n}"),
+        Net(f"AUX5V_{n}_ILIM", _p(f"U{305 + n}.ILIM R{372 + n}.1"),
+            domain="3V3",
+            source=f"5 V aux {n}: the node R{372 + n} sets the current limit "
+                   f"on. ⛔ Never shorted or left open -- open is the part's "
+                   f"minimum limit and a short is its maximum"),
+    )
+
+
+_NETS_AUX = (
+    *(net for n in range(1, 5) for net in _aux12_nets(n)),
+    Net("DIAG3_CMD", _p("U304.GPA4 R358.1"), domain="3V3",
+        source="Expander #3's GPA4: U303's own diagnostics enable. It is "
+               "separate from U301/U302's DIAG_EN precisely so the three "
+               "devices can share CS2_RAW and FAULT2_DEV -- the firmware "
+               "raises one at a time"),
+    Net("DIAG3_EN_IN", _p("R358.2 U303.DIAG_EN"), domain="3V3",
+        source="Device side of R358"),
+    Net("CL3", _p("U303.CL R359.1"), domain="3V3",
+        source="U303's current-limit programming node, 0.8 V across R359"),
+    Net("MCP3_RESET", _p("U304.RESET R364.1"), domain="3V3",
+        source="Expander #3's RESET, held high by R364 on this board. ⚠️ It is "
+               "NOT the MCP_RESET the two input expanders share on LOGIC: "
+               "tying them would spend a contact of the stack on a line "
+               "nothing drives. The consequence is recorded in spec §6 -- an "
+               "S3 restart resets neither, and every expander keeps driving "
+               "what it last drove until firmware writes it"),
+    # ── the 5 V aux supply ──────────────────────────────────────────────────
+    Net("V5AUX",
+        _p("L301.2 U305.BIAS R377.1 R379.2 C317.1")
+        + _p(" ".join(f"C{317 + i}.1" for i in range(1, 9)))
+        + _p(" ".join(f"U{305 + n}.IN C{325 + n}.1" for n in range(1, 5))),
+        domain="5V",
+        source="The 5 V AUX rail: U305's output, 4.86-5.17 V, feeding the "
+               "four load switches and nothing else. ⛔ Not the logic's 5 V "
+               "(V5, the Cincon's isolated output on POWER): a shorted aux "
+               "wire must not be able to brown out the S3, which is the whole "
+               f"reason this buck exists (spec §8.4). U305's BIAS pin is tied "
+               f"here -- {_DS_LM736} p.31, 'TI recommends tying to VOUT when "
+               f"3.3 V ≤ VOUT ≤ 18 V… to improve efficiency'"),
+    Net("V5AUX_SW", _p("U305.SW L301.1 C314.2"), domain="12V",
+        source="U305's switch node, between the half-bridge and the inductor: "
+               "it swings the full 0-12 V at 500 kHz and carries the "
+               "bootstrap capacitor's return leg. ⚠️ The loop U305, L301 and "
+               "the input capacitors make is the noisiest copper on OUTPUTS; "
+               "keep it small and away from CS2_RAW"),
+    Net("V5AUX_BOOT", _p("U305.CBOOT C314.1"), domain="12V",
+        source="The bootstrap node above V5AUX_SW: C314 supplies the "
+               "high-side gate driver. 5 V above SW at most, and SW reaches "
+               "V12, so it is 12 V-class copper"),
+    Net("V5AUX_VCC", _p("U305.VCC C315.1"), domain="5V",
+        source=f"U305's internal bias LDO output, decoupled by C315. "
+               f"{_DS_LM736} p.3: 'TI does not recommend loading this pin by "
+               f"external circuitry'; its absolute maximum is 5 V (p.5)"),
+    Net("V5AUX_SS", _p("U305.SS/TRK C316.1"), domain="3V3",
+        source="U305's soft-start node: C316 charges off the pin's 2 µA and "
+               "sets the ramp. ⛔ Never shorted to ground (p.3)"),
+    Net("V5AUX_FB", _p("U305.FB R377.2 R378.1"), domain="3V3",
+        source="U305's feedback node, the midpoint of R377/R378 at 1.006 V "
+               "typical. ⛔ 'Never short this pin to ground during operation' "
+               "(p.3)"),
+    Net("V5AUX_PG", _p("U305.PGOOD R379.1"), domain="5V",
+        source="U305's power-good flag behind its pull-up: HIGH when V5AUX is "
+               "in regulation. ⚠️ Nothing reads it -- it is a test point"),
+    *(net for n in range(1, 5) for net in _aux5v_nets(n)),
+)
+
 _NETS = (_NETS_84V + _NETS_RAILS + _NETS_12V + _NETS_BRAKE + _NETS_STACK
-         + _NETS_DISPLAY + _NETS_LOGIC + _NETS_CLASS_A)
+         + _NETS_DISPLAY + _NETS_LOGIC + _NETS_CLASS_A + _NETS_AUX)
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONNECTORS. One keyed, latched shell per harness bundle: ⛔ "colour is never
@@ -1758,14 +2174,17 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
 #: ⛔ No 16-way 3.81: the Kangnex header (C508942) has 2 in stock at JLC, so the
 #: inputs row is two 8-way terminals instead (J409, J410).
 #: A size no connector uses is REMOVED, so every code here is a code the design
-#: orders and the LCSC fixture records: 3.81 × 7 went with J404's move to the
-#: 5.08 row and 5.08 × 4 with J306's to the 3.81 one. (3.50, 8) is the 5 V row's
-#: and is the one entry ahead of its connector.
+#: orders and the LCSC fixture records: 5.08 × 4 went with J306's move to the
+#: 3.81 row. (3.81, 7) is BACK, for the 12 V aux terminal J313: an eight-way
+#: there would seat in J409 and J410, the two general-input terminals, which
+#: are 3.81 × 8 -- so the 12 V row and the inputs row share a pitch and never a
+#: size (tests/test_rows.py).
 _TERMINALS = {
     (3.50, 8): ("C441263", "C441113"),
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
     (3.81, 4): ("C160127", "C157472"), (3.81, 5): ("C50223", "C50222"),
-    (3.81, 6): ("C160126", "C157470"), (3.81, 8): ("C189319", "C62102"),
+    (3.81, 6): ("C160126", "C157470"), (3.81, 7): ("C489994", "C489981"),
+    (3.81, 8): ("C189319", "C62102"),
     (3.81, 9): ("C489995", "C384932"),
     (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
     (5.08, 5): ("C49240", "C49241"), (5.08, 9): ("C508920", "C508910"),
@@ -1961,6 +2380,35 @@ _CONNECTORS = (
         _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
     )),
+    _tb("J313", "OUTPUTS", "12 V aux 1-4 (IO-1): each output with a return "
+        "beside it, in the 12 V row", tuple(
+            cp for n in range(1, 5)
+            for cp in ((_cp(str(2 * n - 1), f"AUX12V_{n}",
+                            f"aux {n} +, 1 A, current-limited at 1.12-1.55 A"),)
+                       + ((_cp(str(2 * n), "GND",
+                               f"return shared by aux {n} and aux {n + 1}"),)
+                          if n < 4 else ()))),
+        note="SEVEN ways, not eight: 3.81 × 8 is what the two general-input "
+             "terminals are (J409, J410), and a plug of this row must not "
+             "seat in one of theirs. So the fourth output's return is the "
+             "ground it already shares with the third, and every ground "
+             "contact carries at most two outputs -- 2 A against the "
+             "family's 8 A. A size nothing else in the 3.81 family has"),
+    replace(
+        _tb("J314", "OUTPUTS", "5 V aux 1-4 (IO-1): each output with its own "
+            "return, in the 5 V row UNDER the board", tuple(
+                cp for n in range(1, 5)
+                for cp in (_cp(str(2 * n - 1), f"AUX5V_{n}",
+                               f"aux {n} +, 1 A, limited at 1.19-1.39 A"),
+                           _cp(str(2 * n), "GND", f"aux {n} return"))),
+            pitch=3.50,
+            note="3.50 mm is the 5 V row's pitch and nothing else's (IO-6): "
+                 "no 12 V plug can seat here, which is what keeps 12 V out of "
+                 "a 5 V device. It hangs under OUTPUTS because the 5 V row is "
+                 "the underside of that board (IO-7), so its plugs come off "
+                 "the same face of the box as every other row's, one row "
+                 "below the 12 V terminals"),
+        side="bottom"),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: V12 for the "
               "drivers, V5 and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
               footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54), leaves_box=False,
@@ -2091,6 +2539,9 @@ _FAB_BY_MPN = {
     "SMF18A": ("C19077512", "SMF18A (hongjiacheng)", "preferred Extended",
                "200 W, V_RWM 18 V, V_BR 20.0-22.1 V, V_C 29.2 V @ 6.8 A"),
     "SMS05T1G": ("C233428", "onsemi SMS05T1G", "Extended", "the part itself"),
+    "SMF6.0A": ("C19077499", "SMF6.0A (R+O)", "preferred Extended",
+                "200 W, V_RWM 6.0 V, V_BR 6.67-7.37 V, V_C 10.3 V @ 19.4 A; "
+                "the unidirectional 'A' grade, never the bidirectional 'CA'"),
     "SS14": ("C2480", "MDD SS14", "Basic", "40 V / 1 A Schottky"),
     "M7": ("C95872", "MDD M7", "Basic", "1000 V / 1 A, 30 A surge"),
     "BZT52B10": ("C22395568", "BZT52B10 (R+O)", "preferred Extended",
@@ -2114,6 +2565,19 @@ _FAB_BY_MPN = {
                      "TLV76701DGNR C3752401 needs an FB divider"),
     "TPS4H160BQPWPRQ1": ("C471053", "TI TPS4H160BQPWPRQ1", "Extended",
                          "version B; never the A version, C485918"),
+    "LM73605RNPR": ("C473342", "TI LM73605RNPR", "Extended",
+                    "the two Basic bucks carry 3 A (TPS5430, and "
+                    "non-synchronous) and 2 A (XL1509), both under the 5 A "
+                    "this rail is sized for; LM73606 C544826 is the 6 A "
+                    "pin-to-pin part if more headroom is ever wanted"),
+    "TPS2553DBVR": ("C55266", "TI TPS2553DBVR", "Extended",
+                    "no Basic power-distribution switch exists. The DBVR of "
+                    "the TPS2553 -- active-high EN, constant-current limit; "
+                    "⛔ never the TPS2552 (inverted enable) or a '-1' "
+                    "(latch-off) part"),
+    "IHLP2525CZER4R7M01": ("C553961", "Vishay IHLP2525CZER4R7M01", "Extended",
+                           "4.7 µH, I_sat 10 A, shielded; no Basic inductor "
+                           "meets TI's saturation figure at this size"),
     "ESP32-S3-WROOM-1U-N8": ("C2980297", "Espressif ESP32-S3-WROOM-1U-N8", "Extended",
                              "-40…+85 °C; never the 65 °C N8R8 / N16R8"),
     "CGA9N1C0G2J683JT0Y0S": ("C2175506", "TDK CGA9N1C0G2J683JT0Y0S", "Extended",

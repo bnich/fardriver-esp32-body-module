@@ -421,25 +421,37 @@ def test_nothing_but_the_open_drain_fault_joins_a_tps_pin_to_the_mcu(d, w):
                 assert pin == "FAULT", f"{u.refdes}.{pin} meets U401 directly"
 
 
-#: The one TPS4H160B channel no firmware commands: U301 OUT1 is AUX12, a
-#: current-limited FEED held on from V3P3.  Every other channel, the STOP lamp
-#: included since IO-8, is driven from a GPIO.  (device, input) -> source net.
-HARDWARE_INPUTS = {("U301", "IN1"): "V3P3"}
+def _firmware_commands(d, reach):
+    """Firmware can command this input: the walk back from it reaches a native
+    GPIO, or a bit of an I²C expander the S3 writes.  ⚠️ Both count since
+    IO-1 -- the twelve 12 V channels are more than the native pins left, so the
+    aux four and AUX12 are commanded on expander #3."""
+    parts = {p.refdes for p in d.parts}
+    for x in reach:
+        if d.net(x).gpio:
+            return True
+        if any(d.part(r).mpn.startswith("MCP23017")
+               for r, _ in d.net(x).pins if r in parts):
+            return True
+    return False
 
 
 def test_every_used_tps_input_is_reachable_from_the_mcu_and_unused_ones_are_off(d, w):
+    """Every channel that leaves the box is commanded, and every channel that
+    does not is held off.  ⛔ No TPS4H160B input is a HARDWARE input any more:
+    AUX12 (U301 IN1) was held high from V3P3 until IO-1 made it an ordinary
+    output on expander #3, so horn, fan and buzzer now have no + until
+    firmware asks for it."""
     for u in _tps(d):
         for n in "1234":
             out, inp = w.net(u.refdes, f"OUT{n}"), w.net(u.refdes, f"IN{n}")
-            src = HARDWARE_INPUTS.get((u.refdes, f"IN{n}"))
             reach = w.walk(inp, {"R"})
-            if src:
-                assert src in reach, f"{u.refdes}.IN{n} is not driven from {src}"
-                assert not any(d.net(x).gpio for x in reach), (
-                    f"{u.refdes}.IN{n} is a hardware input, yet a GPIO reaches it")
-            elif w.connectors_on(out):
-                assert any(d.net(x).gpio for x in reach), (
-                    f"{u.refdes}.IN{n} drives a lamp but no GPIO reaches it")
+            if w.connectors_on(out):
+                assert _firmware_commands(d, reach), (
+                    f"{u.refdes}.IN{n} drives a wire out of the box but "
+                    f"nothing the firmware writes reaches it")
+                assert "V3P3" not in reach and "V12" not in reach, (
+                    f"{u.refdes}.IN{n} is held on by a rail, not commanded")
             else:
                 assert inp == "GND", f"{u.refdes}.IN{n} is unused yet not held off"
 
@@ -729,6 +741,10 @@ STACK_CONTRACT = {
     # pair, the boost command, ACC+ divided down (LOW with the key on means the
     # controller is not alive) and the parked display's CAN pair
     "UART1_TX", "UART1_RX", "BOOST_CMD", "ACC_SENSE", "CANH", "CANL",
+    # the I²C bus, DOWN to expander #3, which commands the aux block on
+    # OUTPUTS (IO-1). One bus for all three expanders: no native pin is free
+    # for a second.
+    "SDA", "SCL",
     # ⛔ NOT the brake levers: J306 is in the INPUTS row on LOGIC (IO-6), so
     # IN05_BRAKE_L and IN06_BRAKE_R reach their pins without a crossing.
     # ⛔ And NOT V3P3, or any other rail: a rail lands on itself when a half is
@@ -843,6 +859,12 @@ def test_the_telltales_follow_the_lamp_feeds_with_no_firmware(d, w):
 # back -- each of a kind that every label-reading check passes -- and must
 # fail. Fixtures are built with model.Design's own mutators.
 
+def without_parts(design, *refdes):
+    for ref in refdes:
+        design = design.without_part(ref)
+    return design
+
+
 def move_pin(design, refdes, pin, to_net):
     lifted = design.without_pin(refdes, pin)
     return lifted.replace_net(to_net, pins=lifted.net(to_net).pins + ((refdes, pin),))
@@ -942,9 +964,14 @@ DEFECTS = [
     ("CS wired straight to the ADC pin",
      lambda d: move_pin(d, "U401", "IO4", "CS1_RAW"),
      test_nothing_but_the_open_drain_fault_joins_a_tps_pin_to_the_mcu, {}),
+    # DERIVED, not typed: every capacitor OUTPUTS holds between V12 and
+    # ground. A typed list went stale the moment the aux block added more
+    # (a third driver's pair and the 5 V buck's input caps), and the mutation
+    # passed while the requirement it exists to prove sat unexercised.
     ("a driver chip with no decoupling",
-     lambda d: d.without_part("C303").without_part("C304")
-     .without_part("C305").without_part("C306"),
+     lambda d: without_parts(d, *(c.refdes for c in
+                                  Walker(d).between("V12", "GND", {"C"})
+                                  if c.board == "OUTPUTS")),
      test_every_ic_is_decoupled_on_every_rail_it_touches, {}),
     ("a flyback diode fitted backwards",
      lambda d: swap_pins(d, "D314", "A", "K"),

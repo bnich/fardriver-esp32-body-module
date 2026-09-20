@@ -184,6 +184,9 @@ DATASHEET_V_MAX: tuple[tuple[str, float, str], ...] = (
     ("BZT52B15", 15.0, "V_Z nominal"),
     ("SS14", 40.0, "V_RRM"),
     ("TPS4H160", 40.0, "TI SLVSCV8E, operating V_VS; abs max 48 V"),
+    ("SMF6.0A", 6.0, "SMF series rev 2.2: the part number carries V_RWM"),
+    ("LM73605", 36.0, "TI SNVSAH5A, recommended operating PVIN; abs max 42 V"),
+    ("TPS2553", 6.5, "TI SLVS841F, recommended operating V_IN; abs max 7 V"),
 )
 
 
@@ -624,6 +627,12 @@ SUPPLY_PINS = {
     "MCP23017": {"VDD": {"3V3"}},                       # 1.8-5.5 V, but its I/O meets 3.3 V pins
     "TPS4H160": {"VS": {"12V"}},                        # 4-40 V: the 12 V rail ONLY, never 84 V
     "TLV767": {"IN": {"5V", "12V"}},                    # 2.5-16 V in (12 V is legal; its heat is board_fit's problem)
+    "LM73605": {"PVIN": {"12V"}},                       # 3.5-36 V in, 42 V abs: the 12 V rail, never 84 V
+    # 2.5-6.5 V in, 7 V abs. ⛔ `OUT` is deliberately absent: it would make
+    # VR-CLAMP judge the 5 V clamp against the switch's 7 V output, which IO-12
+    # decided NOT to protect (no TVS standing off 5.17 V clamps under 7 V).
+    # The residual risk is recorded in the design record, not checked here.
+    "TPS2553": {"IN": {"5V"}},
     "TLV803S": {"VDD": {"3V3"}},                        # its 2.93 V threshold watches the 3.3 V rail
     "CN150B110": {"+Vin": {"84V"}},
     "EC7BW": {"+Vin": {"84V"}},
@@ -921,6 +930,23 @@ def d14_gate_bias(d: Design) -> list[str]:
                 f"from its gate net {gate[0]!r} to its SOURCE net {source[0]!r}. "
                 f"OFF means V_GS = 0; a resistor to any other rail biases it ON "
                 f"or nowhere.")
+    # An IC's ENABLE is a gate by another name: high-Z on it is a load whose
+    # state nobody chose. The rule checked FET gates only until the aux block
+    # put four load switches on expander bits that come out of reset as
+    # inputs (IO-1) -- exactly the window D14 exists for. A pin tied straight
+    # to a rail is a deliberate always-on (U405's EN on V5, U305's on V12) and
+    # is not a floating enable, so a stiff net is skipped.
+    for p in ix.parts.values():
+        if p.kind != "IC" or p.dnp or "EN" not in p.pins:
+            continue
+        for net in ix.nets_of_pin(p.refdes, "EN"):
+            if ix.is_stiff(net):
+                continue
+            if not any(_joins(ix, r, [net], ["GND"]) for r in ix.parts.values()
+                       if r.kind == "R" and not r.dnp):
+                errs.append(f"D14: {p.refdes} ({p.mpn}) EN on {net!r} has no "
+                            f"fitted resistor to GND. Every enable biases OFF "
+                            f"from reset (D14).")
     return errs
 
 

@@ -46,6 +46,22 @@
    ]
   ]
  },
+ "C12891": {
+  "footprint": "c1206",
+  "manufacturer": "Samsung Electro-Mechanics",
+  "mpn": "CL31A226KAHNNNE",
+  "package": "1206",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ]
+  ]
+ },
  "C132016": {
   "footprint": "sot-23-3_l2_9-w1_3-p1_90-ls2_4-br",
   "manufacturer": "TI",
@@ -87,6 +103,22 @@
   "manufacturer": "Samsung Electro-Mechanics",
   "mpn": "CL31A106KBHNNNE",
   "package": "1206",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ]
+  ]
+ },
+ "C13967": {
+  "footprint": "c0805",
+  "manufacturer": "Samsung Electro-Mechanics",
+  "mpn": "CL21B474KBFNNNE",
+  "package": "0805",
   "symbol_pins": [
    [
     "1",
@@ -263,6 +295,22 @@
   "package": "D5.2xL20mm",
   "symbol_pins": null
  },
+ "C1729": {
+  "footprint": "c0805",
+  "manufacturer": "Samsung Electro-Mechanics",
+  "mpn": "CL21B223KBANNNC",
+  "package": "0805",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ]
+  ]
+ },
  "C17408": {
   "footprint": "r0805",
   "manufacturer": "UNI-ROYAL",
@@ -299,6 +347,22 @@
   "footprint": "r0805",
   "manufacturer": "UNI-ROYAL",
   "mpn": "0805W8F1200T5E",
+  "package": "0805",
+  "symbol_pins": [
+   [
+    "2",
+    "2"
+   ],
+   [
+    "1",
+    "1"
+   ]
+  ]
+ },
+ "C17444": {
+  "footprint": "r0805",
+  "manufacturer": "UNI-ROYAL",
+  "mpn": "0805W8F1202T5E",
   "package": "0805",
   "symbol_pins": [
    [
@@ -379,6 +443,22 @@
   "footprint": "r0805",
   "manufacturer": "UNI-ROYAL",
   "mpn": "0805W8F2001T5E",
+  "package": "0805",
+  "symbol_pins": [
+   [
+    "2",
+    "2"
+   ],
+   [
+    "1",
+    "1"
+   ]
+  ]
+ },
+ "C17661": {
+  "footprint": "r0805",
+  "manufacturer": "UNI-ROYAL",
+  "mpn": "0805W8F3001T5E",
   "package": "0805",
   "symbol_pins": [
    [
@@ -492,6 +572,22 @@
    [
     "8",
     "8"
+   ]
+  ]
+ },
+ "C19077499": {
+  "footprint": "sod-123fl_l2_7-w1_8-ls3_8-rd",
+  "manufacturer": "R+O",
+  "mpn": "SMF6.0A",
+  "package": "SOD-123FL",
+  "symbol_pins": [
+   [
+    "1",
+    "K"
+   ],
+   [
+    "2",
+    "A"
    ]
   ]
  },
@@ -989,6 +1085,22 @@
    ]
   ]
  },
+ "C4310": {
+  "footprint": "r0805",
+  "manufacturer": "UNI-ROYAL",
+  "mpn": "0805W8F1501T5E",
+  "package": "0805",
+  "symbol_pins": [
+   [
+    "2",
+    "2"
+   ],
+   [
+    "1",
+    "1"
+   ]
+  ]
+ },
  "C4328": {
   "footprint": "r0805",
   "manufacturer": "UNI-ROYAL",
@@ -1247,6 +1359,181 @@
    ]
   ]
  },
+ "C473342": {
+  "footprint": "wqfn-30_l6_0-w4_0-p0_50-bl-ep",
+  "manufacturer": "TI",
+  "mpn": "LM73605RNPR",
+  "package": "WQFN-30-EP(4x6)",
+  "symbol_pins": [
+   [
+    "1",
+    "SW"
+   ],
+   [
+    "2",
+    "SW"
+   ],
+   [
+    "3",
+    "SW"
+   ],
+   [
+    "4",
+    "SW"
+   ],
+   [
+    "5",
+    "SW"
+   ],
+   [
+    "6",
+    "CBOOT"
+   ],
+   [
+    "7",
+    "VCC"
+   ],
+   [
+    "8",
+    "BIAS"
+   ],
+   [
+    "9",
+    "RT"
+   ],
+   [
+    "10",
+    "SS/TRK"
+   ],
+   [
+    "11",
+    "FB"
+   ],
+   [
+    "12",
+    "NC"
+   ],
+   [
+    "13",
+    "NC"
+   ],
+   [
+    "14",
+    "NC"
+   ],
+   [
+    "15",
+    "NC"
+   ],
+   [
+    "16",
+    "PGOOD"
+   ],
+   [
+    "17",
+    "SYNC/MODE"
+   ],
+   [
+    "18",
+    "EN"
+   ],
+   [
+    "19",
+    "AGND"
+   ],
+   [
+    "20",
+    "PVIN"
+   ],
+   [
+    "21",
+    "PVIN"
+   ],
+   [
+    "22",
+    "PVIN"
+   ],
+   [
+    "23",
+    "PGND"
+   ],
+   [
+    "24",
+    "PGND"
+   ],
+   [
+    "25",
+    "PGND"
+   ],
+   [
+    "26",
+    "PGND"
+   ],
+   [
+    "27",
+    "NC"
+   ],
+   [
+    "28",
+    "NC"
+   ],
+   [
+    "29",
+    "NC"
+   ],
+   [
+    "30",
+    "NC"
+   ],
+   [
+    "31",
+    "EP"
+   ]
+  ]
+ },
+ "C489981": {
+  "footprint": null,
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGKM-3.81-07P-14-00A",
+  "package": "P=3.81mm",
+  "symbol_pins": null
+ },
+ "C489994": {
+  "footprint": "conn-th_wj15edgrm-3_81-7p",
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGRM-3.81-07P-14-00A",
+  "package": "Through Hole,Right Angle,P=3.81mm",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ],
+   [
+    "3",
+    "3"
+   ],
+   [
+    "4",
+    "4"
+   ],
+   [
+    "5",
+    "5"
+   ],
+   [
+    "6",
+    "6"
+   ],
+   [
+    "7",
+    "7"
+   ]
+  ]
+ },
  "C489995": {
   "footprint": "conn-th_wj15edgrm-3_81-9p",
   "manufacturer": "KANGNEX",
@@ -1476,6 +1763,54 @@
   "manufacturer": "FOJAN",
   "mpn": "FRQ1206F4993TS",
   "package": "1206",
+  "symbol_pins": [
+   [
+    "2",
+    "2"
+   ],
+   [
+    "1",
+    "1"
+   ]
+  ]
+ },
+ "C55266": {
+  "footprint": "sot-23-6_l2_9-w1_6-p0_95-ls2_8-br",
+  "manufacturer": "TI",
+  "mpn": "TPS2553DBVR",
+  "package": "SOT-23-6",
+  "symbol_pins": [
+   [
+    "1",
+    "IN"
+   ],
+   [
+    "2",
+    "GND"
+   ],
+   [
+    "3",
+    "EN"
+   ],
+   [
+    "4",
+    "/FAULT"
+   ],
+   [
+    "5",
+    "ILIM"
+   ],
+   [
+    "6",
+    "OUT"
+   ]
+  ]
+ },
+ "C553961": {
+  "footprint": "ind-smd_l6_9-w6_5",
+  "manufacturer": "VISHAY",
+  "mpn": "IHLP2525CZER4R7M01",
+  "package": "SMD,6.9x6.5mm",
   "symbol_pins": [
    [
     "2",

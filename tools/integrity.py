@@ -31,6 +31,11 @@ NC_ALLOWED = {
     "EC7BW": {"Trim", "Remote"},     # Cincon: remote is positive logic, open = ON
     "TPS4H160": {"NC"},              # package no-connect pads
     "TLV767": {"NC"},
+    # TI SNVSAH5A p.3: RT open IS a setting -- "If floating, the default
+    # switching frequency is 500 kHz", which is the frequency the design is
+    # sized at, and "Do not short to ground". Its NC pads are not here: they
+    # land on GND, because the same page says to connect them to ground copper.
+    "LM73605": {"RT"},
     "SN65HVD230": {"Vref"},          # V_CC/2 reference output, unused
     "ESP32-S3-WROOM-1": {"IO*"},     # unused GPIO pads -- never EN, 3V3, GND, EPAD
     "MCP23017": {"GP*", "INTA", "INTB", "NC11", "NC14"},

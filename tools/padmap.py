@@ -78,6 +78,24 @@ _BY_MPN = {
                      "6": "GND", "7": "NC", "8": "IN", "9": "PAD"},
     # IXYS DS99913D p.3, TO-263: 1 gate, 2 drain (and the tab), 3 source
     "IXTA26P20P-TRL": {"1": "G", "2": "D", "3": "S"},
+    # TI SNVSAH5A p.3-4, RNP (WQFN-30): SW 1-5, CBOOT 6, VCC 7, BIAS 8, RT 9,
+    # SS/TRK 10, FB 11, NC 12-15, PGOOD 16, SYNC/MODE 17, EN 18, AGND 19,
+    # PVIN 20-22, PGND 23-26, NC 27-30, DAP = the exposed pad (our PAD).
+    "LM73605RNPR": {
+        **{str(i): "SW" for i in range(1, 6)},
+        "6": "CBOOT", "7": "VCC", "8": "BIAS", "9": "RT", "10": "SS/TRK",
+        "11": "FB",
+        **{str(i): "NC" for i in (12, 13, 14, 15, 27, 28, 29, 30)},
+        "16": "PGOOD", "17": "SYNC/MODE", "18": "EN", "19": "AGND",
+        **{str(i): "PVIN" for i in (20, 21, 22)},
+        **{str(i): "PGND" for i in (23, 24, 25, 26)},
+        "31": "PAD",
+    },
+    # TI SLVS841F p.5, DBV (SOT-23-6): IN 1, GND 2, EN 3, FAULT 4, ILIM 5,
+    # OUT 6. ⚠️ EN is pad 3 on the TPS2553 and on the TPS2552 alike; what
+    # differs between them is its POLARITY, which no pad map can catch.
+    "TPS2553DBVR": {"1": "IN", "2": "GND", "3": "EN", "4": "FAULT",
+                    "5": "ILIM", "6": "OUT"},
 }
 def pins_of(x):
     """The pins that must land on a pad."""
@@ -136,8 +154,10 @@ def library_pins(v2_symbol_text):
 
 #: Library names for a pin we name otherwise.  GND -> EPAD/PAD holds only
 #: because the netlist lands every exposed pad on GND (tests check that).
+#: An active-low pin the library draws with a leading slash and the netlist
+#: names plainly: the TPS2553's open-drain fault flag.
 _LIB_ALIASES = {"EP": {"PAD", "EPAD"}, "GND": {"PAD", "EPAD"}, "C": {"K"},
-                "RXD0": {"IO44"}, "TXD0": {"IO43"}}
+                "RXD0": {"IO44"}, "TXD0": {"IO43"}, "/FAULT": {"FAULT"}}
 
 
 def names_agree(ours, lib_name, x):
