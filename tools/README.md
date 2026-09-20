@@ -94,6 +94,15 @@ out from the netlist's own heights:
 
 `stack_problems(design)` returns the failures in the shape a rule returns.
 
+`cavity_required(design)` states the cavity the envelope asks the enclosure for — along, across
+and the derived height — and `cavity_overruns(design)` names every axis the cavity does not hold.
+`cavity_problems(design)` turns the two **plan** axes into failures, and only once
+`envelope_is_binding()` — the cavity measured **and** the enclosure chosen. ⚠️ While M18 is an
+estimate that list is empty **because of the gate, not because the design fits**: today it is
+33.0 mm too long and 24.65 mm too wide for the estimate, which the report states as a finding. The
+height is not in that list: `stack_height` already fails on it through the same gate. Both
+`board_fit` and `rules` (`HT-CAVITY`) relay it, so the two gates cannot give different answers.
+
 ### `board_fit.py`
 
 ```bash
@@ -112,7 +121,10 @@ is no longer a budget of "every header's plug against the nearest wall": every h
 apart, against the length of the board they stand on, with a terminal under a board counted in its
 own row and not in the one above it. The room a mated plug and its wire's bend need is no longer a
 budget either: it is a **term of the cavity this design requires**, which the report states on its
-second line against M18's estimate and names the excess.
+second line against M18's estimate and names the excess. ⚠️ **That requirement is checked, not just
+printed:** the day the cavity is measured and the enclosure chosen, a plan axis the box cannot hold
+is a **FAIL** (`board_params.cavity_problems`), and the report's wording changes with the flag
+instead of still calling a measured box an estimate.
 
 One verdict: exit 1 when a budget fails, 2 when the stack is over the estimated envelope. A body with
 no footprint that is a connector, or 2 mm tall or more, fails the run: the budget cannot see it. The

@@ -105,6 +105,10 @@ HIGH_SIDE_VOLTS = 12.0
 #: outward-facing calls are used, never the shape of its gap records.
 _stack_problems = getattr(_bp, "stack_problems", None)
 _stack_height = getattr(_bp, "stack_height", None)
+#: The plan axes of the cavity the design requires. Empty while M18 is an
+#: estimate; a failure the moment the cavity is measured and the enclosure is
+#: chosen. Relayed here so the rules gate and board_fit give the same answer.
+_cavity_problems = getattr(_bp, "cavity_problems", None)
 #: An unconfirmed height this close to setting its gap is reported, not trusted.
 UNCONFIRMED_MARGIN_MM = 2.0
 
@@ -1811,7 +1815,12 @@ def heights(d: Design) -> list[str]:
     """Parts AND connectors, top side and bottom. board_params derives each
     gap from the tallest thing standing in it, the deepest thing hanging into
     it, solder tails, the brick's floor seat and the mated inter-board pairs -- so a
-    tall connector, a 40 mm `side="bottom"` part and a NaN all land here."""
+    tall connector, a 40 mm `side="bottom"` part and a NaN all land here.
+
+    The cavity the envelope REQUIRES is relayed too, on the plan axes: while
+    M18 is an estimate `cavity_problems` is empty, and once the cavity is
+    measured and the enclosure chosen a design that will not go in the box
+    fails this gate exactly as an over-tall stack does."""
     errs = [f"HT-NUM: {ref} ({what}) has height {h!r}. An unknown height is an "
             f"unchecked height."
             for ref, what, _b, _s, h, _c, _i in _bodies(d) if not _is_height(h)]
@@ -1821,6 +1830,8 @@ def heights(d: Design) -> list[str]:
                     "enclosure.")
         return errs
     errs.extend(f"HT-STACK: {p}" for p in _stack_problems(d))
+    if _cavity_problems is not None:
+        errs.extend(f"HT-CAVITY: {p}" for p in _cavity_problems(d))
     return errs
 
 

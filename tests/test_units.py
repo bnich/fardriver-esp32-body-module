@@ -37,9 +37,16 @@ def test_one_inch_is_one_thousand_pcb_units():
 
 
 def test_our_board_envelope_in_pcb_units():
-    # 42 x 186 mm, the figures the outline emitter will use
-    assert mm_to_pcb(42.0) == pytest.approx(1653.543, abs=0.001)
-    assert mm_to_pcb(186.0) == pytest.approx(7322.835, abs=0.001)
+    # The figures the outline emitter cuts: board_params' 48 x 219 mm envelope
+    # (tests/test_pcb.py is what holds the emitter to BOARD_W / BOARD_L). The
+    # expected units are hand-computed at 1 unit = 1 mil -- 48 / 0.0254 =
+    # 1889.764, 219 / 0.0254 = 8622.047 -- so they pin the CONVERSION rather
+    # than restate it. The assertion above them is what keeps this comment
+    # true: it read "42 x 186" for a while after the envelope moved.
+    from tools.board_params import BOARD_L, BOARD_W
+    assert (BOARD_W, BOARD_L) == (48.0, 219.0)
+    assert mm_to_pcb(48.0) == pytest.approx(1889.764, abs=0.001)
+    assert mm_to_pcb(219.0) == pytest.approx(8622.047, abs=0.001)
 
 
 def test_jlc_rule_numbers_read_as_round_mm_in_mil():
@@ -49,12 +56,12 @@ def test_jlc_rule_numbers_read_as_round_mm_in_mil():
 
 
 # --- round trips ------------------------------------------------------------
-@pytest.mark.parametrize("mm", [0.0, 0.1, 1.6, 25.4, 42.0, 186.0, 200.0])
+@pytest.mark.parametrize("mm", [0.0, 0.1, 1.6, 25.4, 48.0, 219.0, 200.0])
 def test_sch_round_trip(mm):
     assert sch_to_mm(mm_to_sch(mm)) == pytest.approx(mm, abs=1e-6)
 
 
-@pytest.mark.parametrize("mm", [0.0, 0.1, 1.6, 25.4, 42.0, 186.0, 200.0])
+@pytest.mark.parametrize("mm", [0.0, 0.1, 1.6, 25.4, 48.0, 219.0, 200.0])
 def test_pcb_round_trip(mm):
     assert pcb_to_mm(mm_to_pcb(mm)) == pytest.approx(mm, abs=1e-6)
 

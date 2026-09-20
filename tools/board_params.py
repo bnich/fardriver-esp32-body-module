@@ -30,6 +30,10 @@ against a guess.
   * The enclosure is an all-metal CNC box, but its model does not exist yet:
     wall, floor and lid are ALLOWANCES that the model's thicknesses replace.
 When either lands: edit the block, flip the flag, run `python3 -m tools.board_fit`.
+⚠️ Flipping both flags ARMS the comparison: `cavity_problems` then fails the
+design on any plan axis the measured cavity cannot hold, and `stack_height`
+fails it on the height, so the report stops being a paragraph and becomes a
+verdict. That is the point of the flags -- see `envelope_is_binding`.
 """
 import math
 import re
@@ -99,8 +103,9 @@ END_ALLOWANCE = 4.0
 #:   arithmetic, not a heuristic. POWER top is the longest at 197.04 mm, so
 #:   197.04 / 0.90 = 218.93 -> 219.0. No width buys length back. The 21.96 mm
 #:   of margin is not a round number either: 14.0 mm of it is spoken for by
-#:   the four M3 corners the row may not run into (2 x 2 x M3_INSET_MM at each
-#:   end), which the row check does not model.
+#:   the four M3 corners the row may not run into -- at each END of the row two
+#:   corners take 2 x M3_INSET_MM of length between them, so 2 x 2 x 3.5 =
+#:   14.0 mm in total -- which the row check does not model.
 #:
 #:   WIDTH is then the smallest at which every face's shelf pack fits 0.90 x
 #:   BOARD_L and every face's body density clears 0.90 x DENSITY_LIMIT. Density
@@ -108,8 +113,19 @@ END_ALLOWANCE = 4.0
 #:   and it clears 197.1 mm first at W = 47.8. Stepped up to 48.0 so the number
 #:   does not sit on the first 0.1 mm of a step in a heuristic's staircase.
 #:
+#: ⚠️ "SMALLEST" IS LEXICOGRAPHIC -- least LENGTH first, then least width -- and
+#: NOT least area. Over L in [219, 260] the minimum-AREA envelope is 39.0 x
+#: 239.0 = 9321 mm², against the 47.8 x 219 = 10468 mm² taken here: 20 mm of
+#: extra length buys 8.8 mm of width back. Length is the axis to protect. The
+#: cavity this design requires is already 33.0 mm LONGER than M18's estimate and
+#: 24.7 mm wider, so spending length to save width makes the harder of the two
+#: M18 problems worse, on the one axis nothing else can shorten (the row sets
+#: it). ⛔ Do not "optimise" this to the area minimum.
+#:
 #: ⛔ Re-run the search when a body or a terminal changes; do not nudge these to
-#: make a budget close. `python3 -m tools.board_fit` prints every margin.
+#: make a budget close. `python3 -m tools.board_fit` prints every margin, and
+#: `tests/test_board_params.py` holds the row, the pack and the density to the
+#: 10 % this search bought.
 BOARD_W = 48.0
 BOARD_L = 219.0
 BOARD_AREA = BOARD_W * BOARD_L
@@ -124,6 +140,10 @@ AVAIL_H = CAVITY_H - FLOOR - LID        # internal height the stack may use
 #: front of the connector face; along, the wall and the drop-in clearance at
 #: each end; tall, the DERIVED stack plus the floor and the lid
 #: (`cavity_required`, because the stack is a property of the design).
+#: ⚠️ These are CHECKED, not merely stated: `cavity_problems` fails the design on
+#: the plan axes the moment `envelope_is_binding()` -- so a measured cavity that
+#: cannot hold the design is a FAILURE, not a paragraph in a report.
+#: `tests/test_board_params.py` pins all three against drift.
 CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 74.65
 CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 233.0
 
@@ -596,6 +616,45 @@ def cavity_required(d: Design, order=STACK_ORDER) -> tuple[float, float, float]:
     """
     return (CAVITY_REQUIRED_L, CAVITY_REQUIRED_W,
             stack_height(d, order).total_mm + FLOOR + LID)
+
+
+def cavity_overruns(d: Design, order=STACK_ORDER) -> tuple[tuple[str, float, float], ...]:
+    """(axis, required, available) for every axis the cavity does not hold.
+
+    All three axes, whatever the flags say: this is arithmetic, and the report
+    states it while the cavity is an estimate as readily as when it is a
+    measurement. What the flags gate is whether it FAILS -- `cavity_problems`.
+    One home for the comparison, so the report and the gate cannot disagree
+    about whether the design fits.
+    """
+    req_l, req_w, req_h = cavity_required(d, order)
+    return tuple((axis, need, have) for axis, need, have in
+                 (("along", req_l, CAVITY_L),
+                  ("across", req_w, CAVITY_W),
+                  ("tall", req_h, CAVITY_H)) if need > have + 1e-9)
+
+
+def cavity_problems(d: Design, order=STACK_ORDER) -> list[str]:
+    """The PLAN axes against the cavity, once the envelope is a FACT.
+
+    Gated exactly as the height overrun is (`envelope_is_binding`): while M18
+    is an estimate a requirement that exceeds it is a finding for M18, and the
+    day the owner measures the cavity and flips the flag it is a design that
+    does not fit the box. Without the gate it would fail the design against a
+    guess; without the check it would pass a design 33 mm too long for a box
+    somebody has actually measured.
+
+    ⚠️ The TALL axis is deliberately not here. `stack_height` already fails on
+    it through the same gate (AVAIL_H is CAVITY_H less the floor and the lid),
+    and one overrun reported twice reads as two faults.
+    """
+    if not envelope_is_binding():
+        return []
+    return [f"cavity {axis}: the design requires {need:.2f} mm but the measured "
+            f"cavity gives {have:.2f} mm -- OVER by {need - have:.2f} mm. The "
+            f"board, its walls and its clearances do not go in the box that was "
+            f"measured (M18); only a smaller design or a bigger box closes this"
+            for axis, need, have in cavity_overruns(d, order) if axis != "tall"]
 
 
 def envelope_is_binding() -> bool:

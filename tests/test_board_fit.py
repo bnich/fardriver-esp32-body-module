@@ -94,7 +94,7 @@ def test_identical_unconfirmed_parts_share_a_line_but_every_refdes_is_named(caps
 
 
 def test_no_unconfirmed_section_when_every_height_is_confirmed(capsys):
-    assert "UNCONFIRMED HEIGHTS" not in run(capsys, good())[1]
+    assert "UNCONFIRMED" not in run(capsys, good())[1]
 
 
 def test_a_bottom_side_part_taller_than_the_gap_below_it_fails(capsys):
@@ -170,6 +170,68 @@ def test_an_unknown_height_fails_instead_of_vanishing(capsys):
     assert code == 1 and "height: L101" in out
 
 
+# --- the cavity the design REQUIRES (IO-14, M18) ---------------------------------------
+# ⚠️ Every one of these drives the fixture `measured_cavity`. The real
+# CAVITY_MEASURED is False and is not touched: what is proven here is that the
+# comparison exists and is gated, not what the bike measures.
+def test_a_measured_cavity_that_holds_the_design_passes(capsys, measured_cavity):
+    """The design requires 233.0 along x 74.65 across; a 240 x 80 box holds it,
+    so the report states the measurement and the tool passes."""
+    measured_cavity(240.0, 80.0)
+    code, out = run(capsys, good())
+    assert code == 0 and "✅ PASS" in out and "⛔" not in out
+    assert "MEASURED (M18) -- the cavity is 240 x 80 x 70 mm" in out
+    assert "the requirement fits inside it" in out
+    assert "NOT MEASURED" not in out and "finding for M18" not in out
+    assert bf.problems(good()) == []
+
+
+def test_a_measured_cavity_too_short_for_the_design_fails(capsys, measured_cavity):
+    """233.0 mm of board, wall and end clearance into a 230 mm box: 3 mm over."""
+    measured_cavity(230.0, 80.0)
+    code, out = run(capsys, good())
+    assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
+    (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
+    assert problem.startswith("cavity along:")                   # names the axis
+    assert "requires 233.00 mm" in problem and "gives 230.00 mm" in problem
+    assert "OVER by 3.00 mm" in problem                          # ...and by how much
+    assert "the requirement EXCEEDS it along by 3.0 mm" in out
+    assert "DOES NOT FIT the cavity that was measured" in out
+
+
+def test_a_measured_cavity_too_narrow_for_the_design_fails(capsys, measured_cavity):
+    """74.65 mm of board, walls, drop-in and plug room into a 70 mm box."""
+    measured_cavity(240.0, 70.0)
+    code, out = run(capsys, good())
+    assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
+    (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
+    assert problem.startswith("cavity across:")
+    assert "requires 74.65 mm" in problem and "gives 70.00 mm" in problem
+    assert "OVER by 4.65 mm" in problem
+    assert "the requirement EXCEEDS it across by 4.7 mm" in out
+
+
+def test_a_measured_cavity_short_on_both_axes_names_both(capsys, measured_cavity):
+    measured_cavity(230.0, 70.0)
+    axes = [p.split(":")[0] for p in bf.problems(good()) if p.startswith("cavity ")]
+    assert axes == ["cavity along", "cavity across"]
+    assert "EXCEEDS it along by 3.0 mm, across by 4.7 mm" in run(capsys, good())[1]
+
+
+def test_the_same_overrun_is_a_finding_while_the_cavity_is_an_estimate(capsys):
+    """The real flags, untouched: the requirement exceeds M18's estimate by
+    33.0 mm and 24.7 mm and the design still PASSES. This is the other half of
+    the three tests above -- what the flag changes is the gate, not the
+    arithmetic, and a tool that reported the same paragraph either way was the
+    defect."""
+    code, out = run(capsys, good())
+    assert code == 0 and "✅ PASS" in out
+    assert "⬜ NOT MEASURED -- M18's estimate is 200 x 50 x 70 mm" in out
+    assert "the requirement EXCEEDS it along by 33.0 mm, across by 24.7 mm" in out
+    assert "finding for M18, not a failure of the design" in out
+    assert not any(p.startswith("cavity ") for p in bf.problems(good()))
+
+
 # --- area: density -------------------------------------------------------------------
 def test_density_is_bodies_over_the_side_less_its_mounting_corners():
     rows = {(s.board, s.side): s for s in bf.area_budget(good())}
@@ -216,8 +278,10 @@ def test_a_body_longer_than_the_board_is_wide_opens_its_shelf_first():
     2026-09-20, orders them 26, 31, 6, 6: the 26 opens a 13 mm shelf, the 31 an
     11 mm shelf, the first terminal lands on THAT shelf and deepens it to 51,
     and the second opens another 51. 13 + 51 + 51 = 115 mm, 53 mm of it pure
-    fragmentation -- and on POWER top, three of whose bodies are 55.88, 55.88
-    and 58.42 mm terminals, that mechanism reported 319 mm for a 195 mm pack."""
+    fragmentation -- and on POWER top, whose three biggest bodies are the
+    55.88 mm terminals J101 and J405 and J202's 58.42 mm inter-board PWR-OUT
+    connector, that mechanism reported 254.93 mm on the 48 mm board for a
+    195.45 mm pack (319.32 at the 42 mm width the board used to be)."""
     rects = [("J1", 50.0, 5.0), ("J2", 50.0, 5.0),
              ("X1", 30.0, 10.0), ("X2", 25.0, 12.0)]
     assert bf.shelf_pack(rects, 40.0) == (pytest.approx(62.0), "")
