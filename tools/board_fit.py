@@ -109,9 +109,9 @@ def shelf_pack(rects, board_w: float | None = None):
     beside it have been placed elsewhere. That is one board-wide connector
     wasting a shelf the length of itself. POWER top's three biggest bodies are
     two 55.88 mm harness terminals (J101, J405) and J202, the 58.42 mm
-    inter-board PWR-OUT connector; on today's 39 mm board the old order reports
-    321.57 mm where these same bodies pack into 214.85 mm, and on the 48 mm
-    board this width replaced it reported 254.93 against 195.45.
+    inter-board PWR-OUT connector; on the 39 mm board of 2026-09-20 the old
+    order reported 321.57 mm where these same bodies pack into 214.85 mm, and
+    on the 48 mm board before that, 254.93 against 195.45.
     """
     width = bp.BOARD_W if board_w is None else board_w
     placed = []

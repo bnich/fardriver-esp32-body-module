@@ -62,19 +62,52 @@ def measured_cavity(monkeypatch):
 
 
 @pytest.fixture
-def wider_board(monkeypatch):
-    """`wider_board(mm)` -- the design on a board too wide for the measured
-    cavity, `CAVITY_REQUIRED_W` moved with it as the module's own arithmetic
-    would.
+def board_width(monkeypatch):
+    """`board_width(mm)` -- the design on a board of some other width, with
+    `BOARD_AREA` and `CAVITY_REQUIRED_W` moved with it as the module's own
+    arithmetic would.
 
-    ⛔ A MUTATION FIXTURE. It exists to prove the cavity gate bites: 39.0 mm
-    passes and a board a few millimetres wider must not, with the real flags
-    (cavity measured, enclosure still undecided) untouched.
+    ⛔ A MUTATION FIXTURE, and the only way to a width other than the 40.0 the
+    envelope search chose. It drives two different proofs: a board too WIDE for
+    the measured cavity must fail `cavity_problems`, and a board back on 39.0
+    must fail the pack-cliff clearance guard. The real flags (cavity measured,
+    enclosure still undecided) are left untouched in both.
     """
-    def widen(mm: float):
+    def set_width(mm: float):
         from tools import board_params as bp
         monkeypatch.setattr(bp, "BOARD_W", mm)
         monkeypatch.setattr(bp, "BOARD_AREA", mm * bp.BOARD_L)
         monkeypatch.setattr(bp, "CAVITY_REQUIRED_W",
                             mm + 2 * bp.WALL + bp.SIDE_CLEARANCE + bp.FACE_ROOM)
-    return widen
+    return set_width
+
+
+@pytest.fixture
+def wider_board(board_width):
+    """`wider_board(mm)` -- `board_width` under the name the cavity-gate tests
+    read by, where the mutation is always a board too wide for the box."""
+    return board_width
+
+
+@pytest.fixture
+def grown_y_caps():
+    """`grown_y_caps(mm)` -- the real netlist with `mm` added to the 18.5 mm
+    side of C203-C206, the four Y-caps whose paired courtyards ARE the pack
+    cliff (`board_params`' envelope search; 18.5 + 2 x COURTYARD = 19.50 across
+    each, and two of those to a shelf is the 39.00 mm step).
+
+    ⛔ A MUTATION FIXTURE. It exists to prove the cliff guard is derived from
+    the packer and not from a typed 39.00: grow these four and the derived step
+    has to move with them. Negative `mm` shrinks them, which moves it down.
+    ⚠️ All four, not one: the step is a PAIR of caps sharing a shelf, so one
+    grown cap can still pair with an ungrown one and the step moves by half as
+    much (18.5 + 0.5 on one cap alone puts it at 39.50, not 40.00).
+    """
+    def grow(mm: float):
+        from tools import netlist
+        d = netlist.current()
+        for ref in ("C203", "C204", "C205", "C206"):
+            w, l = next(p.footprint_mm for p in d.parts if p.refdes == ref)
+            d = d.replace_part(ref, footprint_mm=(w, l + mm))
+        return d
+    return grow

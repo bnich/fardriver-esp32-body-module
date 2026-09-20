@@ -44,12 +44,15 @@ def gap(stack, below, above):
 # --- parameters ----------------------------------------------------------------
 def test_the_envelope_the_pcb_outline_is_cut_to():
     # IO-14: the board is the DESIGN's requirement, not a slice of the cavity,
-    # so these two are typed. 39 x 239 = 9321 mm². The PCB emitter draws
+    # so these two are typed. 40 x 241 = 9640 mm². The PCB emitter draws
     # BOARD_W x BOARD_L, so a change here is a change to a manufactured outline
     # and must be meant -- and it must come from re-running the search in the
     # file's comment, never from nudging a budget closed.
-    assert (bp.BOARD_W, bp.BOARD_L) == (39.0, 239.0)
-    assert bp.BOARD_AREA == 39.0 * 239.0 == 9321.0
+    # ⚠️ The WIDTH is not the search's own answer: the search returns 39.0 and
+    # 39.0 sits ON a 24.40 mm pack cliff, so the owner bought 1.0 mm of
+    # clearance above it (2026-09-20). That is a CHECKED property, below.
+    assert (bp.BOARD_W, bp.BOARD_L) == (40.0, 241.0)
+    assert bp.BOARD_AREA == 40.0 * 241.0 == 9640.0
     # Height is cut from the MEASURED cavity: 100 - 3 floor - 3 lid = 94.
     assert bp.AVAIL_H == 100.0 - 3.0 - 3.0 == 94.0
 
@@ -68,14 +71,15 @@ def test_the_board_length_holds_the_longest_row_with_room_to_spare():
     """The row is arithmetic, not a heuristic, so it is one of the two things
     BOARD_L answers to. POWER top's five headers are 55.88 + 25.4 + 35.56 +
     20.32 + 55.88 = 193.04 of body and four 1 mm gaps = 197.04 mm. Against the
-    239.0 mm board that is 82.4 %, so the row clears 0.90 x 239.0 = 215.10 by
-    18.06 mm and clears the board itself by 41.96 mm -- 14.0 mm of which the
+    241.0 mm board that is 81.8 %, so the row clears 0.90 x 241.0 = 216.90 by
+    19.86 mm and clears the board itself by 43.96 mm -- 14.0 mm of which the
     four M3 corners take: at each END of the row two corners take 2 x 3.5 mm of
     length between them, so 2 x 2 x 3.5 = 14.0 mm in all.
 
     ⚠️ The row is no longer what sets the length. It wanted 197.04 / 0.90 =
-    218.93; the PACK wanted 238.72 and won. Protects: that the row keeps its
-    margin while the length is being set by something else."""
+    218.93; the PACK wanted 238.72 and won, and the owner then took 241.0.
+    Protects: that the row keeps its margin while the length is being set by
+    something else."""
     from tools import board_fit as bf, netlist
     longest = max(e.length_mm for e in bf.edge_budget(netlist.current()))
     assert longest == pytest.approx(197.04)
@@ -84,20 +88,19 @@ def test_the_board_length_holds_the_longest_row_with_room_to_spare():
 
 
 def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
-    """The pack is what BOARD_L was set by, at the narrowest width M18 allows.
-    POWER top binds: 214.85 mm against 0.90 x 239.0 = 215.10, so 0.25 mm of
-    slack -- and that is by construction, because 239.0 is the next whole
-    millimetre above 214.85 / 0.90 = 238.72.
+    """The pack is what BOARD_L was set by. POWER top binds: 214.85 mm against
+    0.90 x 241.0 = 216.90, so 2.05 mm of slack.
 
-    ⚠️ It is the tightest tripwire here and it is meant to be: length is the
-    abundant axis (7.00 mm of cavity spare), so a body that grows is answered by
-    a millimetre or two of board, not by widening into the 4.35 mm the cavity
-    has left across. ⛔ What it must NOT be answered by is a wider board:
-    BOARD_W is 39.0 because 38.9 packs into 239.25 mm, which no length inside
-    the 246.0 mm cavity cap can carry.
+    ⚠️ 239.0 would have done -- it is the next whole millimetre above 214.85 /
+    0.90 = 238.72 -- and it left 0.25 mm here. The owner took 241.0 on
+    2026-09-20 instead: a tripwire with 0.25 mm of slack fires on almost any
+    change, which is noise and not signal, and length is the abundant axis
+    (5.00 mm of cavity spare even at 241.0). ⛔ What a body that grows must NOT
+    be answered by is a wider board: BOARD_W stands 1.0 mm above a 24.40 mm pack
+    cliff at 39.00, and widening walks back onto it (see the cliff tests below).
 
-    Protects: that margin. board_fit only fails a pack at 239 mm, so without
-    this a body could grow 24 mm and nothing would say the envelope had stopped
+    Protects: that margin. board_fit only fails a pack at 241 mm, so without
+    this a body could grow 26 mm and nothing would say the envelope had stopped
     being the one the search chose."""
     from tools import board_fit as bf, netlist
     worst = max(bf.area_budget(netlist.current()),
@@ -109,35 +112,247 @@ def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
 
 def test_the_worst_density_keeps_the_10_percent_the_envelope_was_chosen_for():
     """The same search held every face to 0.90 x DENSITY_LIMIT = 0.675. POWER
-    top binds again: 6045.84 mm² of bodies in 39.0 x 239.0 - 196 = 9125 mm² of
-    usable side = 0.6626, which clears 0.675 by 0.0124 -- 11.7 % of headroom
+    top binds again: 6045.84 mm² of bodies in 40.0 x 241.0 - 196 = 9444 mm² of
+    usable side = 0.6402, which clears 0.675 by 0.0348 -- 14.6 % of headroom
     against the 0.75 board_fit fails at.
 
     Protects: the headroom routing, courtyards and creepage come out of. Density
-    is not what set the envelope (at 239.0 mm it wanted only W >= 38.3), so it
+    is not what set the envelope (at 241.0 mm it wanted only W >= 38.0), so it
     has more slack than the pack -- but board_fit does not fail a face until
-    0.75, and a face drifting from 0.663 to 0.749 is a board nobody can lay
+    0.75, and a face drifting from 0.640 to 0.749 is a board nobody can lay
     out, silently."""
     from tools import board_fit as bf, netlist
     worst = max(bf.area_budget(netlist.current()), key=lambda s: s.density)
     assert (worst.board, worst.side) == ("POWER", "top")
     assert worst.density <= 0.90 * bf.DENSITY_LIMIT    # the tripwire
-    assert worst.density == pytest.approx(0.6626, abs=0.0005)   # where it stands
+    assert worst.density == pytest.approx(0.6402, abs=0.0005)   # where it stands
+
+
+# --- the pack CLIFF: derived from the packer, not typed ----------------------
+# ⚠️ The shelf pack is not smooth in the board's WIDTH. It steps, because a body
+# either fits beside another across the board or it does not, and at the width
+# where two bodies start pairing a whole shelf disappears at once. Today's step
+# is 24.40 mm tall. What follows DERIVES where it is from the packer; nothing
+# here is allowed to type 39.00 as the answer.
+#
+# The caps are the measured cavity's, exactly as `board_params`' envelope search
+# takes them: along, the box wall and the drop-in clearance at each end; across,
+# the wall, the far-side drop-in and the room in front of the connector face.
+def _cavity_board_caps():
+    """(longest, widest) board the MEASURED cavity can carry, in mm."""
+    return (bp.CAVITY_L - 2 * bp.WALL - 2 * bp.END_ALLOWANCE,          # 246.00
+            bp.CAVITY_W - 2 * bp.WALL - bp.SIDE_CLEARANCE - bp.FACE_ROOM)  # 43.35
+
+
+def _worst_pack(d, width):
+    """(mm, face) of the binding face's shelf-pack on a board `width` wide.
+
+    Straight out of `board_fit.shelf_pack`, at a width that is an ARGUMENT and
+    not `BOARD_W`, which is the whole point: it lets the step be found. A face
+    that cannot place a body at all is infinitely long, which is the honest
+    reading -- there is no length of board that carries it.
+    """
+    from tools import board_fit as bf
+    worst, face = 0.0, "-"
+    for board in bp.STACK_ORDER:
+        for side in bf.SIDES:
+            rects = bf.bodies(d, board, side)
+            if not rects:
+                continue
+            mm, blocked = bf.shelf_pack(rects, width)
+            if mm is None:
+                return math.inf, f"{board} {side} ({blocked} does not fit)"
+            if mm > worst:
+                worst, face = mm, f"{board} {side}"
+    return worst, face
+
+
+def pack_cliff(d, tol=1e-7):
+    """Where the pack steps, found by bisection on the board's WIDTH.
+
+    -> (edge_mm, face, below_mm, above_mm): the narrowest width whose pack a
+    board the cavity allows can carry, the face that binds there, and the pack
+    just below that width and at it.
+
+    A width is CARRYABLE when the binding face packs into 0.90 x the longest
+    board the cavity allows -- 0.90 x 246.0 = 221.40 mm. The 0.90 is the same
+    design margin the envelope search bought and the three tripwires above hold;
+    without it the question is meaningless, because a pack at 99 % of the board
+    is not an envelope anybody would choose.
+
+    So the edge is the boundary between "no length the measured cavity allows
+    absorbs this pack" and "one does", and the step across it is the fall that
+    boundary exists for.
+    """
+    lo, hi = 20.0, _cavity_board_caps()[1]
+    assert _worst_pack(d, lo)[0] > 0.90 * _cavity_board_caps()[0], (
+        f"⛔ THE SEARCH HAS NO BRACKET: a {lo} mm board already packs into a "
+        f"length the cavity carries, so the step this guard exists for is not "
+        f"between {lo} and {hi} mm. Widen the search or re-run the envelope one.")
+    assert _worst_pack(d, hi)[0] <= 0.90 * _cavity_board_caps()[0], (
+        f"⛔ NO BOARD THE MEASURED CAVITY ALLOWS CLOSES THE PACK: at the widest "
+        f"it permits ({hi:.2f} mm) the binding face still packs into "
+        f"{_worst_pack(d, hi)[0]:.2f} mm, which needs more than the "
+        f"{_cavity_board_caps()[0]:.1f} mm of length the cavity permits. This is "
+        f"not a clearance problem -- the design no longer fits the box.")
+    while hi - lo > tol:
+        mid = (lo + hi) / 2
+        if _worst_pack(d, mid)[0] <= 0.90 * _cavity_board_caps()[0]:
+            hi = mid
+        else:
+            lo = mid
+    above, face = _worst_pack(d, hi)
+    return round(hi, 4), face, _worst_pack(d, lo)[0], above
+
+
+def cliff_problems(d) -> list[str]:
+    """The cliff guard, as a list so a mutation can read it instead of dying.
+
+    Two levels, because they are two different failures:
+      ABOVE THE BOARD  the step has climbed past BOARD_W. The boards have to be
+                       re-shaped -- this is not a margin, it is the envelope.
+      CLEARANCE        the step is at or below BOARD_W but nearer than the
+                       1.0 mm the owner bought. The design still builds; what is
+                       gone is the standoff, and that is a decision to take
+                       deliberately rather than discover.
+    """
+    edge, face, below, above = pack_cliff(d)
+    # An infinite figure below the step is not a long pack: it is a body that
+    # cannot be placed at all on a board that narrow, which is a wall and not a
+    # step. Say that, rather than printing "inf mm".
+    fall = (f"falls {below - above:.2f} mm across that step"
+            if math.isfinite(below) else
+            "cannot be placed at all below it -- a body fits in neither "
+            "orientation, so the step has no far side")
+    if edge > bp.BOARD_W + 1e-9:
+        need = (f"packs into {below:.2f} mm, needing a {below / 0.90:.2f} mm "
+                f"board against the {_cavity_board_caps()[0]:.2f} mm the cavity "
+                f"allows" if math.isfinite(below) else
+                "cannot be placed at all -- a body fits in neither orientation")
+        return [f"cliff above the board: the pack steps at {edge:.2f} mm of "
+                f"width and BOARD_W is {bp.BOARD_W:.2f}. Below the step {face} "
+                f"{need}. Re-run the envelope search"]
+    if bp.BOARD_W - edge < 1.0 - 1e-9:
+        return [f"cliff clearance: the pack steps at {edge:.2f} mm of width and "
+                f"BOARD_W is {bp.BOARD_W:.2f} -- {bp.BOARD_W - edge:.2f} mm "
+                f"above it, against the 1.00 mm the owner bought on 2026-09-20. "
+                f"{face} {fall}"]
+    return []
+
+
+def test_the_pack_cliff_is_derived_and_the_board_stands_clear_of_it():
+    """⭐ THE CLIFF, as a CHECKED property rather than a paragraph.
+
+    WHAT IT PROTECTS. `board_fit`'s shelf pack steps in the board's width, and
+    at 39.00 mm it steps 24.40 mm: C203-C206 are four 12.5 x 18.5 Y-caps, so
+    18.5 + 2 x COURTYARD = 19.50 mm across each, and 19.50 + 19.50 = 39.00
+    EXACTLY. At 39.00 they pair two to a shelf and POWER top packs into
+    214.85 mm; a hair under it they do not, and the same face packs into
+    239.25 mm. ⛔ NO LENGTH THE MEASURED CAVITY ALLOWS ABSORBS THAT: 239.25
+    needs a 265.83 mm board at the 0.90 margin, and the cavity permits 246.0.
+    The step is a wall, not a cost.
+
+    WHY BOARD_W IS NOT 39.0. A board ON the edge is one where any growth in a
+    cap body, or in COURTYARD, re-shapes BOTH plan axes -- the width walks up
+    and the length follows the pack. The owner bought 1.0 mm of standoff on
+    2026-09-20, which is 0.5 mm of growth in each of the four caps.
+
+    ⚠️ The 1.0 mm has no slack of its own, by construction: it IS the purchase,
+    not a percentage of it. Spending any of it is meant to be a decision.
+
+    ⛔ Nothing here types 39.00 as the answer. `pack_cliff` bisects on the width
+    and asks the packer, so the guard finds the step wherever the geometry puts
+    it -- proved by the two mutation tests below."""
+    from tools import netlist
+    edge, face, below, above = pack_cliff(netlist.current())
+    assert face == "POWER top"
+    assert edge == pytest.approx(39.00, abs=0.01)          # where the step IS
+    assert (below, above) == (pytest.approx(239.25), pytest.approx(214.85))
+    assert below - above == pytest.approx(24.40, abs=0.01)  # ...and how tall
+    # ...and no length the cavity allows can absorb it:
+    assert below / 0.90 > _cavity_board_caps()[0]
+    assert bp.BOARD_W - edge == pytest.approx(1.00, abs=0.01)
+    assert cliff_problems(netlist.current()) == []
+
+
+def test_the_guard_fails_a_board_put_back_on_the_cliff(board_width):
+    """⚠️ THE MUTATION, direction one: 39.0 mm, the width the envelope search
+    itself returns and the one the owner overruled. Every board_fit gate is
+    still green there -- that is exactly why this guard has to exist -- and the
+    clearance is 0.00 mm, so the guard is the only thing that says so."""
+    from tools import board_fit as bf, netlist
+    d = netlist.current()
+    assert cliff_problems(d) == []                       # 40.0 mm: 1.00 clear
+    board_width(39.0)
+    assert bf.problems(d) == []                          # ...and it still builds
+    (problem,) = cliff_problems(d)
+    assert problem.startswith("cliff clearance:")
+    assert "steps at 39.00 mm" in problem and "BOARD_W is 39.00" in problem
+    assert "0.00 mm above it" in problem and "falls 24.40 mm" in problem
+
+
+def test_the_cliff_follows_the_caps_that_make_it(grown_y_caps):
+    """⚠️ THE MUTATION, direction two, and the one that proves the step is
+    DERIVED: move the four Y-caps and the derived step has to move with them.
+
+      -0.5 each  19.00 mm across, pairing at 38.00 -- but U201, the 12 V brick,
+                 is 58.3 x 37.2 and needs 38.20 mm of width to lie across at
+                 all, so THAT becomes the binding edge. 1.80 mm of clearance:
+                 the guard is content, and it found a cliff nobody typed.
+      +0.5 each  20.00 mm across, pairing at exactly 40.00 -- the millimetre the
+                 owner bought, spent to the last of it. The design still builds
+                 (the pack is the same 214.85 mm) and the guard says the
+                 standoff is gone.
+      +1.5 each  21.00 mm across, pairing at 42.00, ABOVE the board. This is no
+                 longer a clearance: the boards have to be re-shaped, and the
+                 guard says so in different words."""
+    lean = grown_y_caps(-0.5)
+    assert pack_cliff(lean)[0] == pytest.approx(38.20, abs=0.01)
+    assert cliff_problems(lean) == []                    # 1.80 mm clear
+
+    onto = grown_y_caps(0.5)
+    assert pack_cliff(onto)[0] == pytest.approx(40.00, abs=0.01)
+    (spent,) = cliff_problems(onto)
+    assert spent.startswith("cliff clearance:")
+    assert "steps at 40.00 mm" in spent and "0.00 mm above it" in spent
+
+    over = grown_y_caps(1.5)
+    assert pack_cliff(over)[0] == pytest.approx(42.00, abs=0.01)
+    (past,) = cliff_problems(over)
+    assert past.startswith("cliff above the board:")
+    assert "steps at 42.00 mm" in past and "BOARD_W is 40.00" in past
+    assert "Re-run the envelope search" in past
+
+
+def test_the_courtyard_is_in_the_same_sum_and_moves_the_cliff_too(monkeypatch):
+    """The step is 18.5 + 2 x COURTYARD, doubled, so the courtyard is as
+    load-bearing as the cap body is -- and it grows EVERY body, not four.
+    ⛔ COURTYARD is not a dial (it is IPC-7351's most generous excess); this
+    mutates it only to show the guard answers to it. 0.55 mm moves the step
+    0.20 mm and 0.75 mm puts it 2.10 mm above the board."""
+    from tools import board_fit as bf, netlist
+    d = netlist.current()
+    monkeypatch.setattr(bf, "COURTYARD", 0.55)
+    assert pack_cliff(d)[0] == pytest.approx(39.20, abs=0.01)
+    assert cliff_problems(d)[0].startswith("cliff clearance:")
+    monkeypatch.setattr(bf, "COURTYARD", 0.75)
+    assert pack_cliff(d)[0] == pytest.approx(42.10, abs=0.01)
+    assert cliff_problems(d)[0].startswith("cliff above the board:")
 
 
 def test_the_cavity_the_envelope_requires_is_stated_against_m18():
     """A requirement on the enclosure, not a measurement of the bike.
-    Across: 39 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in front
-    of the connector face = 65.65. Along: 239 + 2 x 3 + 2 x 4 = 253.0. Tall: the
+    Across: 40 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in front
+    of the connector face = 66.65. Along: 241 + 2 x 3 + 2 x 4 = 255.0. Tall: the
     DERIVED stack + 3 floor + 3 lid."""
-    assert bp.CAVITY_REQUIRED_W == pytest.approx(65.65)
-    assert bp.CAVITY_REQUIRED_L == pytest.approx(253.0)
+    assert bp.CAVITY_REQUIRED_W == pytest.approx(66.65)
+    assert bp.CAVITY_REQUIRED_L == pytest.approx(255.0)
     d = three_boards()                                   # 52.0 mm of stack
-    assert bp.cavity_required(d) == pytest.approx((253.0, 65.65, 52.0 + 6.0))
+    assert bp.cavity_required(d) == pytest.approx((255.0, 66.65, 52.0 + 6.0))
     # ...and it goes inside the cavity M18 measured, with the spare stated:
-    # 260.0 - 253.0 = 7.00 mm along, 70.0 - 65.65 = 4.35 mm across.
-    assert bp.CAVITY_L - bp.CAVITY_REQUIRED_L == pytest.approx(7.00)
-    assert bp.CAVITY_W - bp.CAVITY_REQUIRED_W == pytest.approx(4.35)
+    # 260.0 - 255.0 = 5.00 mm along, 70.0 - 66.65 = 3.35 mm across.
+    assert bp.CAVITY_L - bp.CAVITY_REQUIRED_L == pytest.approx(5.00)
+    assert bp.CAVITY_W - bp.CAVITY_REQUIRED_W == pytest.approx(3.35)
 
 
 def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number():
@@ -145,9 +360,9 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
 
     CAVITY_REQUIRED_* is an OUTPUT and nothing bounds it from below. Since M18
     `cavity_problems` does bound it from above -- a requirement past 260.0 or
-    70.0 now FAILS -- but the whole distance to that bound is only 7.00 mm along
-    and 4.35 mm across, and every millimetre of it can be spent with every gate
-    green. A body or a terminal that walks the width from 65.65 to 69.9 leaves
+    70.0 now FAILS -- but the whole distance to that bound is only 5.00 mm along
+    and 3.35 mm across, and every millimetre of it can be spent with every gate
+    green. A body or a terminal that walks the width from 66.65 to 69.9 leaves
     the design fitting by 0.1 mm and nobody told. The per-wall plug-room verdict
     that used to push back was removed with IO-6's connector face.
 
@@ -158,10 +373,10 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
 
     ⚠️ The TALL figure is asserted beside the plan axes because it must NOT have
     moved with them: the stack is derived from heights alone. 68.39 at 48 x 219,
-    68.39 at 39 x 239."""
+    68.39 at 39 x 239, 68.39 at 40 x 241."""
     from tools import netlist
     along, across, tall = bp.cavity_required(netlist.current())
-    assert (along, across) == pytest.approx((253.0, 65.65))
+    assert (along, across) == pytest.approx((255.0, 66.65))
     assert tall == pytest.approx(68.39, abs=0.01)
     # ...and the measurement they are judged against, so a drift in EITHER bites.
     assert (bp.CAVITY_L, bp.CAVITY_W, bp.CAVITY_H) == (260.0, 70.0, 100.0)
@@ -170,7 +385,7 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
 
 def test_the_tall_requirement_does_not_answer_to_the_board_s_width_or_length(
         monkeypatch):
-    """Shown, not assumed. Reshaping the board from 48 x 219 to 39 x 239 moved
+    """Shown, not assumed. Reshaping the board from 48 x 219 to 40 x 241 moved
     both plan axes and must have moved the height by nothing at all: the stack
     is a sum of part heights, clearances and PCB, and no term of it is a plan
     dimension. Put the old envelope back and the tall figure is the same."""
@@ -187,7 +402,7 @@ def test_the_tall_requirement_does_not_answer_to_the_board_s_width_or_length(
 # --- the cavity requirement is CHECKED, now that the cavity is a fact --------
 def test_the_measured_cavity_holds_the_design_and_the_gate_is_armed():
     """The real flags. M18 measured 260 x 70 x 100 and the design asks for
-    253.0 x 65.65 x 68.4, so there is no verdict to give -- and, unlike before
+    255.0 x 66.65 x 68.4, so there is no verdict to give -- and, unlike before
     M18, the empty list means it FITS and not that nothing was gating it."""
     from tools import netlist
     assert bp.envelope_is_binding()
@@ -207,14 +422,14 @@ def test_the_gate_answers_to_the_measurement_not_to_the_enclosure():
 
 def test_a_board_too_wide_for_the_measured_cavity_fails(wider_board):
     """⚠️ THE MUTATION that makes the gate a check rather than a claim. Today's
-    39.0 mm board asks 65.65 mm of the 70.0 M18 measured and passes; a 45.0 mm
+    40.0 mm board asks 66.65 mm of the 70.0 M18 measured and passes; a 45.0 mm
     board asks 71.65 mm and does not go in the box. The flags are the real ones
     -- the enclosure is STILL UNDECIDED -- so this is exactly the case the
     decision is about, and the failure names the wall allowance as the lever
     that has not been spent yet."""
     from tools import netlist
     d = netlist.current()
-    assert bp.cavity_problems(d) == []                   # 39.0 mm: it fits
+    assert bp.cavity_problems(d) == []                   # 40.0 mm: it fits
     wider_board(45.0)
     (across,) = bp.cavity_problems(d)
     assert across.startswith("cavity across:")
@@ -224,13 +439,13 @@ def test_a_board_too_wide_for_the_measured_cavity_fails(wider_board):
 
 
 def test_a_measured_cavity_that_cannot_hold_the_design_is_a_failure(measured_cavity):
-    """253.0 x 65.65 required; a 250 x 61 box holds neither axis, and each
+    """255.0 x 66.65 required; a 250 x 61 box holds neither axis, and each
     problem names its axis and the overrun."""
     d = three_boards()
     measured_cavity(250.0, 61.0)
     along, across = bp.cavity_problems(d)
-    assert along.startswith("cavity along:") and "OVER by 3.00 mm" in along
-    assert across.startswith("cavity across:") and "OVER by 4.65 mm" in across
+    assert along.startswith("cavity along:") and "OVER by 5.00 mm" in along
+    assert across.startswith("cavity across:") and "OVER by 5.65 mm" in across
     assert "measured cavity gives 250.00 mm" in along
 
 

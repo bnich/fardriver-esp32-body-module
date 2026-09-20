@@ -56,7 +56,7 @@ from .model import Connector, Design, Part
 #: FACT that requirement is judged against, and the caps the envelope search
 #: works within.
 CAVITY_L = 260.0   # mm, along the bike
-CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 4.35 mm spare today
+CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 3.35 mm spare today
 CAVITY_H = 100.0   # mm, floor to the underside of the battery tray
 CAVITY_MEASURED = True    # ✅ M18, measured by the owner 2026-09-20
 
@@ -131,38 +131,55 @@ END_ALLOWANCE = 4.0
 #:   Along, 2 x WALL and END_ALLOWANCE at each end:
 #:       260.0 - 2 x 3.0 - 2 x 4.0 = 246.0 mm of board.
 #:
-#:   WIDTH is searched first and taken as narrow as the caps allow. 39.0 mm is
-#:   the NARROWEST width that closes at ANY length <= 246.0, and the PACK is
-#:   what binds: at 39.0 the worst face (POWER top) packs into 214.85 mm and so
-#:   needs L >= 214.85 / 0.90 = 238.72, inside the cap; at 38.9 the same face
-#:   packs into 239.25 mm, needing L >= 265.8, outside it. The 24.4 mm step is
-#:   C203-C206, four 12.5 x 18.5 Y-caps: 18.5 + 2 x COURTYARD = 19.50 across
-#:   each, and 19.50 + 19.50 = 39.00 exactly, so they pair two to a shelf at
-#:   39.0 and each take a 13.5 mm shelf of their own a tenth below it.
-#:   ⚠️ 39.0 therefore sits ON that step rather than above it -- the pack reads
-#:   214.85 for every width from 39.0 to 41.0 and jumps below it. The step-up
-#:   this envelope buys is spent on LENGTH instead, the axis with room to spend.
+#:   WIDTH is searched first and taken as narrow as the caps allow, THEN LIFTED
+#:   CLEAR OF THE CLIFF THE SEARCH LANDS ON. 39.0 mm is the narrowest width that
+#:   closes at ANY length <= 246.0, and the PACK is what binds: at 39.0 the
+#:   worst face (POWER top) packs into 214.85 mm and so needs L >= 214.85 / 0.90
+#:   = 238.72, inside the cap; a hair under 39.0 the same face packs into
+#:   239.25 mm, needing L >= 265.83, outside it. The 24.40 mm step is C203-C206,
+#:   four 12.5 x 18.5 Y-caps: 18.5 + 2 x COURTYARD = 19.50 across each, and
+#:   19.50 + 19.50 = 39.00 exactly, so at 39.0 they pair two to a 13.5 mm shelf
+#:   while below it each takes a 13.5 mm shelf of its own.
+#:   ⚠️ 39.0 sits ON that step, not above it, and a board on a cliff edge is one
+#:   where any growth in a cap body or in COURTYARD re-shapes both plan axes.
+#:   ⭐ THE OWNER BOUGHT CLEARANCE (2026-09-20): W = 40.0, one millimetre above
+#:   the step. That millimetre is what the four caps can grow into: 0.5 mm each
+#:   puts the step back on the board at exactly 40.00. COURTYARD has no headroom
+#:   at all -- it grows EVERY body, and 0.55 already moves the step to 39.20.
+#:   The pack does not change for the extra width -- 214.85 mm holds from 39.0
+#:   to 41.1 -- so it is bought purely to stand off the discontinuity.
+#:   `tests/test_board_params.py` DERIVES the step from the packer and says so
+#:   when it comes within 1.0 mm of BOARD_W, or above it.
 #:
 #:   LENGTH is then the least that clears all three budgets by 10 %. The pack
 #:   wants 238.72. The longest row wants less: the harness headers of one face
 #:   stand end to end along the board and that sum is arithmetic, not a
 #:   heuristic -- POWER top is longest at 197.04 mm, so 197.04 / 0.90 = 218.93.
-#:   Density is satisfied at any length in range (it wants only W >= 38.3 here).
-#:   238.72 -> 239.0.
+#:   Density is satisfied at any length in range (it wants only W >= 38.0 here).
+#:   238.72 -> 239.0, and the owner took 241.0: at 239.0 the pack tripwire has
+#:   0.25 mm of slack (214.85 against 0.90 x 239.0 = 215.10), which is narrow
+#:   enough that almost any change fires it, and a tripwire that fires on noise
+#:   is not a signal. 241.0 puts it at 2.05 mm, on the axis with room to spend.
 #:
-#:   WHAT IT COSTS AND BUYS: 39.0 x 239.0 = 9321 mm², three boards 280 cm². The
-#:   cavity it requires is 253.00 along (7.00 mm spare) x 65.65 across (4.35 mm
-#:   spare). Margins: row 17.6 %, pack 10.1 %, density 11.7 %. The row's 41.96 mm
-#:   of slack also covers the four M3 corners it may not run into -- at each END
-#:   of the row two corners take 2 x M3_INSET_MM of length between them, 2 x 2 x
-#:   3.5 = 14.0 mm in all -- which the row check does not model.
+#:   WHAT IT COSTS AND BUYS: 40.0 x 241.0 = 9640 mm², three boards 289 cm². The
+#:   cavity it requires is 255.00 along (5.00 mm spare) x 66.65 across (3.35 mm
+#:   spare) -- 1 mm of width slack and 2 mm of length slack spent, both still
+#:   comfortable. Margins: row 18.2 %, pack 10.8 %, density 14.6 %. The row's
+#:   43.96 mm of slack also covers the four M3 corners it may not run into -- at
+#:   each END of the row two corners take 2 x M3_INSET_MM of length between them,
+#:   2 x 2 x 3.5 = 14.0 mm in all -- which the row check does not model.
 #:
 #: ⛔ Re-run the search when a body or a terminal changes; do not nudge these to
 #: make a budget close. `python3 -m tools.board_fit` prints every margin, and
 #: `tests/test_board_params.py` holds the row, the pack and the density to the
 #: 10 % this search bought.
-BOARD_W = 39.0
-BOARD_L = 239.0
+
+#: ⚠️ 40.0, not the 39.0 the search returns: the pack falls 24.40 mm at exactly
+#: 39.00 mm of width (two 19.50 mm Y-cap courtyards pairing on one shelf), and
+#: this is 1.0 mm clear of that cliff rather than sitting on it -- proven, and
+#: kept clear, by `test_the_pack_cliff_is_derived_and_the_board_stands_clear_of_it`.
+BOARD_W = 40.0
+BOARD_L = 241.0
 BOARD_AREA = BOARD_W * BOARD_L
 
 #: Internal height the stack may use. Cut from a MEASUREMENT since M18:
@@ -181,12 +198,12 @@ AVAIL_H = CAVITY_H - FLOOR - LID
 #: stack is a property of the design).
 #: ⚠️ They are CHECKED, not merely stated: M18 is measured, so `cavity_problems`
 #: FAILS the design on either plan axis the cavity cannot hold. Today they fit
-#: -- 253.00 of 260.0 along, 65.65 of 70.0 across -- with 7.00 and 4.35 mm to
+#: -- 255.00 of 260.0 along, 66.65 of 70.0 across -- with 5.00 and 3.35 mm to
 #: spare. ⬜ Still not FINAL: WALL is an allowance, so both figures move when the
 #: enclosure's model lands. `tests/test_board_params.py` pins all three against
 #: drift, because nothing else bounds what the design may ask of the enclosure.
-CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 65.65
-CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 253.0
+CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 66.65
+CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 255.0
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.

@@ -2,7 +2,7 @@
 
 The tool's job is to say FAIL out loud and exit non-zero. So every test here
 either drives `main()` and reads the exit code and the text a person would
-see, or checks a figure that can be worked out on paper (39 x 239 mm board,
+see, or checks a figure that can be worked out on paper (40 x 241 mm board,
 0.5 mm courtyard).
 """
 import runpy
@@ -151,7 +151,7 @@ def test_a_row_longer_than_its_board_fails():
 def test_a_row_longer_than_its_board_is_a_plain_failure_not_a_caveat(capsys):
     """IO-14 made the board the design's own requirement, so a row that does not
     fit it is a failure whatever the cavity turns out to be. Two 130 mm headers
-    1 mm apart take 261 mm of a 239 mm board: 22 mm over."""
+    1 mm apart take 261 mm of a 241 mm board: 20 mm over."""
     d = with_connectors(good(),
                         conn("J302", "OUTPUTS", 7.0, (130.0, 9.2), overhang=9.6),
                         conn("J303", "OUTPUTS", 7.0, (130.0, 9.2), overhang=9.6))
@@ -160,8 +160,8 @@ def test_a_row_longer_than_its_board_is_a_plain_failure_not_a_caveat(capsys):
     code, out = run(capsys, d)
     assert code == 1 and "✅ PASS" not in out
     assert "row: OUTPUTS's 2 harness headers take 261 mm of the face" in out
-    assert "the board is 239 mm long" in out
-    assert "⛔ DOES NOT FIT (22 mm over)" in out
+    assert "the board is 241 mm long" in out
+    assert "⛔ DOES NOT FIT (20 mm over)" in out
 
 
 def test_a_row_that_fits_its_board_is_no_verdict_at_all(capsys):
@@ -175,12 +175,12 @@ def test_an_unknown_height_fails_instead_of_vanishing(capsys):
 
 
 # --- the cavity the design REQUIRES (IO-14, M18) ---------------------------------------
-# ⚠️ M18 is MEASURED: 260 x 70 x 100, and the design's 253.0 x 65.65 goes inside
+# ⚠️ M18 is MEASURED: 260 x 70 x 100, and the design's 255.0 x 66.65 goes inside
 # it. So the tests that need a FAILURE drive `measured_cavity` to supply a box
 # that cannot hold the design; the real flags are left alone in the two that
 # prove the pass and the gate.
 def test_the_cavity_m18_measured_holds_the_design_and_the_tool_passes(capsys):
-    """The real flags. The design requires 253.0 along x 65.65 across of the
+    """The real flags. The design requires 255.0 along x 66.65 across of the
     260 x 70 x 100 that was measured, so the report states the measurement and
     the tool passes -- on the arithmetic, not on a missing gate."""
     code, out = run(capsys, good())
@@ -196,53 +196,53 @@ def test_a_board_too_wide_for_the_measured_cavity_fails_the_tool(capsys, wider_b
     board asks 71.65 mm of a 70.0 mm cavity and `board_fit` must exit 1. The
     enclosure is still undecided -- the real flag -- and that no longer buys a
     reprieve."""
-    assert bf.main([], good()) == 0                  # 39.0 mm: it fits
+    assert bf.main([], good()) == 0                  # 40.0 mm: it fits
     capsys.readouterr()
     wider_board(45.0)
     code, out = run(capsys, good())
     assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
-    assert "board 45 x 239" in out
+    assert "board 45 x 241" in out
     assert "DOES NOT FIT the cavity that was measured" in out
     (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
     assert "cavity across:" in problem and "OVER by 1.65 mm" in problem
 
 
 def test_a_measured_cavity_too_short_for_the_design_fails(capsys, measured_cavity):
-    """253.0 mm of board, wall and end clearance into a 250 mm box: 3 mm over."""
+    """255.0 mm of board, wall and end clearance into a 250 mm box: 5 mm over."""
     measured_cavity(250.0, 80.0)
     code, out = run(capsys, good())
     assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
     (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
     assert problem.startswith("cavity along:")                   # names the axis
-    assert "requires 253.00 mm" in problem and "gives 250.00 mm" in problem
-    assert "OVER by 3.00 mm" in problem                          # ...and by how much
-    assert "the requirement EXCEEDS it along by 3.0 mm" in out
+    assert "requires 255.00 mm" in problem and "gives 250.00 mm" in problem
+    assert "OVER by 5.00 mm" in problem                          # ...and by how much
+    assert "the requirement EXCEEDS it along by 5.0 mm" in out
     assert "DOES NOT FIT the cavity that was measured" in out
 
 
 def test_a_measured_cavity_too_narrow_for_the_design_fails(capsys, measured_cavity):
-    """65.65 mm of board, walls, drop-in and plug room into a 61 mm box."""
+    """66.65 mm of board, walls, drop-in and plug room into a 61 mm box."""
     measured_cavity(270.0, 61.0)
     code, out = run(capsys, good())
     assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
     (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
     assert problem.startswith("cavity across:")
-    assert "requires 65.65 mm" in problem and "gives 61.00 mm" in problem
-    assert "OVER by 4.65 mm" in problem
-    assert "the requirement EXCEEDS it across by 4.7 mm" in out
+    assert "requires 66.65 mm" in problem and "gives 61.00 mm" in problem
+    assert "OVER by 5.65 mm" in problem
+    assert "the requirement EXCEEDS it across by 5.7 mm" in out
 
 
 def test_a_measured_cavity_short_on_both_axes_names_both(capsys, measured_cavity):
     measured_cavity(250.0, 61.0)
     axes = [p.split(":")[0] for p in bf.problems(good()) if p.startswith("cavity ")]
     assert axes == ["cavity along", "cavity across"]
-    assert "EXCEEDS it along by 3.0 mm, across by 4.7 mm" in run(capsys, good())[1]
+    assert "EXCEEDS it along by 5.0 mm, across by 5.7 mm" in run(capsys, good())[1]
 
 
 def test_the_same_overrun_would_be_a_finding_against_a_cavity_nobody_measured(
         capsys, measured_cavity, monkeypatch):
     """The pre-M18 world, which monkeypatching is the only way back into: the
-    same 250 x 61 box, the same 3.0 and 4.7 mm of overrun, and the design still
+    same 250 x 61 box, the same 5.0 and 5.7 mm of overrun, and the design still
     PASSES because nothing may fail against a guess. What the flag changes is
     the gate, not the arithmetic -- a tool that reported the same paragraph
     either way was the defect that put this pair of tests here."""
@@ -251,7 +251,7 @@ def test_the_same_overrun_would_be_a_finding_against_a_cavity_nobody_measured(
     code, out = run(capsys, good())
     assert code == 0 and "✅ PASS" in out
     assert "⬜ NOT MEASURED -- M18's estimate is 250 x 61 x 100 mm" in out
-    assert "the requirement EXCEEDS it along by 3.0 mm, across by 4.7 mm" in out
+    assert "the requirement EXCEEDS it along by 5.0 mm, across by 5.7 mm" in out
     assert "finding for M18, not a failure of the design" in out
     assert not any(p.startswith("cavity ") for p in bf.problems(good()))
 
@@ -262,26 +262,26 @@ def test_density_is_bodies_over_the_side_less_its_mounting_corners():
     brick = rows[("POWER", "bottom")]                       # the brick's own face
     assert brick.raw_mm2 == pytest.approx(58.3 * 37.2)
     assert bf.MOUNT_AREA == pytest.approx(4 * 7.0 * 7.0)     # 3.5 mm inset, both ways
-    assert brick.density == pytest.approx(58.3 * 37.2 / (39 * 239 - 196))
+    assert brick.density == pytest.approx(58.3 * 37.2 / (40 * 241 - 196))
 
 
 def test_a_side_over_the_density_limit_fails(capsys):
-    # Three 38 x 60 slabs beside J301's 20 x 9: 3 x 2280 + 180 = 7020 mm² of the
-    # 39 x 239 - 196 = 9125 usable = 77 % > 75 %. Two of them is 4740 = 52 %.
+    # Three 39 x 61 slabs beside J301's 20 x 9: 3 x 2379 + 180 = 7317 mm² of the
+    # 40 x 241 - 196 = 9444 usable = 77 % > 75 %. Two of them is 4938 = 52 %.
     d = good()
     for i in range(3):
-        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (38.0, 60.0)))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (39.0, 61.0)))
     code, out = run(capsys, d)
     assert code == 1
     assert any(p.startswith("density: OUTPUTS top is 77%") for p in bf.problems(d))
-    two = good().with_part(part("X0", "OUTPUTS", 1.0, (38.0, 60.0))) \
-        .with_part(part("X1", "OUTPUTS", 1.0, (38.0, 60.0)))
+    two = good().with_part(part("X0", "OUTPUTS", 1.0, (39.0, 61.0))) \
+        .with_part(part("X1", "OUTPUTS", 1.0, (39.0, 61.0)))
     assert not any(p.startswith("density") for p in bf.problems(two))   # 52 %
 
 
 # --- area: the naive pack --------------------------------------------------------------
 def test_the_pack_by_hand():
-    # Two 17 x 10 bodies -> 18 x 11 with courtyards. 18 + 18 = 36 of the 39 mm
+    # Two 17 x 10 bodies -> 18 x 11 with courtyards. 18 + 18 = 36 of the 40 mm
     # board: one shelf, 11 mm deep. A third needs 54 and starts a second: 22 mm.
     two = [("A", 17.0, 10.0), ("B", 10.0, 17.0)]
     assert bf.shelf_pack(two) == (pytest.approx(11.0), "")
@@ -304,36 +304,38 @@ def test_a_body_longer_than_the_board_is_wide_opens_its_shelf_first():
     and the second opens another 51. 13 + 51 + 51 = 115 mm, 53 mm of it pure
     fragmentation -- and on POWER top, whose three biggest bodies are the
     55.88 mm terminals J101 and J405 and J202's 58.42 mm inter-board PWR-OUT
-    connector, that mechanism reports 321.57 mm on today's 39 mm board for a
-    214.85 mm pack (254.93 against 195.45 on the 48 mm board it replaced)."""
+    connector, that mechanism reported 321.57 mm against a 214.85 mm pack on the
+    39 mm board of 2026-09-20 (254.93 against 195.45 on the 48 mm one before
+    it)."""
     rects = [("J1", 50.0, 5.0), ("J2", 50.0, 5.0),
              ("X1", 30.0, 10.0), ("X2", 25.0, 12.0)]
     assert bf.shelf_pack(rects, 40.0) == (pytest.approx(62.0), "")
 
 
 def test_a_pack_that_does_not_fit_is_a_plain_failure(capsys):
-    # Twelve 19 x 19 bodies -> 20 x 20. Two will not go side by side on a 39 mm
-    # board (20 + 20 = 40), so each takes a 20 mm shelf: 240 mm. J301's 21 mm
-    # will not fit beside any of them either (20 + 21 = 41), so it opens a 10 mm
-    # shelf: 250 mm of a 239 mm board. Density is only (12 x 361 + 180) / 9125 =
-    # 49 %, so it is the PACK that fails, and density must not excuse it.
+    # Twelve 19.5 x 19.5 bodies -> 20.5 x 20.5. Two will not go side by side on
+    # a 40 mm board (20.5 + 20.5 = 41), so each takes a 20.5 mm shelf: 246 mm.
+    # J301's 21 mm will not fit beside any of them either (20.5 + 21 = 41.5), so
+    # it opens a 10 mm shelf: 256 mm of a 241 mm board. Density is only
+    # (12 x 380.25 + 180) / 9444 = 50 %, so it is the PACK that fails, and
+    # density must not excuse it.
     d = good()
     for i in range(12):
-        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (19.0, 19.0)))
+        d = d.with_part(part(f"X{i}", "OUTPUTS", 1.0, (19.5, 19.5)))
     drv = next(s for s in bf.area_budget(d) if (s.board, s.side) == ("OUTPUTS", "top"))
-    assert drv.density == pytest.approx(4512 / 9125) and drv.density_ok
-    assert drv.pack_mm == pytest.approx(250.0) and not drv.pack_ok
+    assert drv.density == pytest.approx(4743 / 9444) and drv.density_ok
+    assert drv.pack_mm == pytest.approx(256.0) and not drv.pack_ok
     code, out = run(capsys, d)
     assert code == 1
-    assert "⛔ DOES NOT FIT (11 mm over)" in out
-    assert any(p.startswith("pack: OUTPUTS top DOES NOT FIT") and "11 mm over" in p
+    assert "⛔ DOES NOT FIT (15 mm over)" in out
+    assert any(p.startswith("pack: OUTPUTS top DOES NOT FIT") and "15 mm over" in p
                for p in bf.problems(d))
 
 
 def test_a_body_wider_than_the_board_both_ways_cannot_be_placed(capsys):
-    # 50 x 39 -> 51 x 40 with the courtyard: neither side goes across 39 mm.
-    code, out = run(capsys, good().with_part(part("X1", "OUTPUTS", 1.0, (50.0, 39.0))))
-    assert code == 1 and "X1 fits a 39 mm board in neither orientation" in out
+    # 50 x 40 -> 51 x 41 with the courtyard: neither side goes across 40 mm.
+    code, out = run(capsys, good().with_part(part("X1", "OUTPUTS", 1.0, (50.0, 40.0))))
+    assert code == 1 and "X1 fits a 40 mm board in neither orientation" in out
 
 
 def test_bottom_side_parts_are_packed_on_the_underside():

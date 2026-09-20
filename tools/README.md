@@ -64,8 +64,9 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 
 ### `board_params.py` — parameters typed, geometry derived
 
-Holds the **board envelope, 39 × 239 mm** — typed, and re-derived by the search written out beside
-it; the M18 cavity, **260 × 70 × 100 mm, measured by the owner 2026-09-20** (`CAVITY_MEASURED =
+Holds the **board envelope, 40 × 241 mm** — typed, and re-derived by the search written out beside
+it (the width stands **1.0 mm above a 24.40 mm pack cliff at 39.00 mm**, which
+`tests/test_board_params.py` derives from the packer and guards); the M18 cavity, **260 × 70 × 100 mm, measured by the owner 2026-09-20** (`CAVITY_MEASURED =
 True`); the wall / floor / lid **allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's
 model sets them — the box is all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
 trimmed through-hole lead stands out of its board (IPC); the 0.5 mm insulating liner on the metal
@@ -103,8 +104,8 @@ deliberately *not* in that gate (owner's measurement, 2026-09-20): the cavity is
 cannot change, while the wall, floor and lid are the design's **own** allowances, so a design that
 does not fit **with** them fails today rather than after the box is drawn. What the undecided
 enclosure still does is keep the requirement from being final, which the report's first line says
-and the failure text names as a lever. Today the design requires **253.0 × 65.65 × 68.4 mm** and
-fits, with 7.00 mm along and 4.35 mm across to spare. The height is not in that list: `stack_height`
+and the failure text names as a lever. Today the design requires **255.0 × 66.65 × 68.4 mm** and
+fits, with 5.00 mm along and 3.35 mm across to spare. The height is not in that list: `stack_height`
 already fails on it through the same gate. Both `board_fit` and `rules` (`HT-CAVITY`) relay it, so
 the two gates cannot give different answers.
 
