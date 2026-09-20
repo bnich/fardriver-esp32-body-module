@@ -35,6 +35,11 @@ This is a lumped model, not SPICE: square-law FET, ideal zener, ideal
 capacitors (C105 is specified C0G/film so it does not lose capacitance under
 bias). It needs nothing but the standard library.
 
+The LOAD is not typed here either: `tap_current_a()` takes it from
+`tools.power_budget`, which counts the aux channels off the same netlist. Q101
+sits on the fused B+ tap upstream of BOTH converters, so it carries the whole
+tap current.
+
     python3 tools/soft_start.py          # report; exit 1 on any FAIL
 
 The run reads the gate network OFF THE NETLIST (`circuit_from`), by following
@@ -48,6 +53,17 @@ import pathlib
 import re
 import sys
 from dataclasses import dataclass, fields, replace
+
+# `python3 tools/soft_start.py` must keep working alongside
+# `python3 -m tools.soft_start`, so the repo root goes on the path before the
+# package import below. ⚠️ The dependency runs ONE WAY -- soft_start reads
+# power_budget, never the reverse -- because power_budget owns the load and
+# this file owns the switch that carries it.
+_ROOT = str(pathlib.Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from tools import netlist, power_budget                        # noqa: E402
 
 # ── Q101 IXTA26P20P -- IXYS DS99913D (01/13): the IXTP's die in TO-263 ─────
 VTH_MIN, VTH_MAX = 2.0, 4.0      # |V_GS(th)| at 250 µA, p.1
@@ -79,7 +95,30 @@ def k_from_gfs(gfs_s: float, at_amps: float = GFS_TEST_A) -> float:
 V_PACK_FULL = 84.0     # worst case for stored energy and for V_DS
 V_LVC = 60.0           # low-voltage cutoff: least gate drive, slowest ramp
 C_LOAD = 440e-6        # C201 + C202, 220 µF each
-I_LOAD_MAX = 0.62      # measured module draw at the 60 V cutoff
+
+
+def tap_current_a(d=None) -> float:
+    """The module's B+ tap current at the LVC, in amps -- what Q101 carries.
+
+    ⚠️ The WHOLE tap, both converters. Q101's source is the fused B+ tap and
+    its drain feeds the 12 V brick AND the Cincon's logic rail (plan §3.2.5's
+    diagram), so nothing downstream of the switch is outside this figure: it
+    is the 12 V brick's input current plus the Cincon's 3 W / 60 V.
+
+    ⛔ `tools.power_budget` OWNS this number and the arithmetic behind it --
+    the aux channels are counted off the netlist there, at the LVC, through
+    the converter's efficiency. Never re-derive it here. A ninth aux output
+    moves this current, the ramp and the SOA verdict with nobody retyping
+    anything, which is the whole point: the 0.62 A that stood here until the
+    aux block existed was typed, and it went stale silently.
+    """
+    return power_budget.budget(d).tap_a
+
+
+#: What Q101 carries at the 60 V cutoff -- DERIVED from the netlist through
+#: power_budget, never typed. Everything in this file that says "the load"
+#: means this current.
+I_LOAD_MAX = tap_current_a()
 P_LOAD = I_LOAD_MAX * V_LVC    # the converters are constant-power above it
 #: SMCJ90A maximum clamping voltage at I_PP (Littelfuse SMCJ series table).
 #: The most the source node can reach while D101 stands.
@@ -218,9 +257,15 @@ def differences(a: Circuit, b: Circuit, rel: float = 1e-9) -> list[str]:
 def load_current(v_d: float) -> float:
     """Converter draw at an input voltage of `v_d`.
 
-    Constant power above the cutoff voltage, capped at the measured 0.62 A
-    below it. ⚠️ Deliberately pessimistic: the real converters sit in
-    under-voltage lock-out for the first part of the ramp and draw nothing.
+    Constant power above the cutoff voltage, capped at `I_LOAD_MAX` -- the
+    derived LVC tap current -- below it. ⚠️ Deliberately pessimistic on the way
+    UP: the real converters sit in under-voltage lock-out for the first part of
+    the ramp and draw nothing, while this model has them pulling the full LVC
+    current from a node at 1 V.
+    ⚠️ And deliberately OPTIMISTIC on the way down, where the cap is what stops
+    a constant-power load drawing ever more current as its input falls. See
+    `key_off` for why that direction is not modelled: the voltage at which the
+    converters quit is not published.
     """
     if v_d <= 0.0:
         return 0.0
@@ -498,15 +543,126 @@ def key_off_delay_s(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
     """Key off -> Q101 starting to pinch off: C107 discharging through R110.
     Longest for the lowest-threshold FET, which is the default.
 
-    The price of C107. HV_SW then ramps DOWN at about V_pl/(R_GS·C105), with
-    Q101 carrying only the load, so it can never dissipate more than
-    I_load × V_pack on the way.
+    The price of C107, and nothing asks for the hold itself: C107 is sized by
+    the key-off plug-in (`plug_in`), where it divides C105's coupled edge down
+    to ~1.2 V. The ~0.8 s hold is what that capacitance costs on the way out --
+    §3.2.2 counts it as ride-out the design does not lean on, and IN-12 senses
+    the key wire itself, so the firmware sees key-off at once whatever Q101 is
+    doing.
     """
     v_pl = fet.v_th + math.sqrt(I_LOAD_MAX / fet.k)
     v_on = static_v_sg(v_pack, c)
     if v_on <= v_pl:
         return 0.0
     return c.r_gs * (c.c_gs + c.c_gd + C_ISS) * math.log(v_on / v_pl)
+
+
+#: The converters run down to 43 V. The level shifter must still be hard on
+#: there, or the module browns out before the pack reaches its cutoff. It is
+#: also the lowest input TDK states for the 12 V brick -- see `KeyOff`.
+V_CONVERTER_MIN = 43.0
+
+
+def key_off_decay(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
+                  fet: Fet = FAST, dt: float = 20e-6,
+                  give_up_s: float = 5.0) -> tuple[float, float, float]:
+    """Integrate the decay after the hold: (peak W, energy J, pulse width s).
+
+    Q105 is open, so the gate is NOT pulled down: it charges back toward the
+    source through R110 and the FET's saturation current falls with it. The
+    caps supply whatever the load asks beyond that, which is what drags HV_SW
+    down -- so the FET's current never exceeds the load's, and with
+    V_DS ≤ V_pack this peak can never exceed `KeyOff.p_max_w`. That ordering
+    is what lets the verdict sit on the bound and still be the stricter test.
+
+    ⚠️ It uses `load_current`, so the converters are modelled as pulling their
+    LVC current all the way down: NO dropout. The third figure is the
+    equal-energy pulse width, for the same SOA lookup the KEY ON corners use.
+
+    The step is stable: the peak moves by under 0.01 % between 50 µs and 2 µs.
+    """
+    v_g, v_d = v_pack - static_v_sg(v_pack, c), v_pack
+    t, energy, p_peak = 0.0, 0.0, 0.0
+    while t < give_up_s:
+        v_g, v_d, _i_f, p_f = _step(c, fet, False, v_pack, 0.0, v_g, v_d, dt)
+        t += dt
+        energy += p_f * dt
+        p_peak = max(p_peak, p_f)
+        if p_f < 0.5 and v_d < 0.5 * v_pack:     # pinched off, nothing left to burn
+            break
+    return p_peak, energy, (energy / p_peak if p_peak else 0.0)
+
+
+@dataclass(frozen=True)
+class KeyOff:
+    """The key going off with Q101 on: the hold, then what it costs the FET.
+
+    `p_max_w`, which the verdict sits on, is `I_LOAD_MAX × v_pack`: the load
+    still pulling its LVC current with the whole pack across the FET. ⚠️ It is
+    a BOUND, not an expectation, and the two reasons do not cancel:
+
+      * The converters are constant-power, so with the pack at `v_pack` they
+        draw P_LOAD / v_pack, not the LVC current -- V_LVC/v_pack of it, 71 %
+        at 84 V. While HV_SW decays the real cost is
+        P_LOAD × (v_pack / V_d − 1), which reaches this bound only if the load
+        were still pulling I_LOAD_MAX with its input near zero.
+      * What ends the decay is the converters quitting, and that voltage is
+        NOT PUBLISHED. TDK gives the CN-B110 an input RANGE of 43-160 V
+        (tdk_cn-b_e.pdf p.1) and says the input waveform must not leave it
+        (tdk_cn50-150b110_apl.pdf §7-1); it states no under-voltage shutdown
+        threshold, so nothing here can say where the brick stops drawing. Held
+        to that 43 V floor the peak would be `dropout_case_w`. A brick that
+        keeps converting below it draws MORE current as its input falls, not
+        less -- so that refinement needs a number from the vendor, not a guess.
+
+    How much of the bound is real is not left to prose: `p_sim_w` integrates
+    the decay (`key_off_decay`) and lands a little under it -- still over the
+    line at 84 V.
+
+    ⛔ And the line is the DC one because the same integration says so:
+    `pulse_s` comes out PAST the 100 ms row, so the DC figure is the row this
+    event lands on. It is not a short pulse. The gate bleeds with
+    R110 × (C107 + C105 + C_ISS) ≈ 0.48 s, and that -- not the 440 µF -- is
+    what sets how long Q101 spends in its linear region.
+    ⬜ M17 scopes a deliberate key-off under load; none of this is measured.
+    """
+    v_pack: float
+    hold_s: float
+    p_max_w: float
+    p_sim_w: float
+    energy_j: float
+    pulse_s: float
+
+    @property
+    def soa_limit_w(self) -> float:
+        return SOA_DC_84V_TC70 * SOA_DERATE
+
+    @property
+    def soa_at_pulse_w(self) -> float:
+        """What the SOA allows at this event's own equal-energy pulse width."""
+        return soa_limit_w(self.pulse_s)
+
+    @property
+    def ok(self) -> bool:
+        return self.p_max_w <= self.soa_limit_w
+
+    @property
+    def sim_ok(self) -> bool:
+        """The verdict the integrated decay alone gives -- never the stricter one."""
+        return self.p_sim_w <= self.soa_limit_w
+
+    @property
+    def dropout_case_w(self) -> float:
+        """The same decay if the converters quit at their stated input floor."""
+        return P_LOAD * (self.v_pack / V_CONVERTER_MIN - 1.0)
+
+
+def key_off(v_pack: float = V_PACK_FULL, c: Circuit = SPEC,
+            fet: Fet = FAST) -> KeyOff:
+    """The key-off event at one pack voltage -- read `KeyOff` before quoting it."""
+    peak, energy, pulse = key_off_decay(v_pack, c, fet)
+    return KeyOff(v_pack, key_off_delay_s(v_pack, c, fet), I_LOAD_MAX * v_pack,
+                  peak, energy, pulse)
 
 
 def solve_r_pd(target_ramp_s: float, v_pack: float = V_PACK_FULL,
@@ -541,11 +697,6 @@ def solve_r_pd(target_ramp_s: float, v_pack: float = V_PACK_FULL,
             f"no R_PD gives a {target_ramp_s*1e3:.0f} ms ramp at {v_pack:.0f} V: "
             f"by {r_pd/1e3:.0f} k the FET no longer turns on")
     return r_pd
-
-
-#: The converters run down to 43 V. The level shifter must still be hard on
-#: there, or the module browns out before the pack reaches its cutoff.
-V_CONVERTER_MIN = 43.0
 
 
 def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
@@ -587,16 +738,32 @@ def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
             f"key-OFF plug-in: an {p.v_step:.0f} V step drives V_GS to "
             f"-{p.v_sg_peak:.2f} V, past the {p.limit:.1f} V minimum threshold -- "
             f"Q101 conducts with the key off (HV_SW reaches {p.hv_sw_peak:.1f} V)")
+    # ⛔ The key-off line used to be PRINTED with its own ⛔ and collected by
+    # nobody, so the tool stated this violation and still exited 0. A criterion
+    # that is not in the verdict is not a criterion.
+    for v in (V_PACK_FULL, V_LVC):
+        k = key_off(v, c)
+        if not k.ok:
+            fails.append(
+                f"key off, {v:.0f} V pack: Q101 holds on for up to "
+                f"{k.hold_s*1e3:.0f} ms (C107 through R110) and then carries as much "
+                f"as {k.p_max_w:.0f} W while HV_SW decays -- over the "
+                f"{k.soa_limit_w:.0f} W derated DC SOA line. The {k.p_max_w:.0f} W is "
+                f"a BOUND: the {I_LOAD_MAX:.2f} A LVC tap current across the whole "
+                f"pack voltage. Integrating the decay instead gives "
+                f"{k.p_sim_w:.0f} W over {k.energy_j:.1f} J, "
+                f"{'still over' if not k.sim_ok else 'under'} it, and a "
+                f"{k.pulse_s*1e3:.0f} ms equal-energy pulse -- past the 100 ms row, so "
+                f"the DC line is the right one. If the converters quit at their "
+                f"{V_CONVERTER_MIN:.0f} V stated input floor the peak is "
+                f"{k.dropout_case_w:.0f} W instead, but no datasheet here gives a "
+                f"shutdown threshold to hold them to")
     return fails
 
 
 def _netlisted() -> tuple[Circuit | None, str]:
     """(the netlist's gate network, "") or (None, why it could not be read)."""
-    root = str(pathlib.Path(__file__).resolve().parent.parent)
-    if root not in sys.path:
-        sys.path.insert(0, root)
     try:
-        from tools import netlist
         d = netlist.current()
         return (circuit_from(d), enable_from(d)), ""
     except Exception as exc:              # any failure is reported, never hidden
@@ -605,7 +772,9 @@ def _netlisted() -> tuple[Circuit | None, str]:
 
 def main(argv=None, c: Circuit | None = None) -> int:
     print("D13 SOFT START -- Q101 IXTA26P20P into "
-          f"{C_LOAD*1e6:.0f} µF + {I_LOAD_MAX} A (constant power above {V_LVC:.0f} V)")
+          f"{C_LOAD*1e6:.0f} µF + {I_LOAD_MAX:.2f} A (constant power above "
+          f"{V_LVC:.0f} V; the tap current tools.power_budget derives at the LVC, "
+          f"both converters)")
     en = SPEC_ENABLE
     if c is None:
         if argv and "--spec" in argv:
@@ -665,12 +834,28 @@ def main(argv=None, c: Circuit | None = None) -> int:
     print("  ✔ Scope HV_SW and HV_BPLUS during a key-off plug-in.\n")
 
     print("KEY OFF")
-    for v in (V_PACK_FULL, V_LVC):
-        print(f"  {v:.0f} V: Q101 holds on for up to {key_off_delay_s(v, c)*1e3:.0f} ms "
+    offs = [key_off(v, c) for v in (V_PACK_FULL, V_LVC)]
+    for k in offs:
+        print(f"  {k.v_pack:.0f} V: Q101 holds on for up to {k.hold_s*1e3:.0f} ms "
               f"(C107 through R110), then carries at most "
-              f"{I_LOAD_MAX*v:.0f} W on the way down -- "
-              f"{'under' if I_LOAD_MAX*v <= SOA_DC_84V_TC70*SOA_DERATE else '⛔ OVER'} the "
-              f"derated DC line, {SOA_DC_84V_TC70*SOA_DERATE:.0f} W.")
+              f"{k.p_max_w:.0f} W on the way down -- "
+              f"{'under' if k.ok else '⛔ OVER'} the "
+              f"derated DC line, {k.soa_limit_w:.0f} W.")
+        print(f"         decay integrated: {k.p_sim_w:.0f} W peak, {k.energy_j:.1f} J, "
+              f"a {k.pulse_s*1e3:.0f} ms equal-energy pulse ({k.soa_at_pulse_w:.0f} W "
+              f"allowed there) -- {'under' if k.sim_ok else '⛔ OVER'}.")
+    hot = offs[0]
+    print(f"  ⚠️ {hot.p_max_w:.0f} W is a BOUND: {I_LOAD_MAX:.2f} A, the LVC tap "
+          f"current, across the WHOLE pack. The converters are constant power\n"
+          f"     ({P_LOAD/V_PACK_FULL:.2f} A at 84 V), so the decay really costs "
+          f"P_LOAD × (V_pack/V_d − 1) -- {hot.dropout_case_w:.0f} W at 84 V IF they "
+          f"quit at their {V_CONVERTER_MIN:.0f} V input floor.\n"
+          f"     ⬜ TDK publishes no under-voltage shutdown for the CN-B110, only a "
+          f"43-160 V input RANGE, so that floor is an assumption, not a rating --\n"
+          f"     and a brick still converting below it draws MORE, not less. The "
+          f"equal-energy pulse is past the 100 ms row, so the DC line is the right "
+          f"one.\n"
+          f"  ✔ M17: scope a deliberate key-off under load.")
     print()
 
     print("R_PD FOR A TARGET RAMP (84 V, nominal FET)")

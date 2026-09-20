@@ -132,15 +132,27 @@ python3 tools/soft_start.py
 ```
 
 A fixed-step simulation of Q101's gate network (R110, R101A+B, C105, C107, D102) charging 440 µF
-with the converters' load, at 84 V and 60 V across the FET's threshold spread. The network is
+with the converters' load, at 84 V and 60 V across the FET's threshold spread. **The load is the
+LVC tap current `power_budget` derives** (`tap_current_a()`), not a typed figure: Q101 sits upstream
+of both converters, so a new aux output moves the ramp and the SOA verdict with nothing retyped. The
+network is
 **read off the netlist** by following the copper round Q101 (`circuit_from(design)`), so a changed
 resistor is the one simulated and a pull-down path that reaches no ground is reported as a switch
 that never turns on; the run prints where the netlist differs from the specified values. Reports turn-on
 delay, ramp, peak FET power and energy, and compares the peak — as an equal-energy pulse — with
 Q101's SOA (DS99913D Fig. 14, T_C 70 °C; the `IXTA26P20P` and `IXTP26P20P` share the die and the
 sheet) × 0.72. Also: the V_GS excursion when the pack is plugged in with the key off (must stay under
-the 2.0 V minimum threshold), the key-off hold time, and `solve_r_pd(target_ramp_s)` for choosing
-the pull-down. Prints PASS or FAIL.
+the 2.0 V minimum threshold), and `solve_r_pd(target_ramp_s)` for choosing the pull-down. Prints
+PASS or FAIL.
+
+**Key-off is a gated criterion, not a printed remark** (`key_off()`, in `assess()`): Q101 holds on
+for ~0.8 s after the key opens while C107 bleeds through R110, and what it dissipates during the
+decay is held to the **derated DC SOA line**. ⚠️ The gated power figure is an upper **bound** —
+`I_LOAD_MAX × V_pack`, the LVC tap current across the whole pack. `key_off_decay()` integrates the
+decay beside it, which lands a little under the bound and puts the equal-energy pulse **past the
+SOA table's 100 ms row**, so the DC line is the right row and not a stand-in for a missing one. The
+`KeyOff` docstring says what a further refinement would take: a converter under-voltage shutdown
+threshold, which TDK does not publish for the CN-B110.
 
 ### `layout_rules.py` — the HV net class and the land keep-outs
 

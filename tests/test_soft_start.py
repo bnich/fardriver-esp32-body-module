@@ -8,7 +8,7 @@ The model is checked three ways that do not share its arithmetic:
   * against the capacitive divider for the key-off plug-in.
 
 ⛔ Pinned at the bottom, because both are easy to draw and both read as a 50 ms
-/ 114 W soft start on paper: a gate with NO pull-down path (it never turns on),
+soft start on paper: a gate with NO pull-down path (it never turns on),
 and a 100 k pull-down with the 68 nF Miller capacitor -- which is what sizing
 C105 from the current in R110, the resistor that OPPOSES the pull-down, gives.
 That one ramps in ~8 ms at ~450 W.
@@ -48,10 +48,16 @@ def test_every_corner_turns_on_inside_the_soa_target():
             assert r.soa_ok, (v, fet, r.p_peak_w, r.soa_limit_w)
 
 
-def test_the_spec_circuit_passes_and_says_so(capsys):
-    assert ss.assess() == []
-    assert ss.main([], ss.SPEC) == 0
-    assert "PASS" in capsys.readouterr().out
+def test_the_spec_circuit_fails_on_the_key_off_line_and_nothing_else(capsys):
+    # ⛔ The design does NOT pass at the load the aux block put on the tap. The
+    # key-off decay is over the derated DC SOA line at 84 V, and that is the
+    # whole of the verdict: every KEY ON corner is still inside its own line.
+    fails = ss.assess()
+    assert [f for f in fails if not f.startswith("key off")] == []
+    assert [f for f in fails if f.startswith("key off, 84 V")] != []
+    assert ss.main([], ss.SPEC) == 1
+    out = capsys.readouterr().out
+    assert "⛔ FAIL" in out and "✅ PASS" not in out
 
 
 def test_settled_gate_drive_is_the_divider_and_inside_the_gate_rating():
@@ -68,6 +74,53 @@ def test_turn_on_delay_is_the_gate_rc_reaching_threshold(spec_84):
     assert 0.05 < spec_84.turn_on_delay_s < 0.25
 
 
+# --- the load is DERIVED, and it moves -------------------------------------------
+def one_more_aux_channel(d):
+    """The design with a fifth 12 V aux output hung on U303.
+
+    The cheapest thing this netlist could grow. ⚠️ The point of the fixture is
+    that NOTHING in soft_start.py mentions aux channels: the tap current it
+    charges 440 µF with has to follow the netlist by itself, or it is a typed
+    number wearing a derivation.
+    """
+    from tools.model import Net
+    return d.with_net(Net("AUX12V_5", (("U303", "OUT5"),), "12V",
+                          source="fixture: one more 1 A aux channel"))
+
+
+def test_the_load_is_the_tap_current_power_budget_derives():
+    from tools import netlist, power_budget
+    r = power_budget.budget()
+    assert ss.I_LOAD_MAX == pytest.approx(r.tap_a)
+    assert ss.I_LOAD_MAX == pytest.approx(ss.tap_current_a(netlist.current()))
+    assert ss.P_LOAD == pytest.approx(ss.I_LOAD_MAX * ss.V_LVC)
+    # The WHOLE tap, not one converter: Q101 is upstream of both, so the
+    # Cincon's 3 W is inside this figure as well as the 12 V brick's input.
+    assert ss.I_LOAD_MAX > r.conv_in_a
+    assert ss.I_LOAD_MAX == pytest.approx(
+        r.conv_in_a + power_budget.LOGIC_IN_W / power_budget.LVC_V)
+
+
+def test_one_more_aux_channel_moves_the_load_the_soft_start_carries():
+    from tools import netlist
+    d = netlist.current()
+    before, after = ss.tap_current_a(d), ss.tap_current_a(one_more_aux_channel(d))
+    # 1 A at 12 V, through the converter's efficiency, at the 60 V LVC.
+    assert after - before == pytest.approx(1.0 * 12.0 / 0.90 / 60.0, rel=1e-6)
+
+
+def test_a_heavier_tap_is_a_hotter_switch(monkeypatch):
+    """And the number reaches the simulation, not just the report's header."""
+    from tools import netlist
+    heavier = ss.tap_current_a(one_more_aux_channel(netlist.current()))
+    base_on, base_off = ss.simulate_key_on(84.0), ss.key_off(84.0)
+    monkeypatch.setattr(ss, "I_LOAD_MAX", heavier)
+    monkeypatch.setattr(ss, "P_LOAD", heavier * ss.V_LVC)
+    assert ss.simulate_key_on(84.0).i_peak_a > base_on.i_peak_a
+    assert ss.simulate_key_on(84.0).p_peak_w > base_on.p_peak_w
+    assert ss.key_off(84.0).p_max_w > base_off.p_max_w
+
+
 # --- the physics, checked from outside the integrator ---------------------------
 @pytest.mark.parametrize("r_pd", [100e3, 330e3, 560e3])
 @pytest.mark.parametrize("v_pack", [84.0, 60.0])
@@ -78,10 +131,15 @@ def test_the_ode_agrees_with_kcl_where_the_closed_form_holds(r_pd, v_pack):
 
 
 def test_kcl_by_hand_for_the_spec_pull_down():
-    # I(C105) = (V - Vpl)/R_PD - Vpl/R_GS, Vpl = 3 + sqrt(1.3 A / K) = 3.49 V
-    # R_PD 540 k: 149.1 uA - 34.9 uA = 114.2 uA -> 68.1 nF x 84 V / 114.2 uA = 50.1 ms
+    # I(C105) = (V - Vpl)/R_PD - Vpl/R_GS. At mid-ramp the FET carries
+    # 440 uF x 84 V / 51 ms = 0.72 A into the caps plus the tap's 1.93 A, so
+    # Vpl = 3 + sqrt(2.65 A / 5.558) = 3.69 V.
+    # R_PD 540 k: 148.7 uA - 36.9 uA = 111.8 uA -> 68.1 nF x 84 V / 111.8 uA = 51.2 ms
+    # ⚠️ The 1.93 A is the DERIVED tap current: this hand figure moves when the
+    # netlist's load does, which is the point -- and is why it is written out.
+    assert ss.I_LOAD_MAX == pytest.approx(1.93, abs=0.005)
     assert ss.miller_estimate_s(84.0, ss.Circuit(c_gs=0.0)) == \
-        pytest.approx(0.0501, rel=0.02)
+        pytest.approx(0.0512, rel=0.02)
 
 
 def test_the_gate_source_resistor_opposes_the_pull_down():
@@ -165,12 +223,77 @@ def test_without_c107_a_plug_in_turns_the_fet_on_with_the_key_off():
 
 
 def test_key_off_delay_is_c107_through_r110():
-    # 13.13 V (84 x 100/640) decaying to the 2.33 V plateau of a minimum-threshold FET
+    # 13.13 V (84 x 100/640) decaying to the plateau of a minimum-threshold FET
+    # at the derived load.
     tau = 100e3 * (4.7e-6 + 68e-9 + ss.C_ISS)
-    v_pl = 2.0 + math.sqrt(0.62 / ss.FAST.k)
+    v_pl = 2.0 + math.sqrt(ss.I_LOAD_MAX / ss.FAST.k)
     assert ss.key_off_delay_s(84.0) == pytest.approx(
         tau * math.log((84.0 * 100 / 640) / v_pl))
     assert ss.key_off_delay_s(84.0, ss.Circuit(c_gs=0.0)) < 0.02
+
+
+# --- key OFF: the criterion that is IN the verdict ---------------------------------
+def test_the_key_off_soa_line_is_in_the_verdict_and_bites_today():
+    # ⛔ This is the defect the check was written for, and it is the CURRENT
+    # design: the tool used to print this ⛔ inline and exit 0 because assess()
+    # never looked at it.
+    hot = ss.key_off(84.0)
+    assert not hot.ok
+    assert hot.p_max_w == pytest.approx(ss.I_LOAD_MAX * 84.0)
+    assert hot.soa_limit_w == pytest.approx(ss.SOA_DC_84V_TC70 * ss.SOA_DERATE)
+    assert [f for f in ss.assess() if f.startswith("key off, 84 V")] != []
+    assert ss.main([], ss.SPEC) == 1
+
+
+def test_the_key_off_verdict_follows_the_load_it_is_not_always_on(monkeypatch):
+    # At the 0.62 A that predated the aux block, the same criterion clears --
+    # so what fails is the load, not a check that can only ever say no.
+    monkeypatch.setattr(ss, "I_LOAD_MAX", 0.62)
+    monkeypatch.setattr(ss, "P_LOAD", 0.62 * ss.V_LVC)
+    hot = ss.key_off(84.0)
+    assert hot.ok and hot.sim_ok
+    assert ss.assess() == []
+
+
+def test_the_integrated_decay_is_under_the_bound_and_still_over_the_line():
+    # Refining the bound into a simulation does NOT rescue the design: it
+    # takes 162 W down to ~147 W, and the line is 138 W.
+    hot = ss.key_off(84.0)
+    assert hot.p_sim_w < hot.p_max_w        # so the bound is the stricter test
+    assert not hot.sim_ok
+    assert hot.energy_j > 15.0              # ~21 J, mostly after the hold
+
+
+def test_the_decay_is_not_a_short_pulse_so_the_dc_line_is_the_right_row():
+    hot = ss.key_off(84.0)
+    assert hot.pulse_s > 0.100                                  # past the last row
+    assert hot.soa_at_pulse_w == pytest.approx(hot.soa_limit_w)
+    # ⚠️ What makes it slow is the GATE's RC, not the 440 µF: the caps alone
+    # would be emptied in ~19 ms at this load.
+    assert hot.pulse_s > 5 * (ss.C_LOAD * 84.0 / ss.I_LOAD_MAX)
+
+
+def test_the_decay_integration_step_is_fine_enough():
+    coarse, fine = ss.key_off_decay(84.0, dt=50e-6), ss.key_off_decay(84.0, dt=2e-6)
+    assert coarse[0] == pytest.approx(fine[0], rel=1e-3)     # peak
+    assert coarse[1] == pytest.approx(fine[1], rel=1e-3)     # energy
+
+
+def test_the_60_v_corner_is_under_the_line_so_the_check_discriminates():
+    assert ss.key_off(60.0).ok
+    assert [f for f in ss.assess() if f.startswith("key off, 60 V")] == []
+
+
+def test_the_key_off_figure_is_stated_as_a_bound_with_its_alternative():
+    hot = ss.key_off(84.0)
+    # The bound is I_LOAD_MAX x V_pack; the constant-power case held to the
+    # converters' stated 43 V input floor is lower, and the verdict text says
+    # which is which rather than quietly using the kinder one.
+    assert hot.dropout_case_w < hot.p_max_w
+    assert hot.dropout_case_w == pytest.approx(
+        ss.P_LOAD * (84.0 / ss.V_CONVERTER_MIN - 1.0))
+    text = " ".join(ss.assess())
+    assert "BOUND" in text and f"{ss.V_CONVERTER_MIN:.0f} V" in text
 
 
 # --- solving for the resistor ----------------------------------------------------
@@ -268,17 +391,18 @@ def test_an_unreadable_value_is_an_error_not_a_zero():
         ss._value(Part("R9", "X", "0805", "POWER", "R", ("1", "2"), 1.0, value="TBD"))
 
 
-def test_the_real_netlists_gate_network_passes(capsys):
+def test_the_real_netlists_gate_network_fails_only_on_the_key_off_line(capsys):
     try:
         from tools import netlist
         design = netlist.current()
     except Exception as exc:                  # the netlist is its own test's job
         pytest.skip(f"tools.netlist does not build a Design: {type(exc).__name__}: {exc}")
     c = ss.circuit_from(design)
-    assert ss.assess(c) == []
+    assert [f for f in ss.assess(c) if not f.startswith("key off")] == []
+    assert [f for f in ss.assess(c) if f.startswith("key off, 84 V")] != []
     # The same design as the specified one, to within a 5 % resistor.
     assert ss.differences(c, ss.SPEC, rel=0.05) == []
-    assert ss.main([]) == 0
+    assert ss.main([]) == 1
     assert "read off tools/netlist.py" in capsys.readouterr().out
 
 

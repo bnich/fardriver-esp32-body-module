@@ -317,9 +317,14 @@ _POWER_ENTRY_PARTS = (
          footprint_mm=(10.41, 15.88), v_max=200.0,
          value="P-ch -200 V, V_GS ±20 V, V_GS(th) -2…-4 V",
          source=f"'D13', the module's high-side power switch: S = HV_BPLUS, "
-                f"D = HV_SW. plan §3.2.5, BOM E13; chosen on SOA — 114 W at a "
-                f"~50 ms ramp clears the 70 °C DC line (≈191 W at 84 V, "
-                f"DS99913D Fig. 14). {_DS_IXYS}: one sheet for the IXTA "
+                f"D = HV_SW. plan §3.2.5, BOM E13; chosen on SOA. At the tap "
+                f"current the aux block put on it, the ~50 ms ramp peaks at "
+                f"about 195 W, inside DS99913D Fig. 14 at its equal-energy "
+                f"pulse width but ABOVE the 70 °C DC line (≈191 W at 84 V): "
+                f"the choice now rests on the ramp being a pulse. ⛔ And the "
+                f"key-off decay is over that DC line at 84 V — "
+                f"tools/soft_start.py has every figure and FAILS on it. "
+                f"{_DS_IXYS}: one sheet for the IXTA "
                 f"(TO-263) and IXTP (TO-220) -- one die, one SOA, so "
                 f"tools/soft_start.py holds for either. p.3 TO-263 outline: A "
                 f"max 4.83 mm, E 10.41, L 15.88. The IXTA because JLC can "
@@ -571,8 +576,10 @@ _POWER_CONVERTER_PARTS = (
          footprint_mm=(5.3, 2.9), v_max=1000.0,
          source=f"Hold-up blocking diode, HV_C2_P → HV_C2_HOLD_IN. Plain "
                 f"silicon (plan §3.2.6): the SMA 1N4007, 1000 V / 1 A, 30 A "
-                f"surge; it carries <= 0.62 A (the whole module at 60 V) "
-                f"behind F201. The DO-41 1N4007 (BOM E10) is the breadboard's. "
+                f"surge; it is in series with the LOGIC rail ALONE, so it "
+                f"carries U202's input current and not the module's tap -- "
+                f"3 W at its 43 V input floor is 0.07 A, a 14x margin on the "
+                f"1 A. The DO-41 1N4007 (BOM E10) is the breadboard's. "
                 f"⬜ SMA envelope 2.44 mm, not read off a drawing"),
     Part("FH201", "01110501Z", "5 × 20 fuse holder: two PCB clips", "POWER",
          "FUSECLIP", ("1", "2"), 7.1, footprint_mm=(22.6, 5.2),
