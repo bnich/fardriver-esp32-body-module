@@ -120,12 +120,15 @@ def test_the_choke_follows_wurths_recommended_hole_pattern(mpn):
 
 
 def test_both_type_s_codes_share_one_land_pattern():
-    """⛔ Not "they happen to be equal": the same drawing, so a correction to
-    it reaches both.  Type M (7448030417, 7,5 × 10,7 pins, ø1,1 holes) is a
-    different pattern and is deliberately not in BY_MPN at all."""
+    """⛔ Not "they happen to be equal": the SAME OBJECT, bound once and mapped
+    twice, so a correction to it cannot reach one code and miss the other.
+    `==` alone would pass over two separate factory calls that had drifted
+    apart in a way the constants above no longer catch; `is` cannot.
+    Type M (7448030417, 7,5 × 10,7 pins, ø1,1 holes) is a different pattern
+    and is deliberately not in BY_MPN at all."""
     a, b = (drawn.BY_MPN[m] for m in WURTH_TYPE_S)
-    assert a.title == b.title == "WE_CMBNC_TYPE_S"
-    assert a.pads == b.pads
+    assert a is b
+    assert a.title == "WE_CMBNC_TYPE_S"
     assert "7448030417" not in drawn.BY_MPN
 
 

@@ -11,7 +11,7 @@ from dataclasses import replace
 
 import pytest
 
-from tools import board_params, footprint_lib, netlist
+from tools import board_params, footprint_lib, netlist, power_budget
 
 POWER_BUSES = ("PWR-OUT", "PWR-LOGIC")
 
@@ -70,31 +70,52 @@ def test_a_power_bus_mated_one_contact_off_puts_no_rail_on_another(d):
         assert name in joins, f"{name} is not a choke-winding return"
 
 
-#: What one contact of a 2.54 mm inter-board header carries continuously. The
-#: family is still the owner's open decision (BD-22); every candidate on the
-#: list is rated at or above this, so the bus is sized to the floor they share
-#: rather than to a part number that is not chosen yet.
+#: What one contact of a 2.54 mm inter-board header carries continuously: a
+#: deliberately conservative floor, not a figure read off a part. The family
+#: is still the owner's open decision (BD-22), and ⛔ NO candidate in the
+#: survey (../docs/esp32-board-design-record.md §4.1) has a published
+#: per-contact rating — that table gives mated height, contact type and
+#: coverage, from LCSC listings rather than makers' drawings, and says so.
+#: ⬜ Confirm against the chosen part's own datasheet when owner item 6 is
+#: decided. It sets the width of the design's biggest new connector.
 CONTACT_A = 1.0
+
+
+def _amps_per_contact(load: float, contacts: int) -> float:
+    """With ONE contact fretted OPEN — a header does not fail by halves."""
+    return load / (contacts - 1)
+
+
+def test_one_amp_per_contact_is_a_criterion_that_can_fail(d):
+    """⚠️ Proven on a SYNTHETIC width, so it stays a criterion whatever the
+    real bus is. The test below once carried its own bite-proof — 'one contact
+    fewer must fail' — which made it fail the moment anyone WIDENED the bus,
+    with a message that read as a bug. Task 7 may well widen it."""
+    load = power_budget.budget(d).load_12v_a
+    assert _amps_per_contact(load, 9) > CONTACT_A, (
+        f"at {load:.2f} A even a 9-contact bus would pass, so the check below "
+        f"cannot tell a wide enough bus from a narrow one")
+    assert _amps_per_contact(load, 10) <= CONTACT_A
 
 
 def test_the_power_bus_has_a_contact_for_every_amp_the_budget_derives(d):
     """⚠️ The bus and the budget must not drift apart. PWR-OUT's width is held
     to what tools/power_budget.py DERIVES from the netlist, with one contact
-    fretted OPEN — a header does not fail by halves, and the aux block took
-    this crossing from 2.62 A to 8.47 A in one commit (IO-10)."""
-    from tools import power_budget
+    fretted OPEN, and the aux block took this crossing from 2.62 A to 8.47 A
+    in one commit (IO-10). Widening the bus can only help; narrowing it below
+    what the load needs fails here."""
     load = power_budget.budget(d).load_12v_a
     up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
-    assert load / (up["V12"] - 1) <= CONTACT_A, (load, up["V12"])
+    assert _amps_per_contact(load, up["V12"]) <= CONTACT_A, (load, up["V12"])
     assert up["GND"] >= up["V12"], "the return carries every amp the feed does"
-    assert load / (up["V12"] - 2) > CONTACT_A, (
-        "ONE contact fewer must fail this, or the criterion cannot bite: "
-        f"{up['V12']} is the narrowest bus {load:.2f} A allows")
 
 
 def test_each_crossing_carries_what_the_boards_above_it_use(d):
     up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
-    assert up["V12"] >= 4 and up["V5"] and up["KEY_SENSE"]
+    # The V12 COUNT is held to the load by the two tests above; here it only
+    # has to be there. A typed ">= 4" read like the requirement, three lines
+    # under a check that derives ten.
+    assert up["V12"] and up["V5"] and up["KEY_SENSE"]
     assert set(up) == {"V12", "V5", "KEY_SENSE", "GND"}
     brain = Counter(_nets(_halves(d, "PWR-LOGIC")[0]))
     assert set(brain) == {"V5", "V3P3", "KEY_SENSE", "GND"}, "LOGIC uses no V12"

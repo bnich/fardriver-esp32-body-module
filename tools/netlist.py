@@ -412,8 +412,13 @@ _POWER_ENTRY_PARTS = (
                 f"on L102 would meet at 94 % of its rating. {_DS_WE_3A} p.1: "
                 f"3 A at 70 °C, 40 mΩ max, 300 V AC, 2100 V AC test; 22,0 max "
                 f"tall, 18,0 max wide, 14,0 max deep; pins 3,5 ± 0,5 below the "
-                f"body — every mechanical dimension identical to {_DS_WE} "
-                f"p.1's, so it is a drop-in and shares its land pattern. "
+                f"body — every dimension the footprint and the envelope depend "
+                f"on is identical to {_DS_WE} p.1's, so it is a drop-in and "
+                f"shares its land pattern. ⚠️ ONE callout on the two front "
+                f"views differs: the 3,2 core-gap dimension is '3,2 max.' on "
+                f"the 2 A 7448022010 and '3,2 min.' on this 3 A 7448023005. It "
+                f"sits inside the 18,0 max width and touches neither the pads "
+                f"nor the height, so the shared land pattern stands. "
                 f"⚠️ 5 mH (+50/−30 % at 10 kHz) is HALF the inductance of the "
                 f"part on L102: TDK's manual "
                 f"({_DS_TDK} p.6-8) asks for a choke on each supply input and "
@@ -592,11 +597,18 @@ _POWER_CONVERTER_PARTS = (
          source="Tie BASEPLATE → GND. A shorted Y2 puts the pack on U201's "
                 "BASEPLATE, and BD-27 bolts that baseplate to the box floor, "
                 "so the metal of the box goes with it: the fault has to blow "
-                "the harness KLKD002, never leave touchable metal sitting at "
+                "the harness KLKD003, never leave touchable metal sitting at "
                 "84 V. COPPER, not a chip jumper: the prospective current is "
-                "~200 A, and a 1206 0 Ω would race the 2 A fuse and could open "
-                "first -- leaving the baseplate floating at 84 V, the exact "
-                "fault this tie prevents. ⚠️ NOT a proven single-point tie any "
+                "~200 A, and this tie carries every amp of it until the tap "
+                "fuse clears. The KLKD003 melts at 7.8 A²s "
+                "(littelfuse_klkd.pdf p.2, Average Melting I²t) -- about "
+                "200 µs at 200 A. A 1206 0 Ω link publishes no fusing I²t at "
+                "all, only a continuous rating in the low amps: nothing says "
+                "it lasts those 200 µs, and a tie that opens before the fuse "
+                "leaves the baseplate floating at 84 V, the exact fault it "
+                "exists to prevent. A 2 mm strip of board copper is the one "
+                "conductor here whose survival is not in question. "
+                "⚠️ NOT a proven single-point tie any "
                 "more: bolted to a floor the box bonds to ground, BASEPLATE "
                 "reaches GND through the chassis as well as through R211, so "
                 "the fault splits between them and the two paths enclose a "
@@ -1450,10 +1462,12 @@ _NETS_84V = (
     Net("HV_BPLUS", _p("J101.1 D101.K Q101.S R110.2 D102.K C107.2"),
         domain="84V",
         source="B+ from the tap downstream of the XT90-S; fused UPSTREAM IN THE "
-               "HARNESS by the KLKD002 (plan §3.2.5), never on the board"),
+               "HARNESS by the 3 A KLKD003 (plan §3.2.5), never on the board"),
     Net("KSW", _p("J101.6 R112A.1 R107.1"), domain="84V",
         source="The key switch's OUTPUT: 84 V with the key on. The switch, its "
-               "2 A fuse and the FarDriver KEY wire are harness (plan §3.2.5); "
+               "own 2 A inline fuse and the FarDriver KEY wire are harness "
+               "(plan §3.2.5) -- ⚠️ a DIFFERENT fuse from the module's 3 A "
+               "B+ tap (KLKD003): two branches off the XT90-S, one fuse each; "
                "the module only taps it, for D13's gate drive and for IN-12, "
                "and never sources or switches KEY (D10). ⛔ NO clamp here: the "
                "wire reaches only two 400 V strings of ≥ 330 kΩ, whose far ends "
@@ -1578,9 +1592,11 @@ _NETS_RAILS = (
              "U305.PVIN U305.EN C311.1 C312.1 C313.1"),
         domain="12V", interface="PWR-OUT",
         source="DC-DC #1's output, +S strapped to +V at the brick. 2.62 A "
-               "measured (plan §3.2.3), and 8.47 A worst case now the aux "
-               "block hangs off it (spec §8). It never leaves the box: every "
-               "12 V wire out is a TPS4H160B channel, aux 1-4 included, and "
+               "measured (plan §3.2.3), and 8.47 A nominal now the aux block "
+               "hangs off it — every channel at its 1 A design load, not at "
+               "its limiter's ceiling (spec §8, tools/power_budget.py). It "
+               "never leaves the box: every 12 V wire out is a TPS4H160B "
+               "channel, aux 1-4 included, and "
                "the 5 V aux rail is a buck off it. D315 is its clamp, and "
                "U305's 42 V absolute input rating clears that clamp's 29.2 V"),
     Net("V5",
@@ -2319,7 +2335,7 @@ _INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board
 _CONNECTORS = (
     # ── POWER ───────────────────────────────────────────────────────────────
     _tb("J101", "POWER", "Pack entry: B+, two B− returns and the key tap on one "
-        "plug. The KLKD002 in its FEB-11-11 holder is UPSTREAM IN THE HARNESS, "
+        "plug. The KLKD003 in its FEB-11-11 holder is UPSTREAM IN THE HARNESS, "
         "not a board part", (
             _cp("1", "HV_BPLUS", "84 V tap, downstream of the XT90-S"),
             _cp("2", "", "empty: a pitch of air between B+ and the returns"),
@@ -2330,7 +2346,9 @@ _CONNECTORS = (
                          "returns, so no strand can pull KEY down"),
             _cp("6", "KSW", "the key switch's OUTPUT, 84 V with the key on; "
                             "~0.3 mA of gate drive and sense. The switch, its "
-                            "2 A fuse and the FarDriver KEY wire are harness"),
+                            "own 2 A inline fuse and the FarDriver KEY wire "
+                            "are harness -- not the 3 A KLKD003 on pin 1's "
+                            "branch"),
         ), pitch=7.62, note="The only 7.62 mm terminal, so no other plug seats "
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),

@@ -119,11 +119,20 @@ def wurth_cmbnc_type_s():
     ø1.5 holes.  Windings 1-4 and 2-3.
 
     ⚠️ ONE land pattern for the whole Type S family, because the family shares
-    it: `we7448022010.pdf` p.1 (10 mH, 2 A -- L102) and `we7448023005.pdf` p.1
-    (5 mH, 3 A -- L101) give the same 7,7 ± 0,5 × 5,0 ± 0,5 pattern, the same
-    ø1,5 holes, the same ø1,0 ref pins, the same 18,0 × 14,0 × 22,0 max body
-    and the same 3,5 ± 0,5 pin length.  Type M (`7448030417`, 26,0 mm tall) is
-    a DIFFERENT pattern and must never be pointed here."""
+    every dimension the footprint and the envelope depend on: `we7448022010.pdf`
+    p.1 (10 mH, 2 A -- L102) and `we7448023005.pdf` p.1 (5 mH, 3 A -- L101)
+    give the same 7,7 ± 0,5 × 5,0 ± 0,5 pattern, the same ø1,5 holes, the same
+    ø1,0 ref pins, the same 18,0 × 14,0 × 22,0 max body and the same
+    3,5 ± 0,5 pin length.
+    ⛔ NOT "every dimension".  One callout on the two front views differs: the
+    3,2 core-gap dimension is `3,2 max.` on the 2 A 7448022010 and `3,2 min.`
+    on the 3 A 7448023005.  It is inside the 18,0 max width and touches
+    neither a pad nor the height, which is why the shared pattern survives it.
+    It is named here because "identical" was the claim, and a difference in a
+    dimension this pattern DOES depend on would not survive: before adding a
+    third Type S code, read its p.1 against these two rather than assuming.
+    Type M (`7448030417`, 26,0 mm tall) is a DIFFERENT pattern and must never
+    be pointed here."""
     def at(num, x, y, first=False):
         return Pad(num, x, y, 1.5 + 2 * ANNULAR_MM, 1.5 + 2 * ANNULAR_MM, 1.5,
                    "RECT" if first else "ELLIPSE")
@@ -235,6 +244,12 @@ def tag_connect_tc2030_nl():
 LANDS = {"TC2030-NL": tag_connect_tc2030_nl()}
 
 
+#: ⚠️ ONE object for the whole Type S family, bound once and mapped twice, so
+#: the two codes are the SAME footprint rather than two that happen to be
+#: equal: a correction to `wurth_cmbnc_type_s` cannot reach one and miss the
+#: other. `tests/test_drawn_footprints.py` asserts the identity.
+_TYPE_S = wurth_cmbnc_type_s()
+
 BY_MPN = {
     "CN150B110-12/CO": tdk_cn150b110(),
     "VY2472M49Y5US6": vishay_vy2_flat(),
@@ -242,8 +257,8 @@ BY_MPN = {
     "PA35V680M10x15": jierr_pa_10x15_lying(),
     "01110501Z": fuse_clip_pair(),
     "EC7BW-110S05": cincon_ec7bw_110(),
-    "7448022010": wurth_cmbnc_type_s(),
-    "7448023005": wurth_cmbnc_type_s(),
+    "7448022010": _TYPE_S,
+    "7448023005": _TYPE_S,
     "NET-TIE": net_tie(),
     "0001.2504": fuse_in_clips(),
 }
