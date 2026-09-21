@@ -214,6 +214,80 @@ def test_the_brass_posts_are_bonded_at_one_end_only_so_one_return_is_sized(d):
         assert len([cp for cp in c.pins if cp.net == "GND"]) == 1, c.refdes
 
 
+def test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d):
+    """⛔ Audit C2: the BOM named a VHR-4N for a wafer that is a FIVE-circuit
+    body with its third post omitted. JST's housing table (VH drawing p.2)
+    gives the 4-circuit housing B = 15.78 against the wafer's 19.74: cavities
+    1-4 only, so it cannot carry contact 5, and its lock does not meet the
+    wafer. The loom as listed could not be built, and nothing read the housing.
+
+    Protects: the housing's circuit count IS the body's (`vh_body`'s `ways`),
+    and the cavities left empty ARE the posts the contact table omits -- both
+    derived from the header's own tables, so neither can be typed apart from
+    them again. And the two ends come from one place: the keyed string and
+    both halves' sources name the housing, and `jlc_bom` orders it."""
+    housing, circuits, empty = netlist.PWROUT_HOUSING
+    halves = _halves(d, "PWR-OUT")
+    assert halves, "no PWR-OUT half to hold the housing to"
+    for c in halves:
+        assert c.footprint_mm == netlist.vh_body(circuits), (
+            f"{c.refdes}: a {circuits}-circuit housing on a body that is not "
+            f"{circuits} circuits long")
+        numbered = {cp.pin for cp in c.pins}
+        omitted = {str(i) for i in range(1, circuits + 1)} - numbered
+        assert set(empty) == omitted, (
+            f"{c.refdes}: the housing leaves {set(empty)} empty but the wafer "
+            f"omits {omitted}")
+        assert housing in c.keyed and housing in c.source, c.refdes
+        assert netlist._MATE_BY_REFDES[c.refdes] == housing, c.refdes
+    ends = dict((mpn, qty) for mpn, qty, _ in netlist.pwrout_loom_ends())
+    assert ends[f"JST {housing}"] == 2                      # one per end
+    # ...and a crimp on both ends of every conductor, by the contact JST gives
+    # that gauge: 4 heavy, 4 light.
+    for crimp, n in Counter(c for _, c, _ in netlist.PWROUT_LOOM.values()).items():
+        assert ends[f"JST {crimp}"] == 2 * n, crimp
+    assert ends == {"JST VHR-5N": 2, "JST SVH-41T-P1.1": 4, "JST SVH-21T-P1.1": 4}
+
+
+def test_the_housing_check_fires_on_the_vhr_4n(d):
+    """A check nothing can fail is not a check: the housing the BOM DID name.
+    Four circuits on a five-circuit body, and its cavity-3 omission would be
+    the wrong post anyway."""
+    with mock.patch.object(netlist, "PWROUT_HOUSING", ("VHR-4N", 4, ("3",))):
+        with pytest.raises(AssertionError, match="not 4 circuits long"):
+            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d)
+    # ...and the right size with the wrong cavity empty is the other half.
+    with mock.patch.object(netlist, "PWROUT_HOUSING", ("VHR-5N", 5, ("2",))):
+        with pytest.raises(AssertionError, match="but the wafer omits"):
+            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d)
+
+
+def test_every_cabled_half_has_a_cable_end_bought_with_it(d):
+    """⛔ Audit M31: the CTRL ribbon's IDC socket was named in a prose string
+    and ordered nowhere. A loom is two headers AND two cable ends; a header
+    with nothing booked to plug onto it is a loom that cannot be built.
+
+    Protects: every cabled half names its mate, the mate is either an LCSC
+    part ordered loose (`_LOOSE_BY_MPN`, so the fixture and `jlc_bom` carry
+    it) or the PWR-OUT housing (owner-buy, `pwrout_loom_ends`), and nothing
+    names a mate for a half that is not cabled."""
+    cabled = {c.refdes for c in d.connectors if is_cabled(c.interface)}
+    assert cabled == set(netlist._MATE_BY_REFDES), (
+        f"mates for {set(netlist._MATE_BY_REFDES) ^ cabled}")
+    off_lcsc = {mpn.removeprefix("JST ") for mpn, _, _ in netlist.pwrout_loom_ends()}
+    for ref, mpn in netlist._MATE_BY_REFDES.items():
+        assert mpn in netlist._LOOSE_BY_MPN or mpn in off_lcsc, (ref, mpn)
+    # The socket: one per header, its LCSC code in the catalogue the fixture
+    # is built from, and on the order list with both headers named.
+    code, maker, per, _ = netlist._LOOSE_BY_MPN["FC-2.54-24P"]
+    assert (code, per) == ("C5274612", 1) and maker.endswith("FC-2.54-24P")
+    assert netlist.lcsc_catalogue()[code] == maker
+    from tools import jlc_bom
+    line = next(l for l in jlc_bom.loose_list(d).splitlines() if l.startswith(code))
+    assert " x2 " in line and "J105" in line and "J312" in line
+    assert "VHR-5N" in jlc_bom.loom_list()
+
+
 def test_every_cabled_half_is_positively_keyed(d):
     """⛔ What a cable has INSTEAD of a palindrome, and the reason it may not
     simply be exempted: a loom is offered to its header by hand at every

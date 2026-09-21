@@ -268,6 +268,13 @@ FLOOR_SEAT = "U201"
 #: runs above the floor -- a thicker or poorer pad spends both. PROVISIONAL:
 #: chosen with the enclosure.
 THERMAL_PAD_T = 0.5
+#: Two lengths within this of each other are ONE length: a connector pair and
+#: the gap it mates across, a gap-setting standoff and the pair beside it, and
+#: the window a short standoff is selected into under a connector stop -- a
+#: pillar this much under the stop is pulled up to by its screw without
+#: bowing the board. Wider, and the two spacings the stack is built to start
+#: to be two.
+SAME_LENGTH_MM = 0.1
 
 FLOOR_NAME, LID_NAME = "FLOOR", "LID"
 
@@ -505,8 +512,10 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
               "sets", its own length IS the board spacing -- the pillar puts
               the boards exactly there, and `stack_height` fails the design if
               anything between them is taller. When it is "shimmed" the
-              standoff is deliberately SHORT of a spacing something else sets
-              and defines nothing.
+              standoff is deliberately SHORT of a spacing a chosen connector
+              pair sets and defines nothing: `stack_height` bounds any shim
+              by the shortfall and states the window the delivered pieces
+              are selected into.
 
       gap   = mated, when both halves' heights are confirmed (the connector is
               chosen and it sets the spacing -- `stack_height` fails the design
@@ -690,7 +699,7 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                 f"connector pair {g.chosen[0].refs} sets the boards "
                 f"{g.gap_mm:.1f} mm apart -- {culprit}")
         for pair in g.pairs:
-            if abs(pair.mated_mm - g.gap_mm) <= 0.1:
+            if abs(pair.mated_mm - g.gap_mm) <= SAME_LENGTH_MM:
                 continue
             if pair.confirmed:
                 problems.append(
@@ -725,7 +734,7 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                         f"it crushes that part when the screws pull up")
                 # ...and TOO TALL for a connector that also has to mate here.
                 for pair in g.chosen:
-                    if abs(pair.mated_mm - s.height_mm) > 0.1:
+                    if abs(pair.mated_mm - s.height_mm) > SAME_LENGTH_MM:
                         problems.append(
                             f"gap {where}: the {s.name} standoff holds the "
                             f"boards {s.height_mm:.2f} mm apart and the chosen "
@@ -734,33 +743,62 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                             f"sets a gap a connector also has to reach must "
                             f"equal it, or be specified short and shimmed")
             elif s.seating == "shimmed":
-                # SHIMMED: it is not allowed to be the taller of the two. Over
-                # the gap it lifts the boards off the connectors it was there to
-                # leave in charge, and each 0.1 mm comes off their engagement.
-                if s.height_mm > g.gap_mm + 1e-9:
+                # SHORT OF A STOP: it is specified under a spacing a CHOSEN
+                # connector pair sets, and only stops the boards flexing apart.
+                # Three ways it is wrong. No chosen pair: there is no stop to
+                # be short of, and a short pillar under a gap the parts set is
+                # a press. Longer than the gap: it lifts the boards off the
+                # connectors it was there to leave in charge, and every 0.1 mm
+                # comes off their engagement. A shim thicker than the shortfall:
+                # the same lift, by the shim -- ⛔ so each shim in the table is
+                # bounded by gap - standoff, which is ALL a shim may take up.
+                # The delivered spread is not in the model (a Standoff carries
+                # its specified length, not a tolerance): it is handled by
+                # selecting pieces into a window the note states from the gap.
+                pairs = " and ".join(p.refs for p in g.chosen)
+                shims = [x for x in d.standoffs if x.seating == "shim"]
+                shortfall = g.gap_mm - s.height_mm
+                if not g.chosen:
+                    problems.append(
+                        f"gap {where}: the {s.name} standoff is specified SHORT "
+                        f"({s.height_mm:.2f} mm) of a spacing NOTHING sets -- a "
+                        f"short standoff stands under a connector pair whose "
+                        f"drawing sets the gap, and this gap has no chosen pair. "
+                        f"Without one the parts set it ({g.gap_mm:.2f} mm) and "
+                        f"a short pillar is what the screws pull the boards "
+                        f"down onto")
+                elif s.height_mm > g.gap_mm + 1e-9:
                     problems.append(
                         f"gap {where}: the {s.name} standoff is "
                         f"{s.height_mm:.2f} mm against a {g.gap_mm:.2f} mm gap "
-                        f"-- it is specified SHORT and shimmed so the "
-                        f"connectors keep setting this gap, and one longer than "
-                        f"the gap holds the boards apart and un-seats them by "
+                        f"-- it is specified SHORT so {pairs} keep setting this "
+                        f"gap, and one longer than the gap holds the boards "
+                        f"apart and un-seats them by "
                         f"{s.height_mm - g.gap_mm:.2f} mm of their engagement")
-                elif not any(x.seating == "shim" for x in d.standoffs):
-                    problems.append(
-                        f"gap {where}: the {s.name} standoff is specified SHORT "
-                        f"({s.height_mm:.2f} mm of a {g.gap_mm:.2f} mm gap) and "
-                        f"the design carries no shim to take up the "
-                        f"{g.gap_mm - s.height_mm:.2f} mm -- an unshimmed short "
-                        f"standoff is a pillar the screws pull the boards down "
-                        f"onto, which bows them")
                 else:
+                    over = [x for x in shims if x.height_mm > shortfall + 1e-9]
+                    for x in over:
+                        problems.append(
+                            f"gap {where}: the {x.name} shim is {x.height_mm:.2f} "
+                            f"mm under a {s.name} specified {s.height_mm:.2f} mm "
+                            f"in a {g.gap_mm:.2f} mm gap -- a shim may take up "
+                            f"at most the {shortfall:.2f} mm the standoff is "
+                            f"short by, and this one holds the boards "
+                            f"{x.height_mm - shortfall:.2f} mm apart and "
+                            f"un-seats {pairs} by that much of their engagement")
+                    shimmed = sum(x.height_mm for x in shims if x not in over)
+                    lo, hi = g.gap_mm - shimmed - SAME_LENGTH_MM, g.gap_mm - shimmed
                     notes.append(
-                        f"gap {where}: the {s.name} standoff is "
-                        f"{s.height_mm:.2f} mm and the gap is {g.gap_mm:.2f} mm "
-                        f"-- deliberately SHORT, shimmed by "
-                        f"{g.gap_mm - s.height_mm:.2f} mm, so "
-                        f"{' and '.join(p.refs for p in g.chosen) or 'the parts'}"
-                        f" keep setting it. Measure the delivered length")
+                        f"gap {where}: the {s.name} standoff is specified "
+                        f"{s.height_mm:.2f} mm under the {g.gap_mm:.2f} mm "
+                        f"{pairs} set -- deliberately SHORT, so the pairs keep "
+                        f"setting it"
+                        + (f", shimmed by {shimmed:.2f} mm" if shimmed else
+                           ", with NO shim")
+                        + f". Fit only pieces that MEASURE between {lo:.2f} and "
+                        f"{hi:.2f} mm: a longer one holds the boards apart and "
+                        f"un-seats the pairs, a shorter one is a pillar the "
+                        f"screws pull the corner down onto")
         # The baseplate reaches the floor only while nothing beside it hangs
         # deeper. Anything that does lifts the brick off its heatsink, so the
         # gap silently growing to fit it is exactly the failure to catch.

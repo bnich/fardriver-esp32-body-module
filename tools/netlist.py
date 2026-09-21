@@ -1464,6 +1464,15 @@ def dc3_body(per_row: int) -> tuple[float, float]:
 _PWROUT_CONTACTS = (("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE"))
 #: The original body the omitted post is counted out of (JST's "(5-3)").
 _PWROUT_WAYS = 5
+#: PWR-OUT's HOUSING -- the loom's other half -- as (maker part, circuits, the
+#: cavities left EMPTY). ⚠️ The wafer is a FIVE-circuit body with its third
+#: post omitted, so the housing is the five-circuit VHR-5N with cavity 3 left
+#: empty: JST's housing table (VH drawing p.2) gives it B = 19.74, the wafer's
+#: own length. ⛔ The VHR-4N mates the 15.78 mm B4P-VH: cavities 1-4 only, so
+#: it cannot carry contact 5, and its lock does not meet this wafer.
+#: tests/test_interconnect.py holds the circuit count to `_PWROUT_WAYS` and the
+#: empty cavities to the posts `_PWROUT_CONTACTS` omits.
+PWROUT_HOUSING = ("VHR-5N", 5, ("3",))
 
 #: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: the rails between those two
 #: boards, in both directions -- V5 and KEY_SENSE up, and 3.3 V back DOWN for
@@ -2458,6 +2467,28 @@ PWROUT_LOOM = {
 }
 
 
+def pwrout_loom_ends() -> tuple[tuple[str, int, str], ...]:
+    """What the owner buys to make PWR-OUT's loom, as (maker part, qty, why):
+    the housing at each end and a crimp contact on each end of each conductor,
+    COUNTED from `PWROUT_LOOM`, so a conductor cannot be added without the
+    contacts that terminate it. ⛔ None of it is on LCSC, and it is genuine JST
+    (Digi-Key / Mouser) for the same reason the header is: a clone housing's
+    lock and contact plating are the parts of the 10 A figure nobody can see."""
+    housing, circuits, empty = PWROUT_HOUSING
+    ends = [(f"JST {housing}", 2,
+             f"the {circuits}-circuit housing with cavity {'/'.join(empty)} "
+             f"left EMPTY, one per end of the loom")]
+    by_crimp: dict[str, list[tuple[str, int]]] = {}
+    for net, (awg, crimp, _) in PWROUT_LOOM.items():
+        by_crimp.setdefault(crimp, []).append((net, awg))
+    for crimp, nets in by_crimp.items():
+        thinnest, thickest = VH_CONTACTS[crimp]
+        ends.append((f"JST {crimp}", 2 * len(nets),
+                     f"the AWG #{thinnest}-#{thickest} crimp, both ends of "
+                     + " and ".join(f"{n} ({awg} AWG)" for n, awg in nets)))
+    return tuple(ends)
+
+
 def _signal_gnd_pins(signals: tuple[str, ...]) -> tuple[ConnPin, ...]:
     """2 × len(signals): odd = signal, even = GND. One column per signal, so a
     signal spine cannot silently run out of contacts or carry an empty one.
@@ -2546,11 +2577,21 @@ _VH = (f"LCSC C594237: JST B4P(5-3)-VH(LF)(SN), a VH locking header, top entry, 
        "thick and 8.5 deep, posts □1.14 standing 7.7 above it and 3.7 below "
        "the board, body ways × 3.96 - 0.06 = 19.74 long; JST's PCB layout "
        "calls for ø1.65 +0.1 holes, not the 1.0 mm a 0.64 mm post takes")
+#: The loom's OTHER half, said beside the header so both ends of PWR-OUT are
+#: specified from one place and neither can be ordered without the other.
+_VHR = ("The loom mates a JST " + PWROUT_HOUSING[0] + " housing with cavity "
+        + "/".join(PWROUT_HOUSING[2]) + " left EMPTY -- the five-circuit housing "
+        f"of this five-circuit body, B = 19.74 in JST's housing table ({_DS_VH} "
+        "p.2). ⛔ Never the VHR-4N: it mates the 15.78 mm B4P-VH, has cavities "
+        "1-4 only and cannot carry contact 5. OWNER-BUY, genuine JST, none of it "
+        "on LCSC: " + "; ".join(f"{qty} × {mpn}, {why}"
+                                for mpn, qty, why in pwrout_loom_ends()))
 #: The post tips, 3.2 mm of wafer plus 7.7 mm of post above the board.
 _VH_H = 10.9
 _VH_LEAD = 3.7
-_VH_KEY = ("the wafer's lock ramp stands proud on ONE wall, and the VHR "
-           "housing has its cutout on one side, so a housing offered the other "
+_VH_KEY = ("the wafer's lock ramp stands proud on ONE wall, and the "
+           + PWROUT_HOUSING[0] + " housing (cavity " + "/".join(PWROUT_HOUSING[2])
+           + " empty) has its cutout on one side, so a housing offered the other "
            "way round meets the ramp and cannot seat; the omitted third post "
            "keys it against a plug of any other size. ⚠️ The OMISSION is not "
            "what polarises it: JST's post-omitted page gives polarity to an "
@@ -2570,8 +2611,9 @@ _DC3 = (f"LCSC C5144580: ZHOURI DC3-2.54-24PAS, a 2×12 shrouded box header, "
         "2.54, shroud 8.6 ±0.15 above the board, tails 3.1 ±0.1, body "
         "2.54 × N/2 + 7.6 = 38.08 by 8.4 ±0.15 — the drawing prints that rule "
         f"on the part ({_DS_DC3} p.1). Its cable end "
-        "is an FC-2.54-24P IDC socket (C5274612) on 3M 3365/24 ribbon, which "
-        "LCSC does not carry")
+        "is the FC-2.54-24P IDC socket, ordered from LCSC with the boards "
+        "(`_LOOSE_BY_MPN`, one per header), on 3M 3365/24 ribbon, which LCSC "
+        "does not carry")
 _DC3_H = 8.6
 _DC3_LEAD = 3.1
 _DC3_KEY = ("a 4.5 ±0.15 mm polarising notch in the shroud with the pin-1 "
@@ -2612,7 +2654,7 @@ _CONNECTORS = (
               _VH_H, footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96,
               hole_mm=1.65, contact_a=10.0, keyed=_VH_KEY,
               leaves_box=False, interface="PWR-OUT", lead_mm=_VH_LEAD,
-              source=f"{_CABLED}. {_VH}. {_MATED_UNKNOWN}"),
+              source=f"{_CABLED}. {_VH}. {_VHR}. {_MATED_UNKNOWN}"),
     Connector("J105", "POWER",
               f"CTRL, POWER side, on top of the board: 2 × {_CTRL_WAYS // 2}, "
               f"the controller row's signals with a ground on both sides of "
@@ -2737,7 +2779,7 @@ _CONNECTORS = (
               footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=1.65,
               contact_a=10.0, keyed=_VH_KEY, leaves_box=False,
               interface="PWR-OUT", lead_mm=_VH_LEAD, side="bottom",
-              source=f"{_CABLED}. {_VH}. {_MATED_UNKNOWN}"),
+              source=f"{_CABLED}. {_VH}. {_VHR}. {_MATED_UNKNOWN}"),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
               "to LOGIC, 3.3 V back down, ground on every other contact",
               _bus(_PWRLOGIC_NETS), 8.5, height_confirmed=True,
@@ -2940,8 +2982,9 @@ _FAB_BY_MPN = {
 
 #: Parts ordered from LCSC with the boards but fitted by the owner, because
 #: JLC would fit them wrong: through-hole parts that must LIE on the board
-#: (the height budget counts them flat; JLC inserts upright), and the fuse,
-#: which clips into its holder. mpn -> (LCSC, maker part, per refdes, why).
+#: (the height budget counts them flat; JLC inserts upright), the fuse, which
+#: clips into its holder, and a cable end that plugs onto a header (named by
+#: `_MATE_BY_REFDES`). mpn -> (LCSC, maker part, per refdes, why).
 _LOOSE_BY_MPN = {
     "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", 1,
                            "bent over and bonded LYING on POWER's underside"),
@@ -2952,11 +2995,36 @@ _LOOSE_BY_MPN = {
     "0001.2504": ("C1665055", "Schurter 0001.2504", 1, "clipped into FH201"),
     "01110501Z": ("C151075", "Littelfuse 01110501Z", 2,
                   "two clips, soldered into FH201's footprint"),
+    "FC-2.54-24P": ("C5274612", "ZHOURI FC-2.54-24P", 1,
+                    "the 2×12 IDC socket pressed onto each end of the CTRL "
+                    "ribbon (3M 3365/24): one per header, 1.5 A per contact, "
+                    "-45…+105 °C, the same Zhouri family as the header"),
 }
+
+#: The cable end that plugs onto each half of a CABLED crossing (IO-20), by
+#: refdes, so a loom's two ends are bought with its two headers and neither
+#: half can be ordered without what mates it. The mpn is an `_LOOSE_BY_MPN`
+#: entry (ordered from LCSC with the boards) or the PWR-OUT housing, which is
+#: owner-buy off LCSC (`pwrout_loom_ends`). ⛔ Every cabled half is here or
+#: `tests/test_interconnect.py` fails: a header with no mate is a loom that
+#: cannot be built.
+_MATE_BY_REFDES = {
+    "J105": "FC-2.54-24P", "J312": "FC-2.54-24P",
+    "J202": PWROUT_HOUSING[0], "J311": PWROUT_HOUSING[0],
+}
+
 
 def loose_per(mpn: str) -> int:
     """How many of a loose part each refdes takes (FH201: two clips)."""
     return _LOOSE_BY_MPN[mpn][2]
+
+
+def mates() -> dict[str, tuple[str, ...]]:
+    """mpn -> the cabled halves it plugs onto, from `_MATE_BY_REFDES`."""
+    out: dict[str, list[str]] = {}
+    for ref, mpn in _MATE_BY_REFDES.items():
+        out.setdefault(mpn, []).append(ref)
+    return {mpn: tuple(refs) for mpn, refs in out.items()}
 
 
 #: Parts LCSC cannot supply to their constraints: the owner buys them and
@@ -2984,8 +3052,8 @@ _HAND_BY_MPN = {
 #: mated bodies ARE the gap, and had no term for a pillar that DEFINES one.
 #: They are not `Part`s and must not become ones -- an ordinary part is cleared
 #: by CLEARANCE, which would derive a gap 1.0 mm taller than the standoff and
-#: fail the 11.04 mm connector stop the nylon one is deliberately shimmed
-#: under. The mounting holes themselves are already board geometry
+#: fail the 11.04 mm connector stop the nylon one is deliberately specified
+#: short under. The mounting holes themselves are already board geometry
 #: (`board_params` subtracts the four M3 corners); this table is what goes
 #: through them, and it is ordered from LCSC with the boards.
 #: ⭐ IO-21, owner 2026-09-21: the brass posts are bonded to GND at the OUTPUTS
@@ -3010,19 +3078,28 @@ STANDOFFS = (
         "ends would put that return on a second, unrated path through brass threads "
         "and screw torque that nothing checks and that changes as fasteners age"),
     Standoff(
-        "HIWA TP-11", "C118174", 4, 11.0, ("OUTPUTS", "LOGIC"), "shimmed",
-        "OUTPUTS → LOGIC: nylon 66 94V-2, M3×11+6 male-female, hex 5.5 AF. ⚠️ Its "
-        "±0.5 mm is the whole problem: 11.0 nominal against the 11.04 mm CONNECTOR "
-        "stop means 11.5 holds the boards apart and un-seats both connectors by "
-        "0.5 mm of their 6.0 mm engagement -- 8 % of the wipe, on the stamped "
-        "contacts -- while 10.5 fights them and bows the boards. ✅ So it is "
-        "specified DELIBERATELY SHORT and shimmed to fit: the CONNECTORS set this "
-        "gap and the standoff only stops the boards flexing apart. Measure the "
-        "delivered length before fitting"),
-    Standoff(
-        "HIWA PN-3", "C115937", 8, 0.5, (), "shim",
-        "the shim: a 0.5 mm nylon M3 nut/washer, to take up whatever the TP-11 "
-        "measures short. Nylon, so it cannot bridge anything"),
+        "HIWA TP-11", "C118174", 20, 11.0, ("OUTPUTS", "LOGIC"), "shimmed",
+        "OUTPUTS → LOGIC: nylon 66 94V-2, M3×11+6 male-female, hex 5.5 AF, 11.0 "
+        "±0.5 (HIWA drawing QR-JZ-34-TP-11: one-decimal dimensions ±0.5). ⚠️ That "
+        "±0.5 mm is the whole problem: against the 11.04 mm CONNECTOR stop, a piece "
+        "at 11.5 holds the boards apart and un-seats both pairs by 0.46 mm of their "
+        "6.0 mm engagement -- 8 % of the wipe, on the stamped contacts -- while one "
+        "at 10.5 is a pillar the screws pull LOGIC's corner 0.54 mm down onto. ✅ So "
+        "it is specified DELIBERATELY SHORT and fitted by MEASURED LENGTH, with NO "
+        "shim: the CONNECTORS set this gap and the standoff only stops the boards "
+        "flexing apart. TWENTY are ordered for the FOUR fitted: measure every piece "
+        "and fit the four that measure between 10.94 and 11.04 mm (`board_params` "
+        "prints the window from the gap), rejecting anything over 11.04 outright; "
+        "if fewer than four make the window, the remedy is another twenty, never "
+        "a longer piece. ⛔ No shim, because no ~0.5 mm nylon M3 washer is stocked "
+        "on LCSC -- the only 0.5 mm M3 washer listed (Tong Ming 290059, C5199342) "
+        "is 304 stainless at zero stock, the XHHD 3M SUS (C24867) is stainless "
+        "with no stated thickness, and a steel washer is a loose conductor at a "
+        "mounting hole -- and because a 0.5 mm shim under a nominal 11.0 piece is "
+        "0.46 mm OVER the stop: the shortfall it would take up is 0.04 mm. ⛔ The "
+        "HIWA PN-3 (C115937) is a 2.4 mm-thick M3 NUT (drawing QR-JZ-74: B = 2.4; "
+        "0.5 is its thread pitch): fitted as a shim it holds the boards 2.36 mm "
+        "apart, off both pairs"),
 )
 
 
@@ -3057,6 +3134,8 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
             p = replace(p, assembly="hand",
                         source=f"{p.source}. HAND-SOLDERED: {_HAND_BY_MPN[p.mpn]}")
         out.append(p)
+    # A loose cable end is used by the header it plugs onto, not by a part.
+    used |= set(_MATE_BY_REFDES.values())
     stale = (set(_FAB_BY_MPN) | set(_LOOSE_BY_MPN) | set(_HAND_BY_MPN)) - used
     if stale:
         raise ValueError(f"_FAB_BY_MPN entries no part uses: {sorted(stale)}")

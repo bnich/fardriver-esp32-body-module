@@ -9,9 +9,12 @@ listed separately. Parts marked `assembly="loose"` are left off too: they are
 ordered from LCSC with the boards and the owner fits them (formed to lie
 flat, or clipped in, cut to length, or screwed together). DNP parts are left
 off. The board-to-board standoffs are listed too, from `netlist.STANDOFFS`:
-they are ordered with the boards and they are not parts of the circuit. The
-LCSC numbers themselves live in `netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN,
-_LOOSE_BY_MPN, _FAB_CONN, STANDOFFS), and nowhere else.
+they are ordered with the boards and they are not parts of the circuit. So is
+the cable end of each cabled crossing: the CTRL ribbon's IDC sockets are an
+LCSC part ordered loose, one per header; PWR-OUT's housing and crimps are
+owner-buy off LCSC (`netlist.pwrout_loom_ends`). The LCSC numbers themselves
+live in `netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN, _LOOSE_BY_MPN, _FAB_CONN,
+STANDOFFS), and nowhere else.
 """
 import argparse
 import csv
@@ -67,7 +70,8 @@ def bom_csv(d: Design) -> str:
 
 def loose_list(d: Design) -> str:
     """Parts ordered with the boards and fitted by the owner: one line per
-    LCSC part, with the count to order and what to do with it."""
+    LCSC part, with the count to order and what to do with it. A cable end
+    that plugs onto a header (`netlist.mates`) is counted once per header."""
     groups = defaultdict(list)
     for x in _items(d):
         if x.assembly == "loose":
@@ -82,7 +86,22 @@ def loose_list(d: Design) -> str:
         how = xs[0].source.rsplit("; ", 1)[-1]
         lines.append(f"{code:8} x{per * len(xs)} {_label(xs[0])[:24]}, for "
                      f"{' '.join(x.refdes for x in xs)}: {how}")
+    for mpn, refs in sorted(netlist.mates().items(), key=lambda kv: _refkey(kv[1][0])):
+        if mpn not in netlist._LOOSE_BY_MPN:
+            continue                        # owner-buy off LCSC: `loom_list`
+        code, _maker, per, why = netlist._LOOSE_BY_MPN[mpn]
+        fitted = [r for r in refs if not d.connector(r).dnp]
+        lines.append(f"{code:8} x{per * len(fitted)} {mpn[:24]}, for "
+                     f"{' '.join(fitted)}: {why}")
     return "\n".join(lines)
+
+
+def loom_list() -> str:
+    """What the owner buys OFF LCSC to make PWR-OUT's loom -- the housing at
+    each end and the crimp on each end of each conductor -- counted by
+    `netlist.pwrout_loom_ends` from the loom table, so the order cannot say
+    fewer contacts than there are conductor ends."""
+    return "\n".join(f"{mpn:22} x{qty} {why}" for mpn, qty, why in netlist.pwrout_loom_ends())
 
 
 def standoff_list() -> str:
@@ -94,7 +113,8 @@ def standoff_list() -> str:
     return "\n".join(
         f"{s.lcsc:8} x{s.qty} {s.name[:24]}, "
         + (f"sets {s.height_mm:g} mm" if s.seating == "sets" else
-           f"{s.height_mm:g} mm, shimmed short" if s.seating == "shimmed" else
+           f"specified {s.height_mm:g} mm, short of the connector stop: fit by "
+           f"measured length" if s.seating == "shimmed" else
            f"{s.height_mm:g} mm shim")
         + f": {s.source.split('. ')[0]}"
         for s in netlist.standoffs())
@@ -142,6 +162,8 @@ def main(argv=None):
     print("\nLOOSE, order with the boards (not placed; you fit them):\n" + loose_list(d))
     print("\nSTANDOFFS, order with the boards (not placed; you screw them in):\n"
           + standoff_list())
+    print("\nPWR-OUT LOOM, owner-buy OFF LCSC (genuine JST; you crimp it):\n"
+          + loom_list())
     print("\nHAND-SOLDERED by the owner:\n" + hand_list(d))
     if pending:
         print(f"\n⚠️ NOT YET CHOSEN (no LCSC part, not hand-soldered): {' '.join(pending)}")

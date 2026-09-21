@@ -138,8 +138,7 @@ def test_a_shimmed_standoff_is_reported_as_what_it_is_not_as_the_gap(capsys):
                         conn("J308", "OUTPUTS", 8.5, (63.5, 5.0), interface="STACK"),
                         conn("J406", "LOGIC", 2.54, (63.5, 5.0), interface="STACK")),
         standoffs=(Standoff("TP-11", "C1", 4, 11.0, ("OUTPUTS", "LOGIC"),
-                            "shimmed", "fixture"),
-                   Standoff("PN-3", "C2", 8, 0.5, (), "shim", "fixture")))
+                            "shimmed", "fixture"),))
     code, out = run(capsys, d)
     assert code == 0
     line = next(ln for ln in out.splitlines() if "gap OUTPUTS -> LOGIC" in ln)

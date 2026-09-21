@@ -6,13 +6,6 @@
   "package": "P=3.81mm",
   "symbol_pins": null
  },
- "C115937": {
-  "footprint": null,
-  "manufacturer": "HIWA",
-  "mpn": "PN-3",
-  "package": "-",
-  "symbol_pins": null
- },
  "C118174": {
   "footprint": null,
   "manufacturer": "HIWA",
@@ -2523,6 +2516,13 @@
     "2"
    ]
   ]
+ },
+ "C5274612": {
+  "footprint": null,
+  "manufacturer": "ZHOURI",
+  "mpn": "FC-2.54-24P",
+  "package": "P=2.54mm",
+  "symbol_pins": null
  },
  "C55020396": {
   "footprint": "r1206",

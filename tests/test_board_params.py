@@ -907,30 +907,37 @@ def test_a_gap_setting_standoff_and_a_chosen_pair_cannot_both_be_right():
     assert bp.stack_height(agrees).ok
 
 
-def test_a_shimmed_standoff_is_deliberately_short_and_says_so():
-    """⭐ THE NYLON TP-11, modelled as what it is. 11.0 nominal against the
-    11.04 mm stop J308+J406 sets: it is specified SHORT, shimmed by 0.04 mm,
-    and the CONNECTORS keep setting the gap. It defines nothing, so the gap is
-    the pair's -- and the report says which of the two it is."""
+def test_a_short_standoff_is_deliberately_short_and_says_so():
+    """⭐ THE NYLON TP-11, modelled as what it is. 11.0 specified against the
+    11.04 mm stop J308+J406 sets: it is SHORT, with NO shim, and the
+    CONNECTORS keep setting the gap. It defines nothing, so the gap is the
+    pair's -- and the report says which of the two is in charge, and states
+    the window the delivered pieces are selected into: 11.04 - SAME_LENGTH_MM
+    = 10.94 up to the 11.04 stop, by hand."""
     from tools import netlist
-    stack = bp.stack_height(netlist.current())
+    d = netlist.current()
+    assert not any(s.seating == "shim" for s in d.standoffs), "no shim is booked"
+    stack = bp.stack_height(d)
     g = gap(stack, "OUTPUTS", "LOGIC")
     assert g.standoff.name == "HIWA TP-11" and not g.standoff_sets_gap
     assert g.gap_mm == pytest.approx(11.04)                 # the pair's, not 11.0
     note = next(n for n in stack.notes if "HIWA TP-11" in n)
-    assert "deliberately SHORT, shimmed by 0.04 mm" in note
-    assert "J307+J407 and J308+J406 keep setting it" in note
-    assert "Measure the delivered length" in note
+    assert "specified 11.00 mm under the 11.04 mm J307+J407 and J308+J406 set" in note
+    assert "deliberately SHORT, so the pairs keep setting it, with NO shim" in note
+    assert "MEASURE between 10.94 and 11.04 mm" in note
     assert stack.ok
+    # ...and the standoff's own source states the same window and the count
+    # ordered for it, so the order list and the stack say one thing.
+    assert "between 10.94 and 11.04 mm" in g.standoff.source
+    assert g.standoff.qty > 4 and "TWENTY are ordered for the FOUR" in g.standoff.source
 
 
-def test_a_shimmed_standoff_longer_than_the_gap_un_seats_the_connectors():
-    """⚠️ THE MUTATION, and the direction a shim cannot rescue. The TP-11's
-    ±0.5 mm is the whole problem: at 11.5 it holds the boards 0.46 mm past the
-    11.04 mm the connectors stop at, and that 0.46 comes straight off their
-    6.0 mm of engagement. A washer takes up a standoff that measures SHORT and
-    can do nothing about one that measures long, which is why the delivered
-    length is measured before fitting."""
+def test_a_short_standoff_longer_than_the_gap_un_seats_the_connectors():
+    """⚠️ THE MUTATION in the long direction. The TP-11's ±0.5 mm is the whole
+    problem: at 11.5 it holds the boards 0.46 mm past the 11.04 mm the
+    connectors stop at, and that 0.46 comes straight off their 6.0 mm of
+    engagement. Nothing rescues a piece that measures long, which is why every
+    delivered piece is measured and the long ones rejected before fitting."""
     from tools import netlist
     d = restand(netlist.current(), "HIWA TP-11", height_mm=11.5)
     (over,) = [p for p in bp.stack_height(d).problems if "HIWA TP-11" in p]
@@ -939,16 +946,57 @@ def test_a_shimmed_standoff_longer_than_the_gap_un_seats_the_connectors():
     assert not bp.stack_height(d).ok
 
 
-def test_a_shimmed_standoff_with_no_shim_bows_the_boards():
-    """The other half of "deliberately short": short is only safe with
-    something to take the shortfall up. Drop the PN-3 washers and the screws
-    pull the boards down onto an 11.0 mm pillar under an 11.04 mm gap."""
+def test_a_shim_thicker_than_the_shortfall_holds_the_boards_apart():
+    """⚠️ THE MUTATION the shim bound was written for (audit C1/H13). The
+    HIWA PN-3 (C115937) is a 2.4 mm-thick M3 NUT -- 0.5 is its thread pitch --
+    and it was booked as a 0.5 mm shim. Either figure fails here, because ALL a
+    shim may take up is the 0.04 mm the TP-11 is short of the 11.04 mm stop:
+    at 2.4 it holds the boards 2.36 mm apart, at 0.5 still 0.46 mm, and both
+    un-seat the pairs the standoff exists to leave in charge. A check that
+    only asked whether A shim existed passed both."""
     from tools import netlist
     d = netlist.current()
-    bare = replace(d, standoffs=tuple(s for s in d.standoffs if s.seating != "shim"))
-    (unshimmed,) = [p for p in bp.stack_height(bare).problems if "HIWA TP-11" in p]
-    assert "carries no shim to take up the 0.04 mm" in unshimmed
-    assert "bows them" in unshimmed
+    for thick, lift in ((2.4, "2.36"), (0.5, "0.46")):
+        nut = Standoff("HIWA PN-3", "C115937", 8, thick, (), "shim", "a nut")
+        stack = bp.stack_height(replace(d, standoffs=d.standoffs + (nut,)))
+        (over,) = [p for p in stack.problems if "PN-3" in p]
+        assert f"the HIWA PN-3 shim is {thick:.2f} mm" in over
+        assert "may take up at most the 0.04 mm" in over
+        assert f"holds the boards {lift} mm apart" in over
+        assert "un-seats J307+J407 and J308+J406" in over
+        assert not stack.ok
+    # Control: a shim that fits the shortfall is no verdict, and the selection
+    # window moves down by what it takes up.
+    fits = Standoff("washer", "C0", 4, 0.04, (), "shim", "fits")
+    stack = bp.stack_height(replace(d, standoffs=d.standoffs + (fits,)))
+    assert stack.ok
+    note = next(n for n in stack.notes if "HIWA TP-11" in n)
+    assert "shimmed by 0.04 mm" in note and "between 10.90 and 11.00 mm" in note
+
+
+def test_a_short_standoff_needs_a_chosen_pair_to_be_short_of():
+    """"Short" is short OF something: a connector pair whose drawing sets the
+    gap. On a gap with no chosen pair the parts set the spacing, and a pillar
+    specified under it is what the screws pull the boards down onto. The old
+    check accepted "shimmed" anywhere."""
+    d = with_standoffs(three_boards(),
+                       standoff(name="TP-11", h=11.0, between=("OUTPUTS", "LOGIC"),
+                                seating="shimmed"))
+    assert gap(bp.stack_height(d), "OUTPUTS", "LOGIC").chosen == ()
+    (loose,) = [p for p in bp.stack_height(d).problems if "TP-11" in p]
+    assert "specified SHORT (11.00 mm) of a spacing NOTHING sets" in loose
+    assert "this gap has no chosen pair" in loose
+    assert not bp.stack_height(d).ok
+    # ...an UNCONFIRMED pair is not a chosen one either: nothing sets the gap yet.
+    d = with_standoffs(linked(8.5, 2.54, confirmed=False),
+                       standoff(name="TP-11", h=11.0, between=("OUTPUTS", "LOGIC"),
+                                seating="shimmed"))
+    assert any("NOTHING sets" in p for p in bp.stack_height(d).problems)
+    # ...and with the pair confirmed the same pillar is exactly right.
+    d = with_standoffs(linked(8.5, 2.54, confirmed=True),
+                       standoff(name="TP-11", h=11.0, between=("OUTPUTS", "LOGIC"),
+                                seating="shimmed"))
+    assert bp.stack_height(d).ok
 
 
 def test_a_standoff_that_names_no_gap_of_the_stack_defines_nothing():
