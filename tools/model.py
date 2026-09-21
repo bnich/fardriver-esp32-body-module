@@ -25,6 +25,18 @@ Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
 Interface = Literal["PWR-OUT", "CTRL", "PWR-LOGIC", "STACK"]
 #: How an inter-board interface gets from one board to the other.
 Crossing = Literal["pair", "cable"]
+#: How a pillar in the stack meets the gap it stands in. ⚠️ The three are NOT
+#: degrees of the same thing -- each one is a different claim about what sets
+#: the board spacing, and `board_params` checks a different thing for each:
+#:   "sets"     its own height IS the spacing. Nothing between the boards may
+#:              be taller than it, or the screws crush that thing.
+#:   "shimmed"  it is specified deliberately SHORT of a spacing something else
+#:              sets (a mated connector pair), with washers taking up the
+#:              shortfall, so it only stops the boards flexing apart. Longer
+#:              than the gap it un-seats the connectors it was supposed to
+#:              leave in charge.
+#:   "shim"     the washer itself. It stands between no two decks.
+Seating = Literal["sets", "shimmed", "shim"]
 Side = Literal["top", "bottom"]
 Assembly = Literal["", "jlc", "hand", "loose"]
 Kind = Literal[
@@ -51,10 +63,13 @@ DOMAIN_VOLTS = {"84V": 84.0, "12V": 12.0, "5V": 5.0, "3V3": 3.3, "GND": 0.0}
 #:              so the halves need not face each other and neither is mirrored;
 #:              what must hold is that both ends have the same contact count
 #:              and the same net on the same contact index. That freedom is the
-#:              point: no stocked connector spans the 25.1 mm POWER -> OUTPUTS
-#:              gap, and it lets both halves sit on their boards' TOP faces
-#:              instead of hanging a 22 mm connector body into a gap L101/L102
-#:              already stand 22 mm in.
+#:              point: no stocked connector spans the POWER -> OUTPUTS gap, so
+#:              a loom carries it and the M3x30 standoffs set the gap instead.
+#:              ⛔ The freedom is over ALIGNMENT, not over WHICH FACE. Both
+#:              halves still look into the gap their cable crosses -- lower on
+#:              top, upper hanging under -- because the far side of a board is
+#:              a different gap with its own budget, and J311's 10.9 mm posts
+#:              on OUTPUTS' top face had 11.04 mm of STACK-pair gap over them.
 CROSSING: dict[Interface, Crossing] = {
     "PWR-OUT": "cable",
     "CTRL": "cable",
@@ -195,10 +210,42 @@ class Connector:
 
 
 @dataclass(frozen=True)
+class Standoff:
+    """A pillar screwed between two decks of the stack.
+
+    ⭐ It is the third kind of thing in the height model, and the reason it is
+    not a `Part`: a part STANDS IN a gap and `board_params` clears it by
+    CLEARANCE, and a connector pair's mated bodies ARE the gap. A standoff
+    DEFINES a gap -- the boards sit exactly where it puts them -- so counting
+    it as a part would derive a gap 1.0 mm taller than the standoff and fail
+    the connector stop the nylon one is deliberately shimmed under.
+
+    It carries no refdes because nothing is placed on a board for it: the four
+    M3 corners are already board geometry, and this is what goes through them.
+    """
+    #: The maker's part, e.g. "Shuntian M3X30". Named in every verdict, so it
+    #: has to read as a part number and not as a description.
+    name: str
+    lcsc: str
+    qty: int
+    #: Its own length, in mm. For "sets" that IS the board spacing.
+    height_mm: float
+    #: The two decks it stands between, bottom first, e.g. ("POWER",
+    #: "OUTPUTS"). ⛔ () for a "shim", which stands between nothing.
+    between: tuple[str, ...] = ()
+    seating: Seating = "sets"
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class Design:
     parts: tuple[Part, ...] = ()
     nets: tuple[Net, ...] = ()
     connectors: tuple[Connector, ...] = ()
+    #: The hardware that holds the decks apart. Not placed, so not in `parts`;
+    #: `board_params.layer_gaps` reads it, and a design without any (a test
+    #: fixture) simply has no gap defined by one.
+    standoffs: tuple[Standoff, ...] = ()
 
     # -- lookups ------------------------------------------------------------
     def part(self, refdes: str) -> Part:

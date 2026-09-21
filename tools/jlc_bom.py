@@ -87,13 +87,17 @@ def loose_list(d: Design) -> str:
 
 def standoff_list() -> str:
     """The board-to-board standoffs: ordered from LCSC with the boards, not
-    placed, and screwed in by the owner.  ⬜ They are not in the Design -- a
-    standoff DEFINES a gap rather than standing in one and `board_params` has
-    no term for that yet -- so this reads `netlist.STANDOFFS`, which is their
+    placed, and screwed in by the owner.  They are in the Design
+    (`Design.standoffs`) but not in `parts` -- a standoff DEFINES a gap rather
+    than standing in one -- so this reads `netlist.STANDOFFS`, which is their
     one home, rather than the parts list."""
     return "\n".join(
-        f"{code:8} x{n} {maker[:24]}, sets {gap:g} mm: {why.split('. ')[0]}"
-        for code, maker, n, gap, why in netlist.standoffs())
+        f"{s.lcsc:8} x{s.qty} {s.name[:24]}, "
+        + (f"sets {s.height_mm:g} mm" if s.seating == "sets" else
+           f"{s.height_mm:g} mm, shimmed short" if s.seating == "shimmed" else
+           f"{s.height_mm:g} mm shim")
+        + f": {s.source.split('. ')[0]}"
+        for s in netlist.standoffs())
 
 
 def hand_list(d: Design) -> str:

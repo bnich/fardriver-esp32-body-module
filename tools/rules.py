@@ -1835,11 +1835,17 @@ def pull_direction(d: Design) -> list[str]:
 
 # ── HT: every body in the stack, against a stack derived from those bodies ───
 def _bodies(d: Design):
+    """Every body in the stack. The last field is "half of a MATED pair", and
+    ⛔ it is not "has an interface": a CABLED crossing's half mates with nothing
+    across the gap, so its height sets no board spacing and it stands in the gap
+    above its face like any other body (`board_params._pairs`). Reading it the
+    old way told the owner that J202, J105, J311 and J312 each set a spacing,
+    four times, about four connectors joined by looms."""
     for p in d.parts:
         yield p.refdes, p.mpn, p.board, p.side, p.height_mm, p.height_confirmed, False
     for c in d.connectors:
         yield (c.refdes, c.name, c.board, c.side, c.height_mm, c.height_confirmed,
-               c.interface is not None)
+               c.interface is not None and not is_cabled(c.interface))
 
 
 def _is_height(h) -> bool:
@@ -1905,10 +1911,15 @@ def check_all(design: Design) -> list[str]:
 
 def _near_limit(d: Design) -> dict[str, str]:
     """refdes -> why its unconfirmed height matters. A body's ceiling is
-    whatever is tallest among the bodies that share its face of its board: that
-    one sets the gap, and anything within UNCONFIRMED_MARGIN_MM of it would if
-    its real height came in over. Inter-board connectors set the board spacing
-    outright."""
+    whatever is tallest among the bodies that share its face of its board: the
+    gap there is measured against that one, and anything within
+    UNCONFIRMED_MARGIN_MM of it would be if its real height came in over. The
+    half of a MATED pair sets the board spacing outright.
+
+    ⚠️ "measured against", not "sets": since a STANDOFF can define a gap
+    (`board_params.Gap.standoff`), the tallest body in one is often not what
+    puts the boards where they are -- it is what the gap has to clear, and an
+    unconfirmed height for it is just as load-bearing either way."""
     tallest: dict[tuple[str, str], tuple[float, str]] = {}
     for ref, _w, board, side, h, _c, paired in _bodies(d):
         if not paired and _is_height(h) and h > tallest.get((board, side), (-1.0, ""))[0]:
@@ -1922,11 +1933,12 @@ def _near_limit(d: Design) -> dict[str, str]:
             continue
         top, top_ref = tallest[(board, side)]
         if top_ref == ref:
-            out[ref] = f"the tallest body on the {side} of {board}, so it sets that gap"
+            out[ref] = (f"the tallest body on the {side} of {board}, so that "
+                        f"gap is measured against it")
         elif top - h <= UNCONFIRMED_MARGIN_MM:
             out[ref] = (f"within {UNCONFIRMED_MARGIN_MM:g} mm of the tallest body "
                         f"on the {side} of {board} ({top_ref}, {top:g} mm), which "
-                        f"sets that gap")
+                        f"that gap is measured against")
     return out
 
 

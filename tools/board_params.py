@@ -46,7 +46,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from .model import Connector, Design, Part
+from .model import Connector, Design, Part, Standoff, is_cabled
 
 # --- M18: the cavity, as MEASURED -------------------------------------------
 #: ✅ MEASURED (M18, owner, 2026-09-20): the old-controller cavity under the
@@ -56,7 +56,7 @@ from .model import Connector, Design, Part
 #: FACT that requirement is judged against, and the caps the envelope search
 #: works within.
 CAVITY_L = 260.0   # mm, along the bike
-CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 3.35 mm spare today
+CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 1.51 mm spare today
 CAVITY_H = 100.0   # mm, floor to the underside of the battery tray
 CAVITY_MEASURED = True    # ✅ M18, measured by the owner 2026-09-20
 
@@ -116,9 +116,10 @@ END_ALLOWANCE = 4.0
 #: M18 inverted the reason, not just the numbers. That order was chosen while
 #: the cavity was a 200 x 50 ESTIMATE the design already overran by 33.0 mm
 #: along and 24.7 mm across: buying length to save width would have made the
-#: worse of the two problems worse. The MEASUREMENT is 260 x 70. Length now has
-#: 27.0 mm of slack and WIDTH is the axis that runs out first, so length is the
-#: axis to spend and width the one to protect. ⛔ Do not restore the old order,
+#: worse of the two problems worse. The MEASUREMENT is 260 x 70, and at every
+#: envelope since, WIDTH has been the axis that runs out first -- 1.51 mm of
+#: cavity spare across today against 4.00 mm along -- so length is the axis to
+#: spend and width the one to protect. ⛔ Do not restore the old order,
 #: and do not re-derive it from the old reason: it is written down here so
 #: nobody has to.
 #:
@@ -132,61 +133,76 @@ END_ALLOWANCE = 4.0
 #:       260.0 - 2 x 3.0 - 2 x 4.0 = 246.0 mm of board.
 #:
 #:   WIDTH is searched first and taken as narrow as the caps allow, THEN LIFTED
-#:   CLEAR OF THE CLIFF THE SEARCH LANDS ON. 39.0 mm is the narrowest width that
-#:   closes at ANY length <= 246.0, and the PACK is what binds: at 39.0 the
-#:   worst face (POWER top) packs into 214.85 mm and so needs L >= 214.85 / 0.90
-#:   = 238.72, inside the cap; a hair under 39.0 the same face packs into
-#:   239.25 mm, needing L >= 265.83, outside it. The 24.40 mm step is C203-C206,
-#:   four 12.5 x 18.5 Y-caps: 18.5 + 2 x COURTYARD = 19.50 across each, and
-#:   19.50 + 19.50 = 39.00 exactly, so at 39.0 they pair two to a 13.5 mm shelf
-#:   while below it each takes a 13.5 mm shelf of its own.
-#:   ⚠️ 39.0 sits ON that step, not above it, and a board on a cliff edge is one
-#:   where any growth in a cap body or in COURTYARD re-shapes both plan axes.
-#:   ⭐ THE OWNER BOUGHT CLEARANCE (2026-09-20): W = 40.0, one millimetre above
-#:   the step. That millimetre is what the four caps can grow into: 0.5 mm each
-#:   puts the step back on the board at exactly 40.00. COURTYARD has no headroom
-#:   at all -- it grows EVERY body, and 0.55 already moves the step to 39.20.
-#:   The pack does not change for the extra width -- 214.85 mm holds from 39.0
-#:   to 41.1 -- so it is bought purely to stand off the discontinuity.
+#:   CLEAR OF THE CLIFF THE SEARCH LANDS ON. 40.84 mm is the narrowest width
+#:   that closes at ANY length <= 246.0, and the PACK is what binds: at 40.84
+#:   the worst face (POWER top) packs into 218.23 mm and so needs
+#:   L >= 218.23 / 0.90 = 242.48, inside the cap; a hair under 40.84 the same
+#:   face packs into 225.13 mm, needing L >= 250.14, outside it. The 6.90 mm
+#:   step is C207 pairing with J202: the 10.5 x 19.1 polymer bulk cap is
+#:   19.1 + 2 x COURTYARD = 20.10 across and the keyed VH power header
+#:   19.74 + 2 x COURTYARD = 20.74, and 20.10 + 20.74 = 40.84 exactly, so at
+#:   40.84 they share one 20.74 mm shelf while below it each takes a shelf.
+#:   ⚠️ 40.84 sits ON that step, not above it, and a board on a cliff edge is
+#:   one where any growth in either body, or in COURTYARD, re-shapes both plan
+#:   axes.
+#:   ⭐ SO THE BOARD STANDS ONE MILLIMETRE ABOVE IT: W = 41.84. That millimetre
+#:   is what the two bodies can grow into between them -- 0.5 mm each puts the
+#:   step back on the board at exactly 41.84. COURTYARD has less headroom
+#:   because it grows EVERY body: it is in the sum four times, so each 0.05 mm
+#:   moves the step 0.20 mm and 0.75 leaves no step to find at all.
+#:   ⛔ THE PACK IS NOT MONOTONIC IN THE WIDTH and the narrowest width that
+#:   closes is NOT the narrowest board: there is a 0.08 mm window at
+#:   [39.00, 39.08) where POWER top packs into 215.73. It is rejected for the
+#:   reason the cliff rule exists -- it is 0.08 mm wide, with a 24.40 mm fall on
+#:   one side of it. ⛔ Do not "save" 2.84 mm of width by landing in it.
 #:   `tests/test_board_params.py` DERIVES the step from the packer and says so
 #:   when it comes within 1.0 mm of BOARD_W, or above it.
 #:
-#:   LENGTH is then the least that clears all three budgets by 10 %. The pack
-#:   wants 238.72. The longest row wants less: the harness headers of one face
-#:   stand end to end along the board and that sum is arithmetic, not a
+#:   LENGTH is then the least that clears all three budgets by 10 %. At 41.84
+#:   the pack is 215.54 (two more small steps at 41.30 and 41.42 fall below the
+#:   cliff) and wants 239.49. The longest row wants less: the harness headers of
+#:   one face stand end to end along the board and that sum is arithmetic, not a
 #:   heuristic -- POWER top is longest at 197.04 mm, so 197.04 / 0.90 = 218.93.
-#:   Density is satisfied at any length in range (it wants only W >= 38.0 here).
-#:   238.72 -> 239.0, and the owner took 241.0: at 239.0 the pack tripwire has
-#:   0.25 mm of slack (214.85 against 0.90 x 239.0 = 215.10), which is narrow
-#:   enough that almost any change fires it, and a tripwire that fires on noise
-#:   is not a signal. 241.0 puts it at 2.05 mm, on the axis with room to spend.
+#:   Density wants 6243.18 / (0.90 x 0.75) + 196, over the width: 225.74.
+#:   239.49 -> 240.0, and 242.0 is taken: at 240.0 the pack tripwire has 0.46 mm
+#:   of slack (215.54 against 0.90 x 240.0 = 216.00) and at 241.0 1.36 mm, which
+#:   is the hair trigger the same choice rejected on 2026-09-20 -- a tripwire
+#:   that fires on noise is not a signal, and 2.0 mm is the slack the owner
+#:   bought then. 242.0 puts it at 2.26 mm, on the axis with room to spend.
 #:
-#:   WHAT IT COSTS AND BUYS: 40.0 x 241.0 = 9640 mm², three boards 289 cm². The
-#:   cavity it requires is 255.00 along (5.00 mm spare) x 66.65 across (3.35 mm
-#:   spare) -- 1 mm of width slack and 2 mm of length slack spent, both still
-#:   comfortable. Margins: row 18.2 %, pack 10.8 %, density 14.6 %. The row's
-#:   43.96 mm of slack also covers the four M3 corners it may not run into -- at
-#:   each END of the row two corners take 2 x M3_INSET_MM of length between them,
-#:   2 x 2 x 3.5 = 14.0 mm in all -- which the row check does not model.
+#:   WHAT IT COSTS AND BUYS: 41.84 x 242.0 = 10125.28 mm², three boards 304 cm².
+#:   The cavity it requires is 256.00 along (4.00 mm spare) x 68.49 across
+#:   (1.51 mm spare). ⚠️ WIDTH IS WHAT IT SPENT: 1.84 mm of the 3.35 mm of
+#:   across-slack the 40.0 mm board had, and there is 1.51 mm left before the
+#:   design stops fitting the box M18 measured. Of the 68.49, 19.65 is the
+#:   plug-and-bend room in front of the connector face and 6.0 the two walls, so
+#:   a thinner wall or a shallower plug is where the next millimetre comes from
+#:   -- not from the board. Margins: row 18.6 %, pack 10.9 %, density 16.2 %.
+#:   The row's 44.96 mm of slack also covers the four M3 corners it may not run
+#:   into -- at each END of the row two corners take 2 x M3_INSET_MM of length
+#:   between them, 2 x 2 x 3.5 = 14.0 mm in all -- which the row check does not
+#:   model.
 #:
 #: ⛔ Re-run the search when a body or a terminal changes; do not nudge these to
 #: make a budget close. `python3 -m tools.board_fit` prints every margin, and
 #: `tests/test_board_params.py` holds the row, the pack and the density to the
 #: 10 % this search bought.
 
-#: ⚠️ 40.0, not the 39.0 the search returns: the pack falls 24.40 mm at exactly
-#: 39.00 mm of width (two 19.50 mm Y-cap courtyards pairing on one shelf), and
-#: this is 1.0 mm clear of that cliff rather than sitting on it -- proven, and
-#: kept clear, by `test_the_pack_cliff_is_derived_and_the_board_stands_clear_of_it`.
-BOARD_W = 40.0
-BOARD_L = 241.0
+#: ⚠️ 41.84, not the 40.84 the search returns: the pack falls 6.90 mm at exactly
+#: 40.84 mm of width (C207's 20.10 mm courtyard pairing with J202's 20.74 on one
+#: shelf), and this is 1.0 mm clear of that cliff rather than sitting on it --
+#: proven, and kept clear, by `test_the_board_stands_clear_of_the_cliff`.
+BOARD_W = 41.84
+BOARD_L = 242.0
 BOARD_AREA = BOARD_W * BOARD_L
 
 #: Internal height the stack may use. Cut from a MEASUREMENT since M18:
-#: 100.0 - 3.0 - 3.0 = 94.0 mm, against a derived stack of 62.4. ⚠️ It was 64.0
-#: against the old estimate, where the same stack sat 1.6 mm inside its limit;
-#: nothing about this budget is tight any more. ⛔ It is still read against two
-#: ALLOWANCES, so the enclosure's model moves it.
+#: 100.0 - 3.0 - 3.0 = 94.0 mm, against a derived stack of 67.3 -- 26.7 mm
+#: spare. ⚠️ It was 64.0 against the old estimate, where the stack sat 1.6 mm
+#: inside its limit; nothing about this budget is tight any more, and the
+#: 4.9 mm the M3x30 standoffs added to POWER -> OUTPUTS (25.1 -> 30.0) came out
+#: of that spare without being noticed anywhere else. ⛔ It is still read
+#: against two ALLOWANCES, so the enclosure's model moves it.
 AVAIL_H = CAVITY_H - FLOOR - LID
 
 # --- the cavity that envelope REQUIRES ---------------------------------------
@@ -198,12 +214,12 @@ AVAIL_H = CAVITY_H - FLOOR - LID
 #: stack is a property of the design).
 #: ⚠️ They are CHECKED, not merely stated: M18 is measured, so `cavity_problems`
 #: FAILS the design on either plan axis the cavity cannot hold. Today they fit
-#: -- 255.00 of 260.0 along, 66.65 of 70.0 across -- with 5.00 and 3.35 mm to
+#: -- 256.00 of 260.0 along, 68.49 of 70.0 across -- with 4.00 and 1.51 mm to
 #: spare. ⬜ Still not FINAL: WALL is an allowance, so both figures move when the
 #: enclosure's model lands. `tests/test_board_params.py` pins all three against
 #: drift, because nothing else bounds what the design may ask of the enclosure.
-CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 66.65
-CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 255.0
+CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 68.49
+CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 256.0
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
@@ -321,13 +337,23 @@ class Gap:
     seat_mm: float
     seat_ref: str
     need_mm: float             # what the parts require
-    pairs: tuple[Pair, ...]    # inter-board connectors crossing this gap
+    pairs: tuple[Pair, ...]    # MATED inter-board connectors crossing this gap
+    #: The pillar screwed across this gap, or None. ⚠️ THE THIRD KIND OF TERM:
+    #: a part stands IN a gap and is cleared by CLEARANCE, a mated pair's bodies
+    #: ARE the gap, and a standoff DEFINES it -- see `model.Standoff`.
+    standoff: Standoff | None
     gap_mm: float              # the spacing the stack is built with
 
     @property
     def seat_sets_gap(self) -> bool:
         """The floor seat, not the parts that hang beside it, sets this gap."""
         return bool(self.seat_mm) and self.seat_mm >= self.need_mm - 1e-9
+
+    @property
+    def standoff_sets_gap(self) -> bool:
+        """The standoff's own height IS this gap, rather than it being shimmed
+        short under a spacing the connectors set."""
+        return self.standoff is not None and self.standoff.seating == "sets"
 
     @property
     def chosen(self) -> tuple[Pair, ...]:
@@ -348,7 +374,10 @@ class Gap:
 
     @property
     def set_by(self) -> tuple[str, ...]:
-        """Refdes whose heights this gap's size actually rests on."""
+        """What this gap's size actually rests on: refdes, and the standoff's
+        part number when the pillar is what puts the boards where they are."""
+        if self.standoff_sets_gap:
+            return (self.standoff.name,)
         pairs = self.chosen or tuple(
             p for p in self.pairs if p.mated_mm >= self.gap_mm - 1e-9)
         refs = [r for p in pairs for r in (p.lower, p.upper)]
@@ -412,16 +441,24 @@ def _halves(d: Design, board: str) -> dict:
 
 
 def _pairs(d: Design, below: str, above: str, order=STACK_ORDER):
-    """Inter-board connector pairs bridging two adjacent boards, one per interface.
+    """MATED connector pairs bridging two adjacent boards, one per interface.
 
     A connector has one body. On the middle board of a three-board bus that
     body stands on top and mates UPWARD; how the bus gets down to the board
     beneath is a second part the design has to carry, so no pair is invented
     for that crossing (`_through` reports it).
+
+    ⛔ A CABLED crossing (`model.CROSSING`) is NOT a pair and gets none. Its two
+    halves never touch: a loom joins them, so their heights do not add up to a
+    board spacing, and a note comparing that sum to the gap says nothing about
+    anything. What they ARE is two ordinary bodies, each standing in the gap
+    above its own face and cleared by CLEARANCE like any other -- which is what
+    `_paired` below must therefore not exempt them from.
     """
     lower, upper = _halves(d, below), _halves(d, above)
     return [(lower[i], upper[i]) for i in sorted(lower.keys() & upper.keys())
-            if upper[i].refdes not in {c.refdes for c in _through(d, order)}]
+            if not is_cabled(i)
+            and upper[i].refdes not in {c.refdes for c in _through(d, order)}]
 
 
 def _through(d: Design, order=STACK_ORDER):
@@ -434,10 +471,12 @@ def _through(d: Design, order=STACK_ORDER):
 
 
 def _paired(d: Design, order=STACK_ORDER) -> set[str]:
-    """Refdes of every inter-board half that mates with a half on a neighbour.
+    """Refdes of every MATED inter-board half that meets a half on a neighbour.
 
     These two are a pair: their mated height IS the gap, so neither is a thing
     standing in it or hanging into it, and neither needs a keep-out under it.
+    ⛔ A cabled half earns none of that (see `_pairs`): it is a body on a face
+    and is counted as one.
     """
     return {c.refdes for lo, up in zip(order, order[1:])
             for pair in _pairs(d, lo, up, order) for c in pair}
@@ -457,15 +496,24 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
                 FLOOR_LINER_T + the deepest OTHER underside item + CLEARANCE
               never below FLOOR_STANDOFF_MIN. `seat_sets_gap` says which won.
 
-      mated = the two halves of an inter-board connector, body on body
+      mated = the two halves of a MATED inter-board connector, body on body
               (`height_mm` of the lower half + `height_mm` of the upper). That
-              IS the board spacing once the connector is chosen.
+              IS the board spacing once the connector is chosen. A cabled
+              crossing has none: `_pairs` gives it no pair at all.
+
+      stand = a `model.Standoff` screwed across this gap. When its `seating` is
+              "sets", its own length IS the board spacing -- the pillar puts
+              the boards exactly there, and `stack_height` fails the design if
+              anything between them is taller. When it is "shimmed" the
+              standoff is deliberately SHORT of a spacing something else sets
+              and defines nothing.
 
       gap   = mated, when both halves' heights are confirmed (the connector is
               chosen and it sets the spacing -- `stack_height` fails the design
-              if the parts need more); otherwise the larger of need and the
-              tallest pair, because the boards cannot sit closer than the
-              tallest connector specified between them.
+              if the parts need more); else a gap-SETTING standoff's own
+              length; otherwise the larger of need and the tallest pair,
+              because the boards cannot sit closer than the tallest connector
+              specified between them.
 
     A bottom-side part and a tall part beneath it share a gap by standing
     side by side (BD-14): one deliberate placement, and `stack_height` states
@@ -527,12 +575,63 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
             for lo, up in (_pairs(d, below, above, order)
                            if below in order and above in order else [])
             if not _bad_height(lo.height_mm) and not _bad_height(up.height_mm))
+        stand = _standoff(d, below, above)
         chosen = [p.mated_mm for p in pairs if p.confirmed]
-        gap_mm = max(chosen) if chosen else max(
-            [need] + [p.mated_mm for p in pairs])
+        if chosen:
+            gap_mm = max(chosen)
+        elif stand is not None and stand.seating == "sets":
+            gap_mm = stand.height_mm
+        else:
+            gap_mm = max([need] + [p.mated_mm for p in pairs])
         gaps.append(Gap(below, above, top_mm, top_ref, hang_mm, hang_ref,
-                        seat_mm, seat_ref, need, pairs, gap_mm))
+                        seat_mm, seat_ref, need, pairs, stand, gap_mm))
     return tuple(gaps)
+
+
+def _standoff(d: Design, below: str, above: str) -> Standoff | None:
+    """The pillar screwed across this gap, or None.
+
+    ⚠️ The FIRST one declared for the gap wins, and `standoff_problems` fails a
+    design that declares two: one gap cannot have two lengths, and silently
+    taking the taller would be a spacing nobody chose.
+    """
+    return next((s for s in d.standoffs
+                 if tuple(s.between) == (below, above)), None)
+
+
+def standoff_problems(d: Design, order=STACK_ORDER) -> list[str]:
+    """What a standoff table has to say before any gap can be derived from it.
+
+    Structure only -- whether each pillar names two decks that are really
+    neighbours, and whether one gap has been given two lengths. What a standoff
+    does to the gap it names is `stack_height`'s.
+    """
+    decks = (FLOOR_NAME,) + tuple(order) + (LID_NAME,)
+    adjacent = set(zip(decks, decks[1:]))
+    out, seen = [], {}
+    for s in d.standoffs:
+        between = tuple(s.between)
+        if s.seating == "shim":
+            if between:
+                out.append(f"standoff: the {s.name} shim names {between} -- a "
+                           f"washer stands between no two decks, it takes up "
+                           f"what a shimmed standoff measures short")
+            continue
+        if between not in adjacent:
+            out.append(
+                f"standoff: the {s.name} stands between {between or '()'}, "
+                f"which are not neighbouring decks of "
+                f"{' -> '.join(decks)} -- a pillar the stack has no gap for "
+                f"defines nothing, and the gap it was meant for is derived "
+                f"from whatever else happens to be in it")
+        elif between in seen:
+            out.append(
+                f"standoff: {seen[between]} and the {s.name} both stand "
+                f"between {between[0]} and {between[1]} -- one gap cannot be "
+                f"two lengths, and the taller would silently win")
+        else:
+            seen[between] = f"the {s.name}"
+    return out
 
 
 def unconfirmed_heights(d: Design, order=STACK_ORDER):
@@ -558,6 +657,7 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
     gaps = layer_gaps(d, order)
     paired = _paired(d, order)
     by_ref = {x.refdes: x for x in items}
+    problems += standoff_problems(d, order)
 
     # The seat has to BE on the bottom board's underside. Flipped to the top,
     # or moved up a board, every gap still derives and the stack comes out
@@ -603,6 +703,64 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                     f"(unconfirmed) and the gap is {g.gap_mm:.1f} mm -- the pair has "
                     f"to be a type that mates at the gap, and once it is chosen its "
                     f"drawing sets the gap")
+        # ⭐ THE STANDOFF, and the two ways it can be wrong are opposite ones.
+        if g.standoff is not None:
+            s = g.standoff
+            if s.seating == "sets":
+                # TOO SHORT. A pillar shorter than the tallest thing between the
+                # boards is not a spacer, it is a press: the screws pull the
+                # upper board down onto that thing. ⛔ Nothing else in this file
+                # catches it -- `need` no longer sets the gap once a standoff
+                # does, so without this the crush is silently absorbed.
+                if g.need_mm > s.height_mm + 1e-9:
+                    culprit = (
+                        f"{g.hang_ref} hangs {g.hang_mm:.1f} mm under {g.above}"
+                        if g.hang_mm + CLEARANCE > s.height_mm else
+                        f"{g.top_ref} stands {g.top_mm:.1f} mm on {g.below}")
+                    problems.append(
+                        f"gap {where}: the {s.name} standoff holds the boards "
+                        f"{s.height_mm:.2f} mm apart but the parts need "
+                        f"{g.need_mm:.2f} mm -- {culprit}. A standoff shorter "
+                        f"than what it stands beside does not space the boards, "
+                        f"it crushes that part when the screws pull up")
+                # ...and TOO TALL for a connector that also has to mate here.
+                for pair in g.chosen:
+                    if abs(pair.mated_mm - s.height_mm) > 0.1:
+                        problems.append(
+                            f"gap {where}: the {s.name} standoff holds the "
+                            f"boards {s.height_mm:.2f} mm apart and the chosen "
+                            f"pair {pair.refs} mates at {pair.mated_mm:.2f} mm "
+                            f"-- one gap cannot be two lengths. A standoff that "
+                            f"sets a gap a connector also has to reach must "
+                            f"equal it, or be specified short and shimmed")
+            elif s.seating == "shimmed":
+                # SHIMMED: it is not allowed to be the taller of the two. Over
+                # the gap it lifts the boards off the connectors it was there to
+                # leave in charge, and each 0.1 mm comes off their engagement.
+                if s.height_mm > g.gap_mm + 1e-9:
+                    problems.append(
+                        f"gap {where}: the {s.name} standoff is "
+                        f"{s.height_mm:.2f} mm against a {g.gap_mm:.2f} mm gap "
+                        f"-- it is specified SHORT and shimmed so the "
+                        f"connectors keep setting this gap, and one longer than "
+                        f"the gap holds the boards apart and un-seats them by "
+                        f"{s.height_mm - g.gap_mm:.2f} mm of their engagement")
+                elif not any(x.seating == "shim" for x in d.standoffs):
+                    problems.append(
+                        f"gap {where}: the {s.name} standoff is specified SHORT "
+                        f"({s.height_mm:.2f} mm of a {g.gap_mm:.2f} mm gap) and "
+                        f"the design carries no shim to take up the "
+                        f"{g.gap_mm - s.height_mm:.2f} mm -- an unshimmed short "
+                        f"standoff is a pillar the screws pull the boards down "
+                        f"onto, which bows them")
+                else:
+                    notes.append(
+                        f"gap {where}: the {s.name} standoff is "
+                        f"{s.height_mm:.2f} mm and the gap is {g.gap_mm:.2f} mm "
+                        f"-- deliberately SHORT, shimmed by "
+                        f"{g.gap_mm - s.height_mm:.2f} mm, so "
+                        f"{' and '.join(p.refs for p in g.chosen) or 'the parts'}"
+                        f" keep setting it. Measure the delivered length")
         # The baseplate reaches the floor only while nothing beside it hangs
         # deeper. Anything that does lifts the brick off its heatsink, so the
         # gap silently growing to fit it is exactly the failure to catch.

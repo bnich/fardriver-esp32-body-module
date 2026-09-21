@@ -67,11 +67,13 @@ def board_width(monkeypatch):
     `BOARD_AREA` and `CAVITY_REQUIRED_W` moved with it as the module's own
     arithmetic would.
 
-    ⛔ A MUTATION FIXTURE, and the only way to a width other than the 40.0 the
+    ⛔ A MUTATION FIXTURE, and the only way to a width other than the 41.84 the
     envelope search chose. It drives two different proofs: a board too WIDE for
-    the measured cavity must fail `cavity_problems`, and a board back on 39.0
-    must fail the pack-cliff clearance guard. The real flags (cavity measured,
-    enclosure still undecided) are left untouched in both.
+    the measured cavity must fail `cavity_problems`, and a board back on the
+    40.0 the cabled crossings were left standing on must fail the pack-cliff
+    guard -- below the step at 40.0, and above it but inside the millimetre at
+    41.0. The real flags (cavity measured, enclosure still undecided) are left
+    untouched in all of them.
     """
     def set_width(mm: float):
         from tools import board_params as bp

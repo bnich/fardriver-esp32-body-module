@@ -53,19 +53,26 @@ def test_every_interface_is_one_crossing_between_neighbours_with_matching_halves
     """Every crossing has a part on each side.  PWR-OUT once ran POWER → OUTPUTS →
     LOGIC on one tabled bus with nothing between POWER and OUTPUTS.
 
-    The FACES depend on the kind.  A mated pair faces itself across the gap —
-    lower half on top, upper half hanging under.  A cable does not: the loom
-    carries the orientation, so both halves stand on a top face (IO-20), which
-    is what keeps a 22 mm connector assembly out of the gap L102 already stands
-    22.0 mm in."""
+    ⭐ EVERY half looks INTO the gap its crossing spans — lower half standing on
+    top of the lower board, upper half hanging under the upper one — whichever
+    kind it is.  That is geometry, not a choice: the far side of a board is a
+    different gap, and a body put there has to fit THAT one.  ⛔ PWR-OUT and
+    CTRL sat on OUTPUTS' TOP face until Task 4 of IO-20: the STACK pair stops
+    OUTPUTS → LOGIC at 11.04 mm, J311's posts stand 10.9, and the loom would
+    have had to come back round a board edge with 1.0 mm of clearance beside it.
+
+    What the two kinds differ in is ALIGNMENT, and that is
+    `test_only_a_mated_pair_is_pre_mirrored` and integrity's facing check: a
+    mated pair has to face its own other half across the gap and is
+    pre-mirrored for it; a cable is not asked to, because the loom carries the
+    orientation."""
     order = board_params.STACK_ORDER
     for iface in {c.interface for c in d.connectors if c.interface}:
         halves = _halves(d, iface)
         assert len(halves) == 2, (iface, [c.refdes for c in halves])
         lo, up = halves
         assert order.index(up.board) == order.index(lo.board) + 1, iface
-        want = ("top", "top") if is_cabled(iface) else ("top", "bottom")
-        assert (lo.side, up.side) == want, iface
+        assert (lo.side, up.side) == ("top", "bottom"), iface
         assert [(cp.pin, cp.net) for cp in lo.pins] == [(cp.pin, cp.net) for cp in up.pins], iface
 
 
@@ -178,6 +185,35 @@ def test_the_conductor_check_fires_on_the_clone_and_on_a_thin_wire(d):
             test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d)
 
 
+def test_the_brass_posts_are_bonded_at_one_end_only_so_one_return_is_sized(d):
+    """⭐ IO-21 (owner, 2026-09-21), recorded where the fact lives rather than
+    in a document. It is a CURRENT question, not a mechanical one.
+
+    The four brass M3×30 posts that set POWER → OUTPUTS are conductive and they
+    are bolted through a mounting pad on each board. Bond both ends and the
+    8.47 A return has TWO paths: PWR-OUT's 16 AWG GND conductor, which the
+    power budget sizes, and an unrated one through brass threads and screw
+    torque that nothing checks and that changes as fasteners age. ⛔ So they are
+    bonded to GND at the OUTPUTS END ONLY, landing on a copper-free pad at
+    POWER — a defined potential beside POWER's 84 V pins, and no second return.
+
+    Protects: that the single-ended bond and the sized conductor stay written
+    down together. Either one alone reads as arbitrary, and the reason the
+    brass may not be a second return is the whole of it."""
+    (brass,) = [s for s in netlist.standoffs()
+                if tuple(s.between) == ("POWER", "OUTPUTS")]
+    assert brass.seating == "sets" and "brass" in brass.source.lower()
+    assert "OUTPUTS END ONLY (IO-21)" in brass.source
+    assert "copper-free pad at POWER" in brass.source
+    assert "16 AWG" in brass.source and "SOLE sized return" in brass.source
+    # ...and the conductor that IS the return says the same, from its own end.
+    awg, _crimp, why = netlist.PWROUT_LOOM["GND"]
+    assert awg == 16 and "ONLY sized return" in why and "IO-21" in why
+    # One GND conductor on the cable, so there is nothing to share it with.
+    for c in _halves(d, "PWR-OUT"):
+        assert len([cp for cp in c.pins if cp.net == "GND"]) == 1, c.refdes
+
+
 def test_every_cabled_half_is_positively_keyed(d):
     """⛔ What a cable has INSTEAD of a palindrome, and the reason it may not
     simply be exempted: a loom is offered to its header by hand at every
@@ -248,12 +284,16 @@ def test_a_cabled_crossing_gets_two_ordinary_unmirrored_footprints(d):
 
 
 def test_the_under_gate_is_the_crossing_kind_not_the_face(d):
-    """⚠️ Proven by mutation, or the rule above passes only because no cabled
-    half happens to sit on a bottom face.  Put one there: it is STILL not
-    pre-mirrored, because what earns the mirror is having a mate to line up
-    with, and a mated pair on the same face still earns it."""
-    cabled = replace(_halves(d, CABLES[0])[1], side="bottom")
+    """⚠️ Proven by mutation in BOTH directions, or the rule above passes only
+    because of where the halves happen to sit.  Every upper half hangs under
+    its board today, cabled or mated, so the face cannot be what distinguishes
+    them: move a cabled one to the TOP and it is still not pre-mirrored, while
+    the mated one on the same face still earns the mirror.  What earns it is
+    having a mate to line up with."""
+    cabled = _halves(d, CABLES[0])[1]
+    assert cabled.side == "bottom"                      # ...as its gap requires
     assert "-UNDER" not in footprint_lib.generated(cabled)[0]
+    assert "-UNDER" not in footprint_lib.generated(replace(cabled, side="top"))[0]
     paired = _halves(d, MATED_PAIRS[0])[1]
     assert "-UNDER" in footprint_lib.generated(paired)[0]
 

@@ -53,7 +53,7 @@ Conventions
 """
 from dataclasses import replace
 
-from .model import Board, ConnPin, Connector, Design, Net, Part
+from .model import Board, ConnPin, Connector, Design, Net, Part, Standoff
 
 #: The three boards, bottom to top: voltage falls with height (BD-1, BD-2).
 BOARDS: tuple[Board, ...] = ("POWER", "OUTPUTS", "LOGIC")
@@ -2497,17 +2497,37 @@ _INTERBOARD = ("Hong Cheng 2.54 mm, gold flash over brass, 3 A, 1000 V AC "
                "board spacing")
 
 #: The two POWER ↔ OUTPUTS crossings (IO-20, 2026-09-20). No stocked connector
-#: spans that 25.1 mm gap, so a LOOM carries it, and the loom takes the
-#: orientation: neither half faces the other and neither is mirrored. Both
-#: halves therefore stand on their boards' TOP faces — a facing pair of shrouds
-#: bounds at 22 mm per end, hanging into the same gap L101/L102 already stand
-#: 22.0 mm in.
-_CABLED = ("A CABLE crossing (IO-20): no stocked connector spans the 25.1 mm "
+#: spans that gap, so a LOOM carries it, and the loom takes the orientation:
+#: neither half faces the other and neither is mirrored, and neither land
+#: pattern is pre-mirrored.
+#:
+#: ⭐ BOTH HALVES LOOK INTO THE GAP THE CABLE CROSSES — the POWER half standing
+#: on POWER's top, the OUTPUTS half hanging under OUTPUTS — and that is the
+#: freedom a loom buys, NOT a licence to put a body anywhere. Two facts fix it,
+#: and both were found when the stack model stopped counting a cabled half as a
+#: mated pair (which had hidden every body in this paragraph):
+#:   * ⛔ ON OUTPUTS' TOP FACE THE BODY DOES NOT FIT AND THE LOOM CANNOT REACH
+#:     IT. The STACK pair stops OUTPUTS → LOGIC at 11.04 mm and J311's posts
+#:     stand 10.9 mm: 0.14 mm of air under LOGIC, no room for the VHR housing,
+#:     and 8.6 mm of box header beside it. The loom would also have to leave
+#:     the inter-board gap and come back round the board's edge, where the
+#:     envelope gives it 1.0 mm on the far side (SIDE_CLEARANCE) and the
+#:     connector face on the near one.
+#:   * ✅ UNDER OUTPUTS IT IS FREE. The M3×30 standoffs set POWER → OUTPUTS at
+#:     30.0 mm, so a 10.9 mm body hanging into it clears by 18.1 mm and the
+#:     loom runs straight between the two headers. The keep-out it costs is
+#:     stated by `board_params` exactly as J314's is: nothing on POWER taller
+#:     than 18.1 mm beneath it, which L101/L102 at 22.0 are.
+#: ⚠️ The 22 mm figure that once argued for a top face was a facing pair of
+#: SHROUDS, 22 mm per end, against a 25.1 mm gap. A cable has no facing pair
+#: and the standoffs made the gap 30.0: neither half of that argument survives.
+_CABLED = ("A CABLE crossing (IO-20): no stocked connector spans the "
            "POWER→OUTPUTS gap, so a loom carries it and the M3×30 standoffs "
-           "set the gap. The cable takes the orientation, so this half neither "
-           "faces its mate nor is mirrored, and both ends stand on a TOP face, "
-           "keeping a tall connector body out of a gap L101/L102 already stand "
-           "22.0 mm in")
+           "set that gap at 30.0 mm. The cable takes the orientation, so this "
+           "half neither faces its mate nor is mirrored; both halves look into "
+           "the 30.0 mm gap the loom crosses, the POWER half standing on top "
+           "and the OUTPUTS half hanging under, because OUTPUTS' top face has "
+           "11.04 mm under LOGIC and this body needs more")
 
 #: PWR-OUT's connector: JST's VH locking header, top entry, five circuits wide
 #: with the third post omitted. ⛔ THE TRAP, and it is the Blue Sea failure
@@ -2711,12 +2731,12 @@ _CONNECTORS = (
                  "the same face of the box as every other row's, one row "
                  "below the 12 V terminals"),
         side="bottom"),
-    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, on top of the board: "
+    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: "
               "V12 for the drivers and the 5 V buck, GND back, V5 and "
               "KEY_SENSE on up to J307", _keyed_bus(_PWROUT_CONTACTS), _VH_H,
               footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=1.65,
               contact_a=10.0, keyed=_VH_KEY, leaves_box=False,
-              interface="PWR-OUT", lead_mm=_VH_LEAD,
+              interface="PWR-OUT", lead_mm=_VH_LEAD, side="bottom",
               source=f"{_CABLED}. {_VH}. {_MATED_UNKNOWN}"),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
               "to LOGIC, 3.3 V back down, ground on every other contact",
@@ -2740,10 +2760,11 @@ _CONNECTORS = (
                      f"11.04 mm, 0.04 mm more than PWR-LOGIC's 11.00, so "
                      f"J307's insulators sit that far apart. {_INTERBOARD}"),
     Connector("J312", "OUTPUTS",
-              f"CTRL, OUTPUTS side, on top of the board: 2 × {_CTRL_WAYS // 2}, "
+              f"CTRL, OUTPUTS side, under the board: 2 × {_CTRL_WAYS // 2}, "
               f"a ground on both sides of every signal", _bus(_CTRL_NETS),
               _DC3_H, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
               hole_mm=1.0, contact_a=1.5, keyed=_DC3_KEY, lead_mm=_DC3_LEAD,
+              side="bottom",
               source=f"{_CABLED}. {_DC3}. {_MATED_UNKNOWN}"),
     # ── LOGIC ───────────────────────────────────────────────────────────────
     _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
@@ -2955,17 +2976,18 @@ _HAND_BY_MPN = {
 }
 
 
-#: The board-to-board STANDOFFS, and the gap each one sets (IO-20, IO-21).
-#: (LCSC, maker part, how many, the gap it sets in mm, what it does).
+#: The board-to-board STANDOFFS, and the gap each one holds (IO-20, IO-21).
 #:
-#: ⬜ NOT `Part`s, and that is the current state rather than an oversight:
-#: `board_params` knows a thing that STANDS IN a gap, which it clears by
-#: CLEARANCE, and a connector PAIR whose mated bodies ARE the gap. A standoff
-#: is the second kind and has no entry in that model yet, so adding it as an
-#: ordinary part would derive a gap 1.0 mm taller than the standoff and fail
-#: the 11.00 mm connector stop the nylon one is deliberately shimmed under. The
-#: mounting holes themselves are already board geometry (`board_params`
-#: subtracts the four M3 corners); this table is what goes through them.
+#: ⭐ THEY ARE IN THE DESIGN (`Design.standoffs`) and `board_params.layer_gaps`
+#: derives a gap from them, which is what closed the last hole in the height
+#: model: it knew a thing that STANDS IN a gap, and a connector PAIR whose
+#: mated bodies ARE the gap, and had no term for a pillar that DEFINES one.
+#: They are not `Part`s and must not become ones -- an ordinary part is cleared
+#: by CLEARANCE, which would derive a gap 1.0 mm taller than the standoff and
+#: fail the 11.04 mm connector stop the nylon one is deliberately shimmed
+#: under. The mounting holes themselves are already board geometry
+#: (`board_params` subtracts the four M3 corners); this table is what goes
+#: through them, and it is ordered from LCSC with the boards.
 #: ⭐ IO-21, owner 2026-09-21: the brass posts are bonded to GND at the OUTPUTS
 #: END ONLY, landing on a copper-free pad at POWER. Defined potential beside
 #: POWER's 84 V pins, and NO second path between the boards -- ⛔ bonding both
@@ -2973,35 +2995,42 @@ _HAND_BY_MPN = {
 #: sizes and an unrated one through brass threads and screw torque that nothing
 #: checks and that changes as fasteners age.
 STANDOFFS = (
-    ("C775781", "Shuntian M3X30", 4, 30.0,
-     "POWER → OUTPUTS: brass, female-female, 30.0 ±0.2 (inspected 29.96-29.98), "
-     "hex 4.7 AF. ⭐ This is what sets that gap: no connector spans it any more. "
-     "BRASS, not nylon -- rigidity is the standoffs' whole job now, nylon creeps "
-     "under preload so the screws back off, LCSC's nylon M3 range stops at 20 mm, "
-     "and 94V-2 is the weakest flame class to put on the 84 V board. ⚠️ The cost "
-     "is a post at chassis potential beside POWER's 84 V pins: pay it in layout "
-     "with a copper keep-out annulus (≈3.5 mm radius, both layers, mask over, no "
-     "HV net inside it) around every POWER mounting hole. Bonded to GND at the "
-     "OUTPUTS end only (IO-21)"),
-    ("C118174", "HIWA TP-11", 4, 11.0,
-     "OUTPUTS → LOGIC: nylon 66 94V-2, M3×11+6 male-female, hex 5.5 AF. ⚠️ Its "
-     "±0.5 mm is the whole problem: 11.0 nominal against an 11.00 mm CONNECTOR "
-     "stop means 11.5 holds the boards apart and un-seats both connectors by "
-     "0.5 mm of their 6.0 mm engagement -- 8 % of the wipe, on the stamped "
-     "contacts -- while 10.5 fights them and bows the boards. ✅ So it is "
-     "specified DELIBERATELY SHORT and shimmed to fit: the CONNECTORS set this "
-     "gap and the standoff only stops the boards flexing apart. Measure the "
-     "delivered length before fitting"),
-    ("C115937", "HIWA PN-3", 8, 0.5,
-     "the shim: a 0.5 mm nylon M3 nut/washer, to take up whatever the TP-11 "
-     "measures short. Nylon, so it cannot bridge anything"),
+    Standoff(
+        "Shuntian M3X30", "C775781", 4, 30.0, ("POWER", "OUTPUTS"), "sets",
+        "POWER → OUTPUTS: brass, female-female, 30.0 ±0.2 (inspected 29.96-29.98), "
+        "hex 4.7 AF. ⭐ This is what sets that gap: no connector spans it any more. "
+        "BRASS, not nylon -- rigidity is the standoffs' whole job now, nylon creeps "
+        "under preload so the screws back off, LCSC's nylon M3 range stops at 20 mm, "
+        "and 94V-2 is the weakest flame class to put on the 84 V board. ⚠️ The cost "
+        "is a post at chassis potential beside POWER's 84 V pins: pay it in layout "
+        "with a copper keep-out annulus (≈3.5 mm radius, both layers, mask over, no "
+        "HV net inside it) around every POWER mounting hole. ⭐ BONDED TO GND AT THE "
+        "OUTPUTS END ONLY (IO-21), on a copper-free pad at POWER: PWR-OUT's 16 AWG "
+        "GND conductor stays the SOLE sized return for the 8.47 A, and bonding both "
+        "ends would put that return on a second, unrated path through brass threads "
+        "and screw torque that nothing checks and that changes as fasteners age"),
+    Standoff(
+        "HIWA TP-11", "C118174", 4, 11.0, ("OUTPUTS", "LOGIC"), "shimmed",
+        "OUTPUTS → LOGIC: nylon 66 94V-2, M3×11+6 male-female, hex 5.5 AF. ⚠️ Its "
+        "±0.5 mm is the whole problem: 11.0 nominal against the 11.04 mm CONNECTOR "
+        "stop means 11.5 holds the boards apart and un-seats both connectors by "
+        "0.5 mm of their 6.0 mm engagement -- 8 % of the wipe, on the stamped "
+        "contacts -- while 10.5 fights them and bows the boards. ✅ So it is "
+        "specified DELIBERATELY SHORT and shimmed to fit: the CONNECTORS set this "
+        "gap and the standoff only stops the boards flexing apart. Measure the "
+        "delivered length before fitting"),
+    Standoff(
+        "HIWA PN-3", "C115937", 8, 0.5, (), "shim",
+        "the shim: a 0.5 mm nylon M3 nut/washer, to take up whatever the TP-11 "
+        "measures short. Nylon, so it cannot bridge anything"),
 )
 
 
-def standoffs() -> tuple[tuple, ...]:
-    """The board-to-board standoffs. ⚠️ `STANDOFFS` is the one home for them;
-    ⬜ `board_params` does not read it yet, so the derived POWER → OUTPUTS gap
-    is still the one the obstructions need, not the 30.0 mm these set."""
+def standoffs() -> tuple[Standoff, ...]:
+    """The board-to-board standoffs. ⚠️ `STANDOFFS` is the one home for them,
+    and `current()` hands them to the Design so `board_params` derives the
+    POWER → OUTPUTS gap from the 30.0 mm brass post rather than from whatever
+    the obstructions happen to need."""
     return STANDOFFS
 
 
@@ -3100,8 +3129,8 @@ def lcsc_catalogue() -> dict[str, str]:
     for fab in _FAB_CONN.values():
         if fab[0] != "hand":
             out[fab[0]] = fab[1]
-    for lcsc, maker, *_ in STANDOFFS:
-        out[lcsc] = maker
+    for so in STANDOFFS:
+        out[so.lcsc] = so.name
     return out
 
 
@@ -3149,7 +3178,7 @@ def current() -> Design:
     """The design as it stands. The ONE API: `.parts`, `.nets`, `.connectors`
     and the lookups on `Design`. Nothing else builds a Design."""
     design = Design(parts=_with_fab(_PARTS), nets=_NETS,
-                    connectors=_with_fab_conn(_CONNECTORS))
+                    connectors=_with_fab_conn(_CONNECTORS), standoffs=STANDOFFS)
     problems = class_a_problems(design)
     if problems:
         raise ValueError("; ".join(problems))

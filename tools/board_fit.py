@@ -20,6 +20,9 @@ Four budgets, four plain answers:
             built, and says so -- the number is not explained away. What
             overrules it is a placed outline, not an argument.
   HEIGHT    `board_params.stack_height`, gap by gap, against the height there.
+            Each gap names what puts the boards where they are: a part, a mated
+            connector pair, the brick's floor seat, or the STANDOFF screwed
+            across it (`model.Standoff`).
   ROWS      each FACE's harness headers end to end -- one row per face (IO-6),
             so a terminal under a board is not summed into the row on top of it
             -- against the length of the board they stand on. The room in front
@@ -189,7 +192,7 @@ def face_verdicts(d: Design) -> list[str]:
     """Each board's harness headers are one row on the connector face (IO-6):
     the row must fit the board's length."""
     return [f"row: {e.board}'s {len(e.headers)} harness headers take "
-            f"{e.length_mm:.0f} mm of the face; the board is {bp.BOARD_L:.0f} mm long"
+            f"{e.length_mm:.0f} mm of the face; the board is {bp.BOARD_L:g} mm long"
             for e in edge_budget(d) if e.length_mm > bp.BOARD_L]
 
 
@@ -212,11 +215,11 @@ def problems(d: Design) -> list[str]:
             errs.append(f"density: {where} is {s.density:.0%} bodies, limit "
                         f"{DENSITY_LIMIT:.0%} -- no room left to lay it out")
         if s.pack_mm is None:
-            errs.append(f"pack: {where}: {s.blocked_by} fits a {bp.BOARD_W:.0f} mm "
+            errs.append(f"pack: {where}: {s.blocked_by} fits a {bp.BOARD_W:g} mm "
                         f"board in neither orientation")
         elif not s.pack_ok:
             errs.append(f"pack: {where} DOES NOT FIT -- the naive pack needs "
-                        f"{s.pack_mm:.0f} mm of a {bp.BOARD_L:.0f} mm board, "
+                        f"{s.pack_mm:.0f} mm of a {bp.BOARD_L:g} mm board, "
                         f"{s.pack_mm - bp.BOARD_L:.0f} mm over. Not shown to be "
                         f"buildable; only a placed outline can overrule this")
     errs += [f"area: {what} has no footprint -- the area budget cannot see it"
@@ -253,7 +256,7 @@ def report(d: Design) -> str:
                    "move when the box's model lands. Every VERDICT here binds "
                    "regardless: M18 is measured (IO-14).")
     req_l, req_w, req_h = bp.cavity_required(d)
-    out.append(f"board {bp.BOARD_W:.0f} x {bp.BOARD_L:.0f} = {bp.BOARD_AREA:.0f} mm² "
+    out.append(f"board {bp.BOARD_W:g} x {bp.BOARD_L:g} = {bp.BOARD_AREA:.0f} mm² "
                f"({MOUNT_AREA:.0f} mm² of it under the four M3 corners)   "
                f"height available {bp.AVAIL_H:.1f} mm")
     out.append(f"CAVITY REQUIRED (IO-14)   {req_l:.1f} along x {req_w:.2f} across x "
@@ -290,7 +293,7 @@ def report(d: Design) -> str:
                f"pack = naive shelf-pack, {COURTYARD} mm courtyard, FAIL when longer "
                f"than the board.")
     out.append(f"  {'board':6} {'side':6} {'bodies':>6} {'raw mm²':>8} {'density':>8}      "
-               f"{'pack':>7}  of {bp.BOARD_L:.0f} mm")
+               f"{'pack':>7}  of {bp.BOARD_L:g} mm")
     for s in area_budget(d):
         dens = "ok" if s.density_ok else "⛔ FAIL"
         if s.pack_mm is None:
@@ -320,6 +323,10 @@ def report(d: Design) -> str:
                f"{g.hang_ref} {g.hang_mm:.1f} down" if g.hang_mm else "",
                (f"{g.seat_ref} seats on the floor at {g.seat_mm:.1f}"
                 + (", which sets it" if g.seat_sets_gap else "")) if g.seat_mm else "",
+               (f"the {g.standoff.name} standoff stands {g.standoff.height_mm:.1f}"
+                + (", which sets it" if g.standoff_sets_gap else
+                   ", shimmed short so the connectors set it"))
+               if g.standoff else "",
                *(f"{pr.refs} mates at {pr.mated_mm:.1f}"
                  + ("" if pr.confirmed else " (unconfirmed)") for pr in g.pairs)]
         out.append(f"  {z:6.1f}  gap {g.below:>5} -> {g.above:<5} {g.gap_mm:5.1f}   "
@@ -350,7 +357,7 @@ def report(d: Design) -> str:
                        f"{what}: {' '.join(refs)}")
 
     out.append(f"\nROWS   one row per FACE (IO-6): its harness headers end to end, "
-               f"{HEADER_GAP:g} mm apart, along a {bp.BOARD_L:.0f} mm board. The face "
+               f"{HEADER_GAP:g} mm apart, along a {bp.BOARD_L:g} mm board. The face "
                f"needs {bp.FACE_ROOM:.2f} mm in front of it (the deepest mated plug, "
                f"then a {bp.WIRE_BEND:g} mm wire bend), which is in the cavity above.")
     for e in edge_budget(d):

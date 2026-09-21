@@ -189,9 +189,10 @@ def check(d: Design) -> list[str]:
     # What is asked of the two halves depends on model.CROSSING. A MATED PAIR
     # must face each other -- lower half on top of the lower board, upper half
     # hanging under the upper one, its land pattern pre-mirrored. A CABLE must
-    # not be asked for any of that: the loom carries the orientation, and both
-    # its halves stand on top faces (IO-20). Asking a cable to face its mate is
-    # what would have forced a 22 mm connector body into a 25.1 mm gap.
+    # not be asked for any of that: the loom carries the orientation (IO-20).
+    # ⛔ That is about ALIGNMENT and mirroring, not about which face a half
+    # sits on: every half still looks into the gap its crossing spans, which is
+    # `board_params`' business and `tests/test_interconnect.py`'s to hold.
     for c in d.connectors:
         if c.interface and c.interface not in INTERFACE_BOARDS:
             errs.append(f"interface: {c.refdes} names {c.interface!r}, which "
