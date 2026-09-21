@@ -995,7 +995,16 @@ _OUTPUTS_PARTS = (
               "CS and FAULT pins share U302's nodes: with DIAG_EN low a "
               "TPS4H160B's CS and FAULT are high-impedance while the current "
               "limit stays live, so the firmware reads one device at a time "
-              "and no second ADC pin is needed (SLVSCV8E Table 7-1)"),
+              "and no second ADC pin is needed (SLVSCV8E Table 7-1). ⚠️ The "
+              "sharing is only safe while ONE DIAG_EN is up: its own comes off "
+              "U304.GPA4, so it is high only when the firmware has written it. "
+              "A reset that takes EN low resets U304 with the S3 (IO-22) and "
+              "GPA4 returns to an input, so a restart from that reset cannot "
+              "raise GPIO7 over a GPA4 left high. ⛔ A watchdog or software "
+              "restart does not touch EN: after one GPA4 keeps its last state, "
+              "and until the firmware's first write to U304 a raised GPIO7 "
+              "sums both devices into CS2_RAW and ORs both FAULTs -- so the "
+              "firmware writes U304 OFF before it raises DIAG_EN"),
     _tps_series("R354", "AUX12_1_CMD → U303 IN1"),
     _tps_series("R355", "AUX12_2_CMD → U303 IN2"),
     _tps_series("R356", "AUX12_3_CMD → U303 IN3"),
@@ -1032,17 +1041,19 @@ _OUTPUTS_PARTS = (
                 f"enable, the four 5 V switch enables and the four 5 V fault "
                 f"flags (IO-1). 14 of 16 bits. It shares the input expanders' "
                 f"I²C bus -- no native pin is free for a second -- so the "
-                f"module's two bus wires cross STACK to reach it. ⚠️ At "
-                f"power-up its bits are inputs, and every enable it drives "
-                f"has its own pull-down (the TPS4H160B's are internal), so "
-                f"every aux output starts OFF; nothing resets it on an S3 "
-                f"restart, so it keeps driving what it last drove until "
-                f"firmware writes it. nc INTA and INTB: it is polled every "
-                f"tick, and nothing here needs an interrupt. {_MCP_SOURCE}"),
-    _r("R364", "OUTPUTS", "10k",
-       f"U304 RESET pull-up to V3P3, its own and not the pair on LOGIC: a "
-       f"reset line is not worth a contact of the stack. {_DS_MCP} p.11: "
-       f"RESET 'Must be externally biased'"),
+                f"module's two bus wires cross STACK to reach it. ⚠️ Its "
+                f"RESET is the S3's EN, down a third STACK contact (IO-22): "
+                f"out of reset every bit is an input ({_DS_MCP} register map, "
+                f"IODIR POR/RST = FFh) and every enable it drives has its own "
+                f"pull-down (the TPS4H160B's are internal), so every aux "
+                f"output is OFF whenever the S3 is held in reset -- at "
+                f"power-up behind the EN RC, with the programmer on J408, "
+                f"and under a fitted U406. ⛔ A watchdog or software restart "
+                f"does NOT reset it: EN is an input the chip cannot drive "
+                f"(ESP32-S3 datasheet v2.2 p.28), so after one it keeps "
+                f"driving what it last drove until the firmware's first "
+                f"write. nc INTA and INTB: it is polled every tick, and "
+                f"nothing here needs an interrupt. {_MCP_SOURCE}"),
     _c("C308", "OUTPUTS", "100nF", 50.0, "U304 VDD decoupling"),
     # ── the 5 V aux supply: its OWN buck off V12 (spec §8.4) ────────────────
     # Separate from the logic's 5 V, which comes from the Cincon on POWER, so
@@ -1286,7 +1297,9 @@ _LOGIC_PARTS = (
                 "Power-up and Reset Timing': CHIP_PU must rise after the 3.3 V "
                 "rails settle; the 10 kΩ / 1 µF RC (R438, C412) does that for "
                 "the TLV767's fast start, and fitted this holds EN low until "
-                "3V3 is over 2.93 V and 200 ms more. TI SBVS157E (tlv803.pdf) p.4: "
+                "3V3 is over 2.93 V and 200 ms more -- and, since the three "
+                "MCP23017 RESETs ride EN (IO-22), holds every expander in "
+                "reset for the same brown-out. TI SBVS157E (tlv803.pdf) p.4: "
                 "TLV803 DBZ GND 1 · RESET 2 · VDD 3; RESET open drain, 'Use a 10-kΩ "
                 "to 1-MΩ pullup' = R438. VIT- 2.87-2.99 V (p.6). p.22: DBZ "
                 "1.12 mm max"),
@@ -1325,12 +1338,15 @@ _LOGIC_PARTS = (
        "I²C SDA pull-up. I²C at 3.3 V / 400 kHz allows 967 Ω-3.5 kΩ at "
        "100 pF; D16 wants the STRONG end beside 80 A of chopped phase current"),
     _r("R435", "LOGIC", "2k2", "I²C SCL pull-up, as R434"),
-    _r("R437", "LOGIC", "10k",
-       f"MCP23017 RESET (both devices) pull-up to V3P3. {_DS_MCP} p.11: RESET "
-       f"'Must be externally biased'"),
     _r("R438", "LOGIC", "10k",
-       f"U401 EN pull-up to V3P3, the R of the reset RC. {_DS_HDG} p.11: "
-       f"'CHIP_PU must not be left floating … R = 10 kΩ and C = 1 μF'"),
+       f"U401 EN pull-up to V3P3, the R of the reset RC, and the ONE external "
+       f"bias of all three MCP23017 RESETs, which share the EN net (IO-22). "
+       f"{_DS_HDG} p.11: 'CHIP_PU must not be left floating … R = 10 kΩ and "
+       f"C = 1 μF'; {_DS_MCP} p.11: RESET 'Must be externally biased' -- it "
+       f"has no internal pull-up. ⛔ No second pull-up on EN: two 10 kΩ in "
+       f"parallel halve the RC's 10 ms. The three RESET inputs leak ±1 µA "
+       f"each ({_DS_MCP} p.4 D060), 30 mV across this resistor at worst, "
+       f"against an EN that must sit above 0.8 × VDD = 2.64 V"),
     _r("R439", "LOGIC", "10k",
        f"U401 IO0 pull-up to V3P3, so an unprobed J408 pad cannot select "
        f"download mode at key-on. {_DS_HDG} p.18: 'It is recommended to place "
@@ -1546,6 +1562,14 @@ _STACK_SIGNALS = (
     # free for a second one, and a fault that holds it stalls input reading
     # until the driver's nine-clock recovery frees it (spec §6).
     "SDA", "SCL",
+    # The S3's EN comes DOWN to expander #3's RESET (IO-22, owner 2026-09-21),
+    # so whatever holds the S3 in reset -- the RC at power-up, the programmer
+    # at J408, a fitted U406 -- holds every expander in reset with it and
+    # releases the aux outputs. ⚠️ EN is an INPUT the chip cannot drive
+    # (ESP32-S3 datasheet v2.2 p.28), so a watchdog or software restart never
+    # touches this line. It rides a stack contact beside a ground like every
+    # other signal; C412's 1 µF sits at the S3 end.
+    "EN",
 )
 #: Contacts per row, and each half's own body from its maker's drawing: the
 #: socket on OUTPUTS is 0.4 mm longer than the header that plugs into it.
@@ -1742,10 +1766,10 @@ _NETS_RAILS = (
         _p("U405.OUT U405.SNS C416.1 C417.1 U401.3V3 C413.1 C414.1 "
            "U402.VDD C418.1 U403.VDD U403.A0 C419.1 U404.VCC C420.1 "
            "R402.2 R403.2 R404.2 R405.2 R406.2 R407.2 R408.2 R409.2 R410.2 "
-           "R411.2 R412.2 R434.2 R435.2 R437.2 R438.2 R439.2 R477.2 "
+           "R411.2 R412.2 R434.2 R435.2 R438.2 R439.2 R477.2 "
            "R317.2 R318.2 "
            "R472.2 U406.VDD C436.1") + _p(" ".join(f"{pull}.2" for _, _, pull, *_ in _SPARE_LINES))
-        + _pwrlogic("V3P3") + _p("R349.2 R351.2 U304.VDD U304.A1 C308.1 R364.2")
+        + _pwrlogic("V3P3") + _p("R349.2 R351.2 U304.VDD U304.A1 C308.1")
         + _p(" ".join(f"R{368 + n}.2" for n in range(1, 5))),
         domain="3V3", interface="PWR-LOGIC",
         source="LOGIC's 3.3 V rail. It goes DOWN to OUTPUTS for the two "
@@ -2080,10 +2104,25 @@ _NETS_LOGIC = (
     Net("KEY_SENSE_PIN", _p("R476.2 C437.1 U401.IO1"), domain="3V3", gpio="GPIO1",
         source="KEY_SENSE at the ADC pin, behind its 1 kΩ, with the HDG's "
                "0.1 µF at the pin"),
-    Net("EN", _p("U401.EN R438.1 C412.1 J408.1 U406.RESET"), domain="3V3",
-        source="Module enable: 10 kΩ / 1 µF reset RC, the unfitted "
-               "supervisor's open drain, and the service pad the programmer "
-               "pulses to reset the module"),
+    Net("EN", _p("U401.EN R438.1 C412.1 J408.1 U406.RESET "
+                 "U402.RESET U403.RESET U304.RESET") + _stack("EN"), domain="3V3",
+        interface="STACK",
+        source=f"Module enable AND every expander's RESET (IO-22): the 10 kΩ / "
+               f"1 µF reset RC, the unfitted supervisor's open drain, the "
+               f"service pad the programmer pulses to reset the module, the two "
+               f"input expanders' RESET on this board and expander #3's down a "
+               f"STACK contact. Whatever holds the S3 in reset holds all three "
+               f"in reset with it, and they leave it AFTER the S3 does: the "
+               f"MCP23017's RESET releases at 0.8 × VDD ({_DS_MCP} p.4 D041, "
+               f"Schmitt) and the S3 at 0.75 × VDD (ESP32-S3 datasheet v2.2 "
+               f"p.65 Table 5-4, VIH_nRST), 16.1 ms against 13.9 ms up the "
+               f"10 ms RC -- so no expander is ever awake while the S3 is "
+               f"held, and none is still held when the firmware first writes "
+               f"it, tens of ms later. Any pull that resets the S3 (≥ 50 µs "
+               f"below 0.25 × VDD, p.30 Table 2-13) is far past the MCP's "
+               f"1 µs TRSTL ({_DS_MCP} p.5) and its 0.2 × VDD VIL. ⛔ EN is an "
+               f"input the S3 cannot drive (p.28 Table 2-10), so a watchdog or "
+               f"software restart resets nothing on this net"),
     Net("BOOT_IO0", _p("U401.IO0 R439.1 J408.6"), domain="3V3", gpio="GPIO0",
         source="Boot-mode strap, pulled up. ⛔ It reaches the INTERNAL service "
                "pads only — no wire that leaves the box lands on a "
@@ -2117,8 +2156,6 @@ _NETS_LOGIC = (
     Net("MCP_INT", _p("U402.INTA U401.IO35"), domain="3V3", gpio="GPIO35",
         source="Interrupt from expander #1, IOCON.MIRROR = 1. GPIO35 is free "
                "because the module is an -N8 (no octal PSRAM)"),
-    Net("MCP_RESET", _p("U402.RESET U403.RESET R437.1"), domain="3V3",
-        source="Both expanders' RESET, held high by R437"),
     Net("TWAI_TX", _p("U401.IO10 U404.D"), domain="3V3", gpio="GPIO10",
         source="To the transceiver's D. CAN hardware is fitted; D19 parks the "
                "feed"),
@@ -2301,13 +2338,6 @@ _NETS_AUX = (
         source="Device side of R358"),
     Net("CL3", _p("U303.CL R359.1"), domain="3V3",
         source="U303's current-limit programming node, 0.8 V across R359"),
-    Net("MCP3_RESET", _p("U304.RESET R364.1"), domain="3V3",
-        source="Expander #3's RESET, held high by R364 on this board. ⚠️ It is "
-               "NOT the MCP_RESET the two input expanders share on LOGIC: "
-               "tying them would spend a contact of the stack on a line "
-               "nothing drives. The consequence is recorded in spec §6 -- an "
-               "S3 restart resets neither, and every expander keeps driving "
-               "what it last drove until firmware writes it"),
     # ── the 5 V aux supply ──────────────────────────────────────────────────
     Net("V5AUX",
         _p("L301.2 U305.BIAS R377.1 R379.2 C317.1")
@@ -2795,7 +2825,7 @@ _CONNECTORS = (
               _signal_gnd_pins(_STACK_SIGNALS), 8.5, height_confirmed=True,
               footprint_mm=_STACK_SOCKET_FP, contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="STACK",
-              source=f"The SOCKET, LCSC C42163143: HC-PM254-8.5H-2x28PZ, body "
+              source=f"The SOCKET, LCSC C41376169: HC-PM254-8.5H-2x{_STACK_ROWS}PZ, body "
                      f"8.5 ±0.15 tall and (B+0.4)±0.3 long by 5.0 ±0.15 — ⛔ "
                      f"5.0, not the 5.08 the pitch suggests. Tails 3.0 ±0.2, "
                      f"ø1.02 holes ({_DS_HC_PM} p.1). This is the pair that STOPS: 8.5 + 2.54 = "
@@ -2861,7 +2891,7 @@ _CONNECTORS = (
               contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="STACK", side="bottom",
               source=f"The HEADER, LCSC C2333: a BOOMELE 2.54-2*40P strip CUT "
-                     f"TO 2×28, insulator 2.54 (⚠️ not Hong Cheng's 2.5 — the "
+                     f"TO 2×{_STACK_ROWS}, insulator 2.54 (⚠️ not Hong Cheng's 2.5 — the "
                      f"0.04 mm that makes this pair the stop), pins 6.00 +0.2 "
                      f"above it and 3.0 ±0.2 below the board, body N × 2.54 "
                      f"long because the cut falls on the grid, 5.0 ±0.1 wide, "
@@ -3161,10 +3191,10 @@ _FAB_CONN: dict[str, tuple[str, ...]] = {
              "the 8.5 mm socket half of the 11.00 mm pair"),
     "J407": ("C27985193", "Hong Cheng HC-PZ254-11.5L-1x9PZ", "jlc",
              "the 2.5 mm header half, under LOGIC"),
-    "J308": ("C42163143", "Hong Cheng HC-PM254-8.5H-2x28PZ", "jlc",
+    "J308": ("C41376169", f"Hong Cheng HC-PM254-8.5H-2x{_STACK_ROWS}PZ", "jlc",
              "the 8.5 mm socket half of the 11.04 mm pair"),
     "J406": ("C2333", "BOOMELE(Boom Precision Elec) 2.54-2*40P", "loose",
-             "a 2×40 strip CUT TO 2×28 and soldered into LOGIC's underside: "
+             f"a 2×40 strip CUT TO 2×{_STACK_ROWS} and soldered into LOGIC's underside: "
              "the cutting is why JLC cannot place it"),
 }
 

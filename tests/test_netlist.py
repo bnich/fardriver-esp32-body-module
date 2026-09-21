@@ -684,6 +684,13 @@ def test_the_mcp23017s_are_biased_addressed_apart_and_held_out_of_reset(d, w):
         straps = tuple(w.net(u, a) for a in ("A2", "A1", "A0"))
         assert set(straps) <= {"GND", "V3P3"}, f"{u}: 'Must be externally biased'"
         addresses.append(straps)
+        # IO-22: every expander's RESET IS the S3's EN net, so an S3 reset --
+        # power-up, watchdog, the programmer on J408 -- resets the expander with
+        # it and every output returns to an input. Not a separate pull-up: a
+        # RESET on its own pull-up outlives an S3 restart, and the aux outputs
+        # kept driving through Q101's key-off decay (audit H1, 2026-09-21).
+        assert w.net(u, "RESET") == w.net("U401", "EN"), (
+            f"{u} RESET is not on the S3's EN: an S3 restart would not reset it")
         assert w.between(w.net(u, "RESET"), "V3P3", {"R"}), f"{u} RESET floats"
     assert len(set(addresses)) == len(addresses), (
         f"two expanders answer at one address: {addresses}")
@@ -761,6 +768,14 @@ STACK_CONTRACT = {
     # OUTPUTS (IO-1). One bus for all three expanders: no native pin is free
     # for a second.
     "SDA", "SCL",
+    # the S3's EN, DOWN to expander #3's RESET (IO-22, 2026-09-21): an S3
+    # reset now resets the chip that commands every aux output, so a restart
+    # inside Q101's key-off hold sheds the load instead of leaving it driven
+    # (audit H1). A 29th signal, a 58th contact -- not a rail: EN rests at
+    # V3P3 through R438 but is the S3's reset input, and a reversed half lands
+    # it on GND, which holds the whole module in reset rather than shorting a
+    # supply.
+    "EN",
     # ⛔ NOT the brake levers: J306 is in the INPUTS row on LOGIC (IO-6), so
     # IN05_BRAKE_L and IN06_BRAKE_R reach their pins without a crossing.
     # ⛔ And NOT V3P3, or any other rail: a rail lands on itself when a half is
@@ -990,6 +1005,20 @@ def move_pin(design, refdes, pin, to_net):
     return lifted.replace_net(to_net, pins=lifted.net(to_net).pins + ((refdes, pin),))
 
 
+def reset_off_en(design, refdes):
+    """An expander's RESET taken OFF the S3's EN and given its own pull-up to
+    V3P3 -- the pre-IO-22 wiring, which an S3 restart could not reach."""
+    from tools.model import Net, Part
+    lifted = design.without_pin(refdes, "RESET")
+    pull = Part("R999", "R-10k", "0805", lifted.board_of(refdes), "R", ("1", "2"),
+                0.0, v_max=150.0, value="10k", source="mutation fixture")
+    own = Net("RESET_OWN", ((refdes, "RESET"), ("R999", "1")), "3V3",
+              source="mutation fixture")
+    v3 = lifted.net("V3P3")
+    return lifted.with_part(pull).with_net(own).replace_net(
+        "V3P3", pins=v3.pins + (("R999", "2"),))
+
+
 def swap_pins(design, refdes, a, b):
     net_a, net_b = design.net_of(refdes, a).name, design.net_of(refdes, b).name
     return move_pin(move_pin(design, refdes, a, net_b), refdes, b, net_a)
@@ -1008,8 +1037,11 @@ DEFECTS = [
     # ⭐ Review 2026-09-20: this one passed every gate on the real design --
     # the chip that commands all nine aux outputs was outside the expander
     # checks, because they iterated a typed ("U402", "U403").
-    ("expander #3's RESET pull-up removed, so RESET floats",
-     lambda d: d.without_part("R364"),
+    # IO-22 (2026-09-21): the pull-up R364 is gone -- the RESET rides EN. The
+    # defect is now a RESET taken OFF EN onto its own bias, which an S3 restart
+    # cannot reach: exactly the audit's H1.
+    ("expander #3's RESET moved off EN onto its own pull-up, so an S3 restart cannot reset it",
+     lambda d: reset_off_en(d, "U304"),
      test_the_mcp23017s_are_biased_addressed_apart_and_held_out_of_reset, {}),
     ("expander #3 strapped to expander #2's address",
      lambda d: move_pin(d, "U304", "A1", "GND"),
