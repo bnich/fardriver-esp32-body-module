@@ -155,10 +155,12 @@ EasyEDA Pro project. No board is laid out yet.
   layout proves it, and proves the size the box has to hold. Layout has room to grow the boards to
   **43.35 × 246 mm** before the cavity gate fails. ⚠️ The wall is the exception to that order: it is
   an input to the board width, and today's 41.84 mm board tolerates a wall up to **3.75 mm**.
-- ⛔ **The EasyEDA project is NOT proven against this netlist.** The cabled crossings changed the
-  netlist, which voids the proof of all three boards taken 2026-09-20: each board must be
-  re-imported, its netlist exported and checked identical with `python3 -m tools.tel_check` again
-  before any layout is trusted. **No board is laid out yet.**
+- ✅ **The EasyEDA project is proven against this netlist.** All three boards were re-imported after
+  the cabled crossings, their netlists exported and checked identical with `python3 -m tools.tel_check`
+  on **2026-09-21** — POWER 40 nets / 198 pins, OUTPUTS 107 / 492, LOGIC 97 / 451, every outline
+  41.84 × 242 mm. ⚠️ A proof holds only for the netlist it was taken from: any change to
+  `tools/netlist.py` means re-exporting and re-proving every board it touches. **No board is laid
+  out yet** — layout is the next step, and the enclosure is drawn after it (D27/IO-19).
 
 ---
 
