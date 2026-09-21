@@ -19,7 +19,7 @@ label. Run it first; a design that fails here is not worth rule-checking.
 import math
 from collections import Counter, defaultdict
 
-from .model import Design
+from .model import CROSSING, Design, is_cabled
 
 #: Pins a part may legitimately leave unconnected, by MPN prefix, each because
 #: its DATASHEET says so. A must-tie pin dropped into `nc` makes the "every
@@ -181,14 +181,28 @@ def check(d: Design) -> list[str]:
         if n > 1:
             errs.append(f"gpio: {g} is assigned to {n} nets")
 
-    # -- every interface: two halves that mate, one on each board --------------
+    # -- every interface: two halves, one on each of two neighbouring boards ---
     # The pin tables alone cannot show a missing half: PWR-OUT once ran from
     # POWER to OUTPUTS with no part between them, and J407.1 could be set to GND
     # against J307.1's V12 without a complaint.
+    #
+    # What is asked of the two halves depends on model.CROSSING. A MATED PAIR
+    # must face each other -- lower half on top of the lower board, upper half
+    # hanging under the upper one, its land pattern pre-mirrored. A CABLE must
+    # not be asked for any of that: the loom carries the orientation, and both
+    # its halves stand on top faces (IO-20). Asking a cable to face its mate is
+    # what would have forced a 22 mm connector body into a 25.1 mm gap.
     for c in d.connectors:
         if c.interface and c.interface not in INTERFACE_BOARDS:
             errs.append(f"interface: {c.refdes} names {c.interface!r}, which "
                         f"joins no known pair of boards")
+    # Guard the TABLE, not each crossing: an interface with no declared kind
+    # would quietly inherit the pair rules, and a cable that inherits them is
+    # reported for a defect it does not have.
+    for iface in INTERFACE_BOARDS:
+        if iface not in CROSSING:
+            errs.append(f"interface: {iface} has no entry in model.CROSSING, so "
+                        f"nothing says whether it is a mated pair or a cable")
     for iface, (lower, upper) in INTERFACE_BOARDS.items():
         halves = [c for c in d.connectors if c.interface == iface]
         lo = [c for c in halves if c.board == lower]
@@ -205,17 +219,34 @@ def check(d: Design) -> list[str]:
                         f"{[c.refdes for c in up]}")
             continue
         a, b = lo[0], up[0]
-        if (a.side, b.side) != ("top", "bottom"):
-            errs.append(f"interface: {a.refdes} must stand on top of {lower} and "
-                        f"{b.refdes} hang under {upper} to face each other; "
-                        f"they are {a.side} and {b.side}")
-        ta = {cp.pin: cp.net for cp in a.pins}
-        tb = {cp.pin: cp.net for cp in b.pins}
-        for pin in sorted(set(ta) | set(tb), key=lambda x: (len(x), x)):
-            if ta.get(pin) != tb.get(pin):
-                errs.append(f"interface: {a.refdes}.{pin} carries "
-                            f"{ta.get(pin)!r} but its mate {b.refdes}.{pin} "
-                            f"carries {tb.get(pin)!r}")
+        if is_cabled(iface):
+            # Deliberately says NOTHING about sides, facing or mirroring. What
+            # a loom cannot survive is ends of different sizes, or a conductor
+            # that leaves one contact index and arrives on another.
+            if len(a.pins) != len(b.pins):
+                errs.append(f"interface: {iface} is a cable, so its two ends "
+                            f"must have the same contact count; {a.refdes} has "
+                            f"{len(a.pins)} and {b.refdes} has {len(b.pins)}")
+            else:
+                for i, (pa, pb) in enumerate(zip(a.pins, b.pins), start=1):
+                    if pa.net == pb.net:
+                        continue
+                    errs.append(f"interface: contact {i} of {iface} carries "
+                                f"{pa.net!r} on {a.refdes}.{pa.pin} but "
+                                f"{pb.net!r} on {b.refdes}.{pb.pin} -- a cable "
+                                f"is wired contact for contact")
+        else:
+            if (a.side, b.side) != ("top", "bottom"):
+                errs.append(f"interface: {a.refdes} must stand on top of {lower} "
+                            f"and {b.refdes} hang under {upper} to face each "
+                            f"other; they are {a.side} and {b.side}")
+            ta = {cp.pin: cp.net for cp in a.pins}
+            tb = {cp.pin: cp.net for cp in b.pins}
+            for pin in sorted(set(ta) | set(tb), key=lambda x: (len(x), x)):
+                if ta.get(pin) != tb.get(pin):
+                    errs.append(f"interface: {a.refdes}.{pin} carries "
+                                f"{ta.get(pin)!r} but its mate {b.refdes}.{pin} "
+                                f"carries {tb.get(pin)!r}")
 
     # -- heights must be numbers ------------------------------------------------
     for p in d.parts:

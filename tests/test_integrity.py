@@ -12,7 +12,7 @@ from dataclasses import replace
 import pytest
 
 from tools import integrity
-from tools.model import ConnPin, Connector, Design, Net, Part
+from tools.model import CROSSING, ConnPin, Connector, Design, Net, Part
 
 
 def _r(ref, board):
@@ -50,6 +50,28 @@ OK = Design(
               side="bottom"),
         _conn("J308", "OUTPUTS", "STACK", STACK, leaves_box=False, interface="STACK"),
         _conn("J306", "OUTPUTS", "Lever", ("LEVER", "GND", "")),
+    ),
+)
+
+
+#: The same idea for a CABLED crossing: two ordinary headers joined by a loom
+#: (PWR-OUT, POWER → OUTPUTS, IO-20). Both halves stand on their boards' TOP
+#: faces -- `_conn` defaults to "top" -- so neither faces the other and neither
+#: is mirrored. Under the mated-pair rules this design is a defect; it must be
+#: clean, because a cable is not a pair pretending.
+CABLED = Design(
+    parts=(_r("R10", "POWER"), _r("R11", "OUTPUTS")),
+    nets=(
+        Net("V12", (("R10", "1"), ("J202", "1"), ("J311", "1"), ("R11", "1")),
+            domain="12V", interface="PWR-OUT"),
+        Net("GND", (("R10", "2"), ("J202", "2"), ("J311", "2"), ("R11", "2")),
+            domain="GND", interface="PWR-OUT"),
+    ),
+    connectors=(
+        _conn("J202", "POWER", "PWR-OUT", ("V12", "GND"),
+              leaves_box=False, interface="PWR-OUT"),
+        _conn("J311", "OUTPUTS", "PWR-OUT", ("V12", "GND"),
+              leaves_box=False, interface="PWR-OUT"),
     ),
 )
 
@@ -215,9 +237,60 @@ def test_a_third_half_on_a_board_the_interface_does_not_join():
     assert any("J999 sits elsewhere" in e for e in problems(bad, "interface"))
 
 
-def test_the_upper_half_must_hang_under_its_board():
+def test_the_upper_half_of_a_mated_pair_must_hang_under_its_board():
+    """⚠️ The old, stricter rule, and it did NOT relax when cables arrived.
+    STACK is a mated pair: unmirrored, its rows swap and every signal lands on
+    the ground row."""
+    assert CROSSING["STACK"] == "pair"
     bad = OK.replace_connector("J406", side="top")
     assert any("J406 hang under LOGIC" in e for e in problems(bad, "interface"))
+
+
+# ── a cable is not a pair, and is not checked as one ─────────────────────────
+def test_a_cabled_crossing_with_both_halves_on_top_is_clean():
+    """The freedom is the point: a loom carries the orientation, so nothing
+    here may ask a cable's halves to face each other, to be mirrored, or to be
+    on opposite faces.  That is what lets both headers sit on a top face rather
+    than hanging a 22 mm body into a 25.1 mm gap (IO-20)."""
+    assert CROSSING["PWR-OUT"] == "cable"
+    assert [c.side for c in CABLED.connectors] == ["top", "top"]
+    assert integrity.check(CABLED) == []
+
+
+def test_a_cable_whose_ends_have_different_contact_counts():
+    """A loom terminates in two housings. One end wider than the other is a
+    conductor with nowhere to go, or a contact fed by nothing."""
+    j = CABLED.connector("J202")
+    bad = CABLED.replace_connector("J202", pins=j.pins + (ConnPin("3", ""),))
+    errs = problems(bad, "interface")
+    assert any("PWR-OUT is a cable" in e and "J202 has 3 and J311 has 2" in e
+               for e in errs), errs
+
+
+def test_a_cable_wired_to_the_wrong_contact_at_one_end():
+    """Both ends agree with their own tables and both carry the same nets --
+    only the ORDER differs, which is a loom crimped into the wrong cavities.
+    A check that compared the two SETS of nets would see nothing here."""
+    swap = {"1": "2", "2": "1"}
+    bad = CABLED.replace_connector(
+        "J311", pins=(ConnPin("1", "GND"), ConnPin("2", "V12")))
+    for name in ("V12", "GND"):
+        bad = bad.replace_net(name, pins=tuple(
+            (r, swap[p] if r == "J311" else p) for r, p in bad.net(name).pins))
+    errs = problems(bad, "interface")
+    assert any("contact 1 of PWR-OUT carries 'V12' on J202.1 but 'GND' on "
+               "J311.1" in e for e in errs), errs
+    assert any("contact 2 of PWR-OUT" in e for e in errs), errs
+
+
+def test_a_crossing_with_no_declared_kind_is_named(monkeypatch):
+    """Guarding the TABLE, not each crossing: with no entry, an interface would
+    quietly inherit the pair rules and a cable would be reported for a defect
+    it does not have."""
+    monkeypatch.setattr(integrity, "CROSSING",
+                        {k: v for k, v in CROSSING.items() if k != "STACK"})
+    assert any("STACK has no entry in model.CROSSING" in e
+               for e in problems(OK, "interface"))
 
 
 def test_an_interface_nobody_defined():

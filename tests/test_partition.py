@@ -2,6 +2,7 @@
 row), OUTPUTS (every driver, the 12 V and 5 V rows), LOGIC (the S3, the
 inputs row). Design spec IO-7."""
 from tools import board_params as bp, integrity, netlist
+from tools.model import CROSSING
 
 
 def test_three_boards_bottom_to_top():
@@ -40,3 +41,17 @@ def test_every_interface_joins_neighbours():
         "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
         "STACK": ("OUTPUTS", "LOGIC"),
     }
+
+
+def test_each_crossing_declares_how_it_crosses():
+    """IO-20: no stocked connector spans the 25.1 mm POWER → OUTPUTS gap, so
+    those two crossings are CABLES; the 11.0 mm ones stay mated pairs. The two
+    kinds are held to different truths, so a crossing with no declared kind is
+    a crossing whose checks nobody chose -- `integrity` reports one."""
+    assert CROSSING == {
+        "PWR-OUT": "cable",
+        "CTRL": "cable",
+        "PWR-LOGIC": "pair",
+        "STACK": "pair",
+    }
+    assert set(CROSSING) == set(integrity.INTERFACE_BOARDS)

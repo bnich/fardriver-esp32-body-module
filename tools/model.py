@@ -23,6 +23,8 @@ from typing import Literal
 Board = Literal["POWER", "OUTPUTS", "LOGIC"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
 Interface = Literal["PWR-OUT", "CTRL", "PWR-LOGIC", "STACK"]
+#: How an inter-board interface gets from one board to the other.
+Crossing = Literal["pair", "cable"]
 Side = Literal["top", "bottom"]
 Assembly = Literal["", "jlc", "hand", "loose"]
 Kind = Literal[
@@ -34,6 +36,41 @@ Kind = Literal[
 #: voltage nobody can state must not carry a voltage-rated protection part, and
 #: rules.py enforces that instead of skipping it.
 DOMAIN_VOLTS = {"84V": 84.0, "12V": 12.0, "5V": 5.0, "3V3": 3.3, "GND": 0.0}
+
+#: How each inter-board interface crosses its gap (IO-20, 2026-09-20). The two
+#: kinds are held to DIFFERENT truths, and integrity.py reads this table to
+#: know which:
+#:
+#:   "pair"  -- one connector in two halves, body on body. The lower half
+#:              stands on top of the lower board and the upper half hangs UNDER
+#:              the upper board, so the two FACE each other, and the upper
+#:              half's land pattern is generated pre-mirrored ("...-UNDER"):
+#:              a same-numbered dual row cannot be aligned by any turn, and
+#:              STACK's signals would land on ground.
+#:   "cable" -- a loom between two headers. The CABLE carries the orientation,
+#:              so the halves need not face each other and neither is mirrored;
+#:              what must hold is that both ends have the same contact count
+#:              and the same net on the same contact index. That freedom is the
+#:              point: no stocked connector spans the 25.1 mm POWER -> OUTPUTS
+#:              gap, and it lets both halves sit on their boards' TOP faces
+#:              instead of hanging a 22 mm connector body into a gap L101/L102
+#:              already stand 22 mm in.
+CROSSING: dict[Interface, Crossing] = {
+    "PWR-OUT": "cable",
+    "CTRL": "cable",
+    "PWR-LOGIC": "pair",
+    "STACK": "pair",
+}
+
+
+def is_cabled(interface: Interface | None) -> bool:
+    """True when a cable crosses this interface, False for a mated pair.
+
+    An interface with no entry in CROSSING is NOT silently treated as a cable:
+    it falls to the stricter mated-pair checks, and integrity.py reports the
+    missing declaration rather than letting a crossing pick its own rules.
+    """
+    return CROSSING.get(interface) == "cable"
 
 
 @dataclass(frozen=True)

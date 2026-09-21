@@ -1,10 +1,11 @@
 """How the boards join each other, and how the harness joins the boards.
 
 Two halves of an inter-board connector can be mated reversed or one contact
-off, and the upper half is mounted upside down on the underside of its board.
-A harness plug can be pushed into the wrong header, and a smaller plug seats,
-offset, in a larger header of the same pitch.  Each test below states what
-must still hold when that happens.
+off; on a MATED PAIR the upper half is mounted upside down on the underside of
+its board, and on a CABLE both halves stand on a top face and the loom can be
+plugged in end for end instead.  A harness plug can be pushed into the wrong
+header, and a smaller plug seats, offset, in a larger header of the same pitch.
+Each test below states what must still hold when that happens.
 """
 from collections import Counter
 from dataclasses import replace
@@ -12,8 +13,13 @@ from dataclasses import replace
 import pytest
 
 from tools import board_params, footprint_lib, netlist, power_budget
+from tools.model import CROSSING, is_cabled
 
 POWER_BUSES = ("PWR-OUT", "PWR-LOGIC")
+#: Read off model.CROSSING, never typed here: a crossing that changes kind must
+#: change which test applies to it, not silently keep passing the old one.
+MATED_PAIRS = tuple(i for i, k in CROSSING.items() if k == "pair")
+CABLES = tuple(i for i, k in CROSSING.items() if k == "cable")
 
 
 @pytest.fixture(scope="module")
@@ -34,14 +40,21 @@ def _nets(c):
 # ── board to board ───────────────────────────────────────────────────────────
 def test_every_interface_is_one_crossing_between_neighbours_with_matching_halves(d):
     """Every crossing has a part on each side.  PWR-OUT once ran POWER → OUTPUTS →
-    LOGIC on one tabled bus with nothing between POWER and OUTPUTS."""
+    LOGIC on one tabled bus with nothing between POWER and OUTPUTS.
+
+    The FACES depend on the kind.  A mated pair faces itself across the gap —
+    lower half on top, upper half hanging under.  A cable does not: the loom
+    carries the orientation, so both halves stand on a top face (IO-20), which
+    is what keeps a 22 mm connector assembly out of the gap L102 already stands
+    22.0 mm in."""
     order = board_params.STACK_ORDER
     for iface in {c.interface for c in d.connectors if c.interface}:
         halves = _halves(d, iface)
         assert len(halves) == 2, (iface, [c.refdes for c in halves])
         lo, up = halves
         assert order.index(up.board) == order.index(lo.board) + 1, iface
-        assert (lo.side, up.side) == ("top", "bottom"), iface
+        want = ("top", "top") if is_cabled(iface) else ("top", "bottom")
+        assert (lo.side, up.side) == want, iface
         assert [(cp.pin, cp.net) for cp in lo.pins] == [(cp.pin, cp.net) for cp in up.pins], iface
 
 
@@ -138,18 +151,45 @@ def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):
     assert pin_net.gpio == "GPIO1"
 
 
-def test_a_bottom_side_half_lands_pad_for_pad_over_its_mate(d):
-    """The upper half is placed on the underside, which the editor mirrors.
+def test_a_mated_pairs_upper_half_lands_pad_for_pad_over_its_mate(d):
+    """A PAIR's upper half is placed on the underside, which the editor mirrors.
     Its footprint is generated pre-mirrored, so after the flip (and at most a
     180° turn) every pad sits over its mate's.  A same-numbered dual-row
     footprint cannot be aligned by any turn: its rows swap, and STACK's
     signals would land on ground."""
-    for iface in {c.interface for c in d.connectors if c.interface}:
+    assert MATED_PAIRS, "no mated pair left to check"
+    for iface in MATED_PAIRS:
         lo, up = _halves(d, iface)
         lo_pads = {p.num: (p.x_mm, p.y_mm) for p in footprint_lib.generated(lo)[1]}
         up_pads = {p.num: (-p.x_mm, p.y_mm) for p in footprint_lib.generated(up)[1]}
         assert up_pads == lo_pads, iface
+        assert "-UNDER" in footprint_lib.generated(up)[0]
         assert footprint_lib.generated(lo)[0] != footprint_lib.generated(up)[0]
+
+
+def test_a_cabled_crossing_gets_two_ordinary_unmirrored_footprints(d):
+    """Pre-mirroring exists to line a half up with the MATE under it.  A cable
+    has no such mate, so mirroring it would only move its pads off where the
+    netlist puts them: both halves get the same plain land pattern."""
+    assert CABLES, "no cabled crossing left to check"
+    for iface in CABLES:
+        lo, up = _halves(d, iface)
+        lo_fp, up_fp = footprint_lib.generated(lo), footprint_lib.generated(up)
+        assert "-UNDER" not in lo_fp[0] and "-UNDER" not in up_fp[0], iface
+        assert lo_fp[0] == up_fp[0], iface
+        assert {p.num: (p.x_mm, p.y_mm) for p in lo_fp[1]} == \
+            {p.num: (p.x_mm, p.y_mm) for p in up_fp[1]}, iface
+
+
+def test_the_under_gate_is_the_crossing_kind_not_the_face(d):
+    """⚠️ Proven by mutation, or the rule above passes only because no cabled
+    half happens to sit on a bottom face.  Put one there: it is STILL not
+    pre-mirrored, because what earns the mirror is having a mate to line up
+    with, and a mated pair on the same face still earns it."""
+    cabled = replace(_halves(d, CABLES[0])[1], side="bottom")
+    assert "-UNDER" not in footprint_lib.generated(cabled)[0]
+    paired = _halves(d, MATED_PAIRS[0])[1]
+    assert "-UNDER" in footprint_lib.generated(paired)[0]
 
 
 # ── the harness ──────────────────────────────────────────────────────────────

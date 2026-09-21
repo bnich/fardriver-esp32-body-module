@@ -92,7 +92,7 @@ def generated(thing):
       holes -- so the land pattern does not wait for it."""
     from . import drawn_footprints
     from .eprj3 import footprints
-    from .model import Connector, Part
+    from .model import Connector, Part, is_cabled
     if isinstance(thing, Part) and thing.mpn in drawn_footprints.BY_MPN:
         d = drawn_footprints.BY_MPN[thing.mpn]
         return d.title, d.pads, d.shared, d.outline
@@ -105,13 +105,16 @@ def generated(thing):
         cols = n // rows
         title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
         pads = footprints.header(n, thing.pitch_mm, rows=rows)
-        if thing.side == "bottom":
-            # The upper half of a pair hangs under its board, and the editor
-            # mirrors a part placed there.  Drawn mirrored here, the flip puts
-            # every pad back over its mate's (a 180° turn after the flip covers
-            # an editor that mirrors the other axis).  Drawn as the lower half
-            # is, no turn can align a dual row: its rows swap, and STACK's
-            # signals land on the ground row.
+        if thing.side == "bottom" and not is_cabled(thing.interface):
+            # MATED PAIRS ONLY.  The upper half of a pair hangs under its board,
+            # and the editor mirrors a part placed there.  Drawn mirrored here,
+            # the flip puts every pad back over its MATE's (a 180° turn after
+            # the flip covers an editor that mirrors the other axis).  Drawn as
+            # the lower half is, no turn can align a dual row: its rows swap,
+            # and STACK's signals land on the ground row.
+            # A cabled crossing has no mate to line up with -- the loom carries
+            # the orientation -- so pre-mirroring it would only move its pads
+            # away from where the netlist says they are.
             pads = tuple(replace(p, x_mm=-p.x_mm) for p in pads)
             title += "-UNDER"
         return title, pads, frozenset(), ()

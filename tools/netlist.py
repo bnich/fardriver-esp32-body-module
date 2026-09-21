@@ -1368,8 +1368,12 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
 # INTERFACE PIN MAPS — the four inter-board crossings (BD-3, BD-4): two power
 # buses (PWR-OUT, PWR-LOGIC) and two signal spines (CTRL, STACK).
 # ════════════════════════════════════════════════════════════════════════════
+# PWR-LOGIC and STACK are MATED PAIRS: the upper half hangs under its board,
+# mirrored, facing the lower one. PWR-OUT and CTRL are CABLES (IO-20), so both
+# their halves stand on a top face and the loom carries the orientation.
+# `model.CROSSING` is where that lives; `integrity` reads it.
 # Every power bus reads the same from either end, so a half mated reversed, or
-# the upper half mirrored by being mounted under its board, lands every net on
+# an upper half mirrored by being mounted under its board, lands every net on
 # itself. Two different nets never sit side by side unless one is a return, so
 # a half mated one contact off shorts a rail at worst -- it never puts 84 V or
 # 12 V on KEY_SENSE. Each is ONE crossing between two neighbouring boards.
@@ -1380,10 +1384,11 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
 #: open — inside 1 A either way, which is what a 2.54 mm header contact is good
 #: for. V5 and KEY_SENSE only pass THROUGH OUTPUTS, on up to J307.
 #: ⚠️ A PALINDROME, and by construction, not by luck (rule BUS-ORDER): every
-#: net lands on ITSELF when a half is mated reversed, or mirrored by hanging
-#: under its board. V12 and V5 are rails — a rail opposite anything else is a
-#: short across the interface — and KEY_SENSE takes the one contact that is its
-#: own mirror, the centre, with a ground on each side of it.
+#: net lands on ITSELF when the loom is plugged in end for end. V12 and V5 are
+#: rails — a rail opposite anything else is a short across the interface — and
+#: KEY_SENSE takes the one contact that is its own mirror, the centre, with a
+#: ground on each side of it. Neither half is mirrored: this is a cable, and
+#: both its ends stand on a top face (IO-20).
 _PWROUT_NETS = ("V12", "V12", "GND", "V12", "V12", "GND", "V12", "GND", "GND", "V5",
                 "GND", "KEY_SENSE", "GND", "V5", "GND", "GND", "V12", "GND", "V12",
                 "V12", "GND", "V12", "V12")
@@ -2345,6 +2350,20 @@ _INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board
                "(esq.pdf); an SLW low-profile socket body is 4.06 mm (slw.pdf). "
                "Height here is a generic 2.54 mm part, unconfirmed")
 
+#: The two POWER ↔ OUTPUTS crossings (IO-20, 2026-09-20). No stocked connector
+#: spans that 25.1 mm gap, so a LOOM carries it, and the loom takes the
+#: orientation: neither half faces the other and neither is mirrored. Both
+#: halves therefore stand on their boards' TOP faces — a facing pair of shrouds
+#: bounds at 22 mm per end, hanging into the same gap L101/L102 already stand
+#: 22.0 mm in. ⬜ Connector family unchosen; height here is a generic 2.54 mm
+#: part, unconfirmed.
+_CABLED = ("⬜ Connector family unchosen. A CABLE crossing (IO-20): no stocked "
+           "connector spans the 25.1 mm POWER→OUTPUTS gap, so a loom carries "
+           "it. The cable takes the orientation, so this half neither faces "
+           "its mate nor is mirrored, and both ends stand on a TOP face, "
+           "keeping a tall connector body out of a gap L101/L102 already stand "
+           "22.0 mm in. Height here is a generic 2.54 mm part, unconfirmed")
+
 _CONNECTORS = (
     # ── POWER ───────────────────────────────────────────────────────────────
     _tb("J101", "POWER", "Pack entry: B+, two B− returns and the key tap on one "
@@ -2365,17 +2384,16 @@ _CONNECTORS = (
         ), pitch=7.62, note="The only 7.62 mm terminal, so no other plug seats "
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
-    Connector("J202", "POWER", "PWR-OUT, POWER side: 10 × V12, 10 × GND, "
-              "2 × V5, KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
+    Connector("J202", "POWER", "PWR-OUT, POWER side, on top of the board: "
+              "10 × V12, 10 × GND, 2 × V5, KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
               footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54),
-              leaves_box=False, interface="PWR-OUT", source=_INTERBOARD),
+              leaves_box=False, interface="PWR-OUT", source=_CABLED),
     Connector("J105", "POWER",
-              f"CTRL, POWER side: 2 × {_CTRL_ROWS}, the controller row's "
-              f"signals with a ground beside each", _signal_gnd_pins(_CTRL_SIGNALS),
+              f"CTRL, POWER side, on top of the board: 2 × {_CTRL_ROWS}, the "
+              f"controller row's signals with a ground beside each",
+              _signal_gnd_pins(_CTRL_SIGNALS),
               8.5, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
-              source=f"{_INTERBOARD}. Taken at PWR-OUT's mated height, because "
-                     f"both pairs cross the SAME gap: two pairs of different "
-                     f"heights in one gap cannot both be seated"),
+              source=_CABLED),
     _tb("J309", "POWER", "FarDriver motor cut and throttle supply sense: BL "
         "out, ACC+ in", (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
@@ -2487,11 +2505,11 @@ _CONNECTORS = (
                  "the same face of the box as every other row's, one row "
                  "below the 12 V terminals"),
         side="bottom"),
-    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: "
+    Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, on top of the board: "
               "10 × V12 for the drivers and the 5 V buck, 10 × GND back, V5 "
               "and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
               footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54), leaves_box=False,
-              interface="PWR-OUT", side="bottom", source=_INTERBOARD),
+              interface="PWR-OUT", source=_CABLED),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
               "to LOGIC, 3.3 V back down, ground on every other contact",
               _bus(_PWRLOGIC_NETS), 8.5,
@@ -2502,10 +2520,10 @@ _CONNECTORS = (
               _signal_gnd_pins(_STACK_SIGNALS), 4.06, footprint_mm=_STACK_FP,
               leaves_box=False, interface="STACK", source=_INTERBOARD),
     Connector("J312", "OUTPUTS",
-              f"CTRL, OUTPUTS side, under the board: 2 × {_CTRL_ROWS}, "
+              f"CTRL, OUTPUTS side, on top of the board: 2 × {_CTRL_ROWS}, "
               f"alternating grounds", _signal_gnd_pins(_CTRL_SIGNALS), 2.54,
               footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
-              side="bottom", source=_INTERBOARD),
+              source=_CABLED),
     # ── LOGIC ───────────────────────────────────────────────────────────────
     _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
