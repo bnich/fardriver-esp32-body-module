@@ -113,23 +113,82 @@ def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
     assert {"J307", "J308"} <= set(bs.footprints_bound)
 
 
+#: The VH post is □1.14 (JST drawing p.1): its diagonal is what the finished
+#: hole has to clear.  JLC finishes a plated hole +0.13/-0.08 on the drill.
+#: JST's PCB layout gives ø1.65 +0.1/0, and asks for a ring JLC's 0.25 mm
+#: minimum annular ring satisfies.
+VH_POST_DIAG_MM = 1.14 * 2 ** 0.5          # 1.612
+JLC_HOLE_UNDER_MM = 0.08
+JST_VH_HOLE_MAX_MM = 1.75
+MIN_RING_MM = 0.25
+
+
+def vh_drill_problems(conn):
+    """Every way the generated VH land's drill could fail to take the header,
+    from the emitted pads and not the netlist's number: a low batch under the
+    post's diagonal, a nominal outside JST's band, a ring under JLC's minimum."""
+    _title, pads, _s, _o = footprint_lib.generated(conn)
+    out = []
+    for p in pads:
+        low = p.hole_mm - JLC_HOLE_UNDER_MM
+        if not low > VH_POST_DIAG_MM:
+            out.append(f"{conn.refdes} pad {p.num}: a low batch finishes at "
+                       f"{low:.3f}, under the post's {VH_POST_DIAG_MM:.3f} diagonal")
+        if p.hole_mm > JST_VH_HOLE_MAX_MM:
+            out.append(f"{conn.refdes} pad {p.num}: ø{p.hole_mm} is over JST's "
+                       f"{JST_VH_HOLE_MAX_MM} maximum")
+        ring = (min(p.w_mm, p.h_mm) - p.hole_mm) / 2
+        if ring < MIN_RING_MM:
+            out.append(f"{conn.refdes} pad {p.num}: {ring:.3f} mm ring under "
+                       f"JLC's {MIN_RING_MM}")
+    return out
+
+
 def test_the_keyed_power_header_leaves_its_omitted_post_empty():
     """⭐ The key is COPPER, not a note. `B4P(5-3)-VH` is a five-wide wafer with
     the third post omitted, so the land must have four holes on a five-position
-    3.96 mm grid with the middle one absent, and JST's own ø1.65 drill for a
-    □1.14 post -- not the ø1.0 that suits the 0.64 mm posts every 2.54 mm
-    family here uses.
+    3.96 mm grid with the middle one absent, drilled for a □1.14 post -- not
+    the ø1.0 that suits the 0.64 mm posts every 2.54 mm family here uses.
 
-    Protects: the one thing that makes this connector keyed at all. A 1x4 land
-    would take four evenly spaced holes, the part would not go in it, and every
-    net check would still pass."""
+    The drill is checked as a FIT, not a number. The post's diagonal is 1.14 ×
+    √2 = 1.612 mm; JLC finishes a hole as much as 0.08 under the drill, so the
+    drill must exceed 1.692. JST's own ø1.65 fails that -- 1.65 - 0.08 = 1.57
+    -- which is why the land drills 1.73: 1.73 - 0.08 = 1.65, JST's minimum,
+    0.038 over the diagonal, and 1.73 is inside JST's 1.65…1.75 band. The ring
+    is (2.43 - 1.73) / 2 = 0.35 mm, over JLC's 0.25 minimum, because
+    `header()` grows the pad with the drill.
+
+    Protects: the one thing that makes this connector keyed at all, and that a
+    low-tolerance batch takes the header. A 1x4 land would take four evenly
+    spaced holes, the part would not go in it, and every net check would still
+    pass."""
     d = netlist.current()
-    title, pads, _shared, _outline = footprint_lib.generated(d.connector("J202"))
-    assert title == "HDR-TH_1X5(5-3)-P3_96MM"
-    assert [(p.num, p.x_mm) for p in pads] == [
-        ("1", -7.92), ("2", -3.96), ("4", 3.96), ("5", 7.92)]
-    assert all(p.hole_mm == 1.65 for p in pads)
-    assert not any(p.x_mm == 0.0 for p in pads), "the key position is empty"
+    for ref in ("J202", "J311"):
+        j = d.connector(ref)
+        title, pads, _shared, _outline = footprint_lib.generated(j)
+        assert title == "HDR-TH_1X5(5-3)-P3_96MM"
+        assert [(p.num, p.x_mm) for p in pads] == [
+            ("1", -7.92), ("2", -3.96), ("4", 3.96), ("5", 7.92)]
+        assert not any(p.x_mm == 0.0 for p in pads), "the key position is empty"
+        assert vh_drill_problems(j) == []
+        assert all(p.hole_mm - JLC_HOLE_UNDER_MM == pytest.approx(1.65)
+                   for p in pads), "JLC's low side is meant to land on JST's minimum"
+
+
+def test_the_vh_drill_check_fails_a_hole_that_does_not_take_the_post():
+    """⚠️ THE MUTATIONS for the drill check above. JST's own 1.65 -- the figure
+    this land carried until 2026-09-21 -- finishes at 1.57 on a low batch,
+    under the 1.612 diagonal. And a 2.0 drill is over JST's 1.75: `header()`
+    keeps the 0.35 ring at any drill, so the band is what bounds it above."""
+    d = netlist.current()
+    low = d.replace_connector("J202", hole_mm=1.65)
+    problems = vh_drill_problems(low.connector("J202"))
+    assert len(problems) == 4 and all("under the post's 1.612 diagonal" in p
+                                      for p in problems), problems
+    wide = d.replace_connector("J202", hole_mm=2.0)
+    problems = vh_drill_problems(wide.connector("J202"))
+    assert len(problems) == 4 and all("over JST's 1.75 maximum" in p
+                                      for p in problems), problems
 
 
 def test_the_land_fills_the_key_in_when_the_contacts_are_renumbered():

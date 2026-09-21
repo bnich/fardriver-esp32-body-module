@@ -2606,7 +2606,9 @@ _VH = (f"LCSC C594237: JST B4P(5-3)-VH(LF)(SN), a VH locking header, top entry, 
        "which is where a fully loaded connector is really held. Wafer 3.2 "
        "thick and 8.5 deep, posts □1.14 standing 7.7 above it and 3.7 below "
        "the board, body ways × 3.96 - 0.06 = 19.74 long; JST's PCB layout "
-       "calls for ø1.65 +0.1 holes, not the 1.0 mm a 0.64 mm post takes")
+       "calls for ø1.65 +0.1 holes, not the 1.0 mm a 0.64 mm post takes, "
+       "and the land is drilled ø1.73 so that JLC's -0.08 finishes on JST's "
+       "1.65 minimum, clear of the post's 1.612 diagonal")
 #: The loom's OTHER half, said beside the header so both ends of PWR-OUT are
 #: specified from one place and neither can be ordered without the other.
 _VHR = ("The loom mates a JST " + PWROUT_HOUSING[0] + " housing with cavity "
@@ -2619,6 +2621,21 @@ _VHR = ("The loom mates a JST " + PWROUT_HOUSING[0] + " housing with cavity "
 #: The post tips, 3.2 mm of wafer plus 7.7 mm of post above the board.
 _VH_H = 10.9
 _VH_LEAD = 3.7
+#: The post is □1.14 (_DS_VH p.1), so its diagonal, 1.14 × √2 = 1.612 mm, is
+#: what the finished hole must clear.
+_VH_POST = 1.14
+#: JLC drills a plated hole +0.13/-0.08 on the figure it is given.
+_JLC_HOLE_UNDER = 0.08
+#: The drill both VH lands use. JST's PCB layout says ø1.65 +0.1/0 -- a
+#: guideline, its note 4 says -- and 1.65 is the LOW end of that band: drilled
+#: at 1.65, a low batch finishes at 1.57, under the post's 1.612 diagonal, and
+#: the header does not go in. 1.73 puts JLC's low side ON JST's 1.65 minimum
+#: (1.73 - 0.08 = 1.65 > 1.612 by 0.038) and its high side at 1.86, 0.11 over
+#: JST's 1.75. `footprints.header()` keeps a 0.35 mm ring around whatever it
+#: drills, so the pad is 2.43 mm (tests/test_footprint_binding.py).
+_VH_HOLE = 1.73
+assert _VH_HOLE - _JLC_HOLE_UNDER > _VH_POST * 2 ** 0.5, (
+    "a low-tolerance batch of VH lands will not take the header's post")
 _VH_KEY = ("the wafer's lock ramp stands proud on ONE wall, and the "
            + PWROUT_HOUSING[0] + " housing (cavity " + "/".join(PWROUT_HOUSING[2])
            + " empty) has its cutout on one side, so a housing offered the other "
@@ -2682,7 +2699,7 @@ _CONNECTORS = (
     Connector("J202", "POWER", "PWR-OUT, POWER side, on top of the board: "
               "V12 and GND at 8.47 A, V5, KEY_SENSE", _keyed_bus(_PWROUT_CONTACTS),
               _VH_H, footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96,
-              hole_mm=1.65, contact_a=10.0, keyed=_VH_KEY,
+              hole_mm=_VH_HOLE, contact_a=10.0, keyed=_VH_KEY,
               leaves_box=False, interface="PWR-OUT", lead_mm=_VH_LEAD,
               source=f"{_CABLED}. {_VH}. {_VHR}. {_MATED_UNKNOWN}"),
     Connector("J105", "POWER",
@@ -2806,7 +2823,7 @@ _CONNECTORS = (
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: "
               "V12 for the drivers and the 5 V buck, GND back, V5 and "
               "KEY_SENSE on up to J307", _keyed_bus(_PWROUT_CONTACTS), _VH_H,
-              footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=1.65,
+              footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=_VH_HOLE,
               contact_a=10.0, keyed=_VH_KEY, leaves_box=False,
               interface="PWR-OUT", lead_mm=_VH_LEAD, side="bottom",
               source=f"{_CABLED}. {_VH}. {_VHR}. {_MATED_UNKNOWN}"),
