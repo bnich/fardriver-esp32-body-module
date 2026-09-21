@@ -50,10 +50,9 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only
   for the netlist it was taken from: after a netlist change, every board it touches is re-exported
-  and re-proven. ✅ **All three boards were proven identical on 2026-09-20** at commit `87163cf` —
-  POWER (40 nets, 215 pins; `F201` off the PCB as intended), OUTPUTS (107 / 509), LOGIC (97 / 451).
-  ⛔ **That proof dies the moment `netlist.py` changes.** Re-export and re-prove every board the
-  change touches; do not carry the ✅ forward.
+  and re-proven. ⛔ **No board is proven against the current netlist.** The proof of all three
+  boards taken 2026-09-20 (commit `87163cf`) died when the cabled crossings changed the netlist;
+  every board must be re-exported and re-proven before its layout is trusted.
 
 - `tools.integrity` asks whether the netlist is a circuit at all — every pin of every part lands on a
   net, every inter-board net has real connector contacts. `tools/rules.py` asks whether it obeys the
@@ -91,17 +90,31 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   are each proven to fire on a mutation of the real netlist: `tests/test_rules_mutations.py`, and
   `tests/test_rules.py` for `BUS-ORDER`. A new rule is not a rule until a test shows it firing on
   the defect it names.
-- **Board-to-board: four interfaces on two junctions, one crossing each, between neighbouring
-  boards.** POWER ↔ OUTPUTS carries **`PWR-OUT`** (1 × 23: 12 V on ten contacts, ground on ten, the
-  logic 5 V on two, `KEY_SENSE` between grounds) and **`CTRL`** (2 × 11, the controller signals
-  relayed up); OUTPUTS ↔ LOGIC carries **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 28, every signal
-  beside a ground). ⛔ **HV-LINK is gone** — POWER is one board, so no 84 V crosses an interface.
-  The lower half sits on top of the lower board, the upper half **under** the upper board, and its
-  footprint is generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A same-numbered
-  dual-row footprint cannot be aligned by any turn — STACK's signals would land on ground.
-  `integrity` checks each interface is two identical halves on neighbours, facing each other.
-  ⛔ **STACK's pinout is derived from `_STACK_SIGNALS`** and has been renumbered twice: regenerate it
-  from the netlist, never hand-patch a document's copy.
+- **Board-to-board: four interfaces on two junctions — two MATED PAIRS and two CABLES (D27/IO-20).**
+  OUTPUTS ↔ LOGIC carries the pairs, **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 28, every signal
+  beside a ground), stamped Hong Cheng / BOOMELE halves mating insulator-to-insulator at **11.0 mm**
+  (STACK's 11.04 is the hard stop): the lower half stands on OUTPUTS, the upper half hangs **under**
+  LOGIC, its footprint generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A
+  same-numbered dual-row footprint cannot be aligned by any turn — STACK's signals would land on
+  ground. POWER ↔ OUTPUTS carries the cables, because **no stocked connector spans that gap**:
+  **`PWR-OUT`**, four conductors in a keyed JST VH loom (`V12` + `GND` on 16 AWG at 8.47 A each,
+  `V5` + `KEY_SENSE` on 22 AWG), and **`CTRL`**, a 2 × 12 (24-way) shrouded IDC ribbon — 13 grounds,
+  11 signals each flanked on both sides, the CAN pair adjacent as `G CANH CANL G`. The cable halves
+  are ORDINARY, un-mirrored footprints — the POWER halves on POWER's top face, the OUTPUTS halves
+  hanging under OUTPUTS into the gap; the loom carries the orientation. **Keying replaces the
+  palindrome**: `BUS-ORDER` still demands that a mated pair read the same from both ends, and
+  demands of a cable a positively keyed shell instead. ⚠️ The VH's keying is the wafer's **lock
+  ramp**, not the omitted third post — a symmetric omission polarises nothing — ⬜ confirm on the
+  first sample that a reversed housing will not seat. ⛔ **"VH" clones are rated 3 A**: CAX
+  `VH-4A-HT` (C5453989) lists identically and is a 2.8× overload at 8.47 A — genuine JST only, the
+  Blue Sea failure shape. ⚠️ **The brass M3×30 standoffs (C775781) SET the 30.0 mm POWER → OUTPUTS
+  gap** — bonded to GND at the OUTPUTS end only (IO-21), on a copper-free pad at POWER, so
+  `PWR-OUT`'s 16 AWG GND stays the sole sized return; the nylon TP-11 beside PWR-LOGIC / STACK is
+  deliberately short and shimmed so the connectors keep setting that 11.04 mm gap. `integrity`
+  checks each kind against what is true of it: a pair's halves face each other, mirrored; a cable's
+  halves match contact for contact, unmirrored. ⛔ **HV-LINK is gone** — POWER is one board, so no
+  84 V crosses an interface. ⛔ **STACK's pinout is derived from `_STACK_SIGNALS`** and has been
+  renumbered twice: regenerate it from the netlist, never hand-patch a document's copy.
 - **Harness terminals come in families by job, and the families are the rows** (plan §9.2): **7.62 mm
   Kefa** for pack voltage (`J101` only, the CTRL row) · **5.08 mm Kangnex** for the FarDriver leads
   and nothing else (`J309`, `J404`, and the parked `J310` / `J405`, also CTRL) · **3.50 mm Kefa** for

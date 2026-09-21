@@ -84,10 +84,11 @@ single part.
 - ESP-IDF **v5.5**.
 
 Construction path: breadboard → FR4 plated perfboard → custom PCB. The custom build is **three
-stacked 4-layer boards, 40 × 241 mm** — **POWER** (84 V entry, the soft-start, both converters and
+stacked 4-layer boards, 41.84 × 242 mm** — **POWER** (84 V entry, the soft-start, both converters and
 every FarDriver connector) · **OUTPUTS** (the 12 V drivers, the 5 V aux supply and its switches) ·
-**LOGIC** (the S3 and every input) — with every inter-board interface on the 2.54 mm grid, so a
-breadboard section can stand in for any one board. **Each board owns one row of harness connectors on
+**LOGIC** (the S3 and every input) — joined at two junctions: OUTPUTS ↔ LOGIC by mated 2.54 mm
+header pairs, POWER ↔ OUTPUTS by two cables, so a breadboard section can stand in for any one
+board. **Each board owns one row of harness connectors on
 one face of the box**, grouped by kind ([plan §9.2](docs/plan.md)).
 **Carry the pin *rules* to the custom board, not the GPIO numbers.**
 
@@ -123,18 +124,29 @@ EasyEDA Pro project. No board is laid out yet.
 - **Assembly.** JLC places everything but the two converters and the two input chokes, which are
   hand-soldered, and the parts that must lie flat or clip in, which are ordered loose with the boards
   ([BOM](docs/bom.md#jlc-assembly--the-custom-boards)).
+- **Board-to-board.** Two junctions. OUTPUTS ↔ LOGIC is rigid: two mated 2.54 mm pairs (`PWR-LOGIC`
+  1 × 9 and `STACK` 2 × 28, every signal beside a ground) whose butting insulators set that gap at
+  11.0 mm. POWER ↔ OUTPUTS is **cabled**, because no stocked connector spans the gap the 22 mm
+  chokes force: the whole 12 V load crosses on **four heavy conductors into a keyed JST VH
+  connector** — `V12` and `GND` on 16 AWG at 8.47 A each, into contacts JST rates at 10 A with that
+  gauge (⛔ genuine JST only: "VH" clones list identically and are rated 3 A) — and the
+  controller-row signals cross on a **24-way shrouded IDC ribbon**, every signal flanked by ground.
+  A keyed shell that cannot seat reversed replaces the mated pairs' read-the-same-from-both-ends
+  contact order, and **brass M3×30 standoffs set that gap at 30.0 mm** — bonded to ground at the
+  OUTPUTS end only, so the cable's 16 AWG ground stays the only sized return between the boards.
 - ✅ **The cavity is measured, and the boards are shaped to it.** M18 came back **260 mm along × 70
   across × 100 tall** (owner, 2026-09-20). The 48 × 219 mm boards did not go in it — they needed
   74.65 mm across — so **IO-17** re-shapes them to the measurement. That inverts IO-14's search
   order, which took least length first because length was the axis further over the *estimate*: the
   measured cavity allows a board **246.0 mm long but only 43.35 mm wide**, so the rule is now to take
   the narrowest board that still clears every budget by 10 % and spend the abundant length. **IO-18**
-  then stands the width 1.0 mm clear of a packing discontinuity — POWER's top packs into 239.25 mm at
-  38.99 mm of board width and 214.85 mm at 39.00, a 24.4 mm cliff. The result is **40.0 × 241.0 mm**:
-  `python3 -m tools.board_fit` closes every area, pack and row budget on it (row 18.2 %, pack 10.8 %,
-  density 14.6 % of margin) and derives the stack at **62.4 mm of 94.0 available**. The cavity that
-  implies is **255.0 mm along × 66.65 across × 68.4 tall**, inside the measurement by **5.00, 3.35
-  and 31.6 mm**. ⚠️ **Width is the axis with least room** — 3.35 mm, and 19.65 mm of the 66.65 is the
+  then stands the width 1.0 mm clear of a packing discontinuity — re-derived at **40.84 mm** after
+  the cabled crossings reshaped POWER's pack: its top face falls 6.90 mm there, because `C207` and
+  `J202` share one shelf at exactly that width. The result is **41.84 × 242.0 mm**:
+  `python3 -m tools.board_fit` closes every area, pack and row budget on it (row 18.6 %, pack 10.9 %,
+  density 16.2 % of margin) and derives the stack at **67.3 mm of 94.0 available**. The cavity that
+  implies is **256.0 mm along × 68.49 across × 73.3 tall**, inside the measurement by **4.00, 1.51
+  and 26.7 mm**. ⚠️ **Width is the axis with least room** — 1.51 mm, and 19.65 mm of the 68.49 is the
   plug-and-bend room in front of the connector face, so anything that deepens a harness plug spends
   it. ⭐ **The gate is live**: `board_fit` and the rules gate now compare a real measurement, so an
   envelope that outgrows the cavity **FAILS**. The requirement itself is not final — the wall, floor
@@ -142,13 +154,11 @@ EasyEDA Pro project. No board is laid out yet.
   are laid out, not before** — the pack and density budgets predict that a board can be routed;
   layout proves it, and proves the size the box has to hold. Layout has room to grow the boards to
   **43.35 × 246 mm** before the cavity gate fails. ⚠️ The wall is the exception to that order: it is
-  an input to the board width, and today's 40 mm board tolerates a wall up to **4.67 mm**.
-- ✅ **The EasyEDA project is proven.** All three boards were re-imported, their netlists exported
-  from the editor and checked identical with `python3 -m tools.tel_check` on **2026-09-20** —
-  POWER 40 nets / 215 pins, OUTPUTS 107 / 509, LOGIC 97 / 451, and all three outlines 40 × 241 mm.
-  ⚠️ A proof holds only for the netlist it was taken from: any change to `tools/netlist.py` means
-  re-exporting and re-proving every board it touches. **No board is laid out yet.**
-- ⬜ **The inter-board connector family is open**, and the mated pair sets each board gap.
+  an input to the board width, and today's 41.84 mm board tolerates a wall up to **3.75 mm**.
+- ⛔ **The EasyEDA project is NOT proven against this netlist.** The cabled crossings changed the
+  netlist, which voids the proof of all three boards taken 2026-09-20: each board must be
+  re-imported, its netlist exported and checked identical with `python3 -m tools.tel_check` again
+  before any layout is trusted. **No board is laid out yet.**
 
 ---
 

@@ -43,7 +43,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 |---|---|
 | `model.py` | The shape of a design: `Part`, `Net`, `Connector`, `Design` |
 | `netlist.py` | **The design** — every part, net and connector, per board, and every LCSC code. The one source every tool below reads |
-| `integrity.py` | Structural gate: every pin lands, every inter-board net has real contacts, every interface is two identical halves on neighbouring boards, facing each other |
+| `integrity.py` | Structural gate: every pin lands, every inter-board net has real contacts, every interface is two identical halves on neighbouring boards — a **mated pair's** halves facing each other, mirrored; a **cabled** interface's halves matching contact for contact, unmirrored (`model.CROSSING` says which is which) |
 | `rules.py` | Safety and pin rules, each named for the decision it protects (`python3 -m tools.rules` prints them) |
 | `board_params.py` | The board envelope the design requires, the enclosure allowances, the cavity that envelope implies — and the **derived** stack height |
 | `board_fit.py` | Area, height and connector-row budget, and the cavity the design requires (`board-fit.py` is a two-line shim for it) |
@@ -64,8 +64,9 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 
 ### `board_params.py` — parameters typed, geometry derived
 
-Holds the **board envelope, 40 × 241 mm** — typed, and re-derived by the search written out beside
-it (the width stands **1.0 mm above a 24.40 mm pack cliff at 39.00 mm**, which
+Holds the **board envelope, 41.84 × 242 mm** — typed, and re-derived by the search written out beside
+it (the width stands **1.0 mm above a 6.90 mm pack cliff at 40.84 mm** — `C207` and `J202` the
+binding pair — which
 `tests/test_board_params.py` derives from the packer and guards); the M18 cavity, **260 × 70 × 100 mm, measured by the owner 2026-09-20** (`CAVITY_MEASURED =
 True`); the wall / floor / lid **allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's
 model sets them — the box is all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
@@ -88,7 +89,16 @@ out from the netlist's own heights:
   trimmed to 1.5 mm;
 - an inter-board connector pair mates at the sum of its two halves' `height_mm`. While either
   height is unconfirmed the pair can only widen the gap; once both are confirmed the pair **is**
-  the gap, and a part that needs more room fails the design;
+  the gap, and a part that needs more room fails the design. A **cabled** interface's halves are
+  ordinary bodies — they set no gap;
+- a **`Standoff` is a pillar that DEFINES a gap** (`netlist.standoffs()` is their one home) — the
+  third kind of thing in the height model, deliberately not a `Part`: `stack_height` names which
+  pillar sets each gap and **fails a pillar shorter than the tallest part between its decks** — it
+  would crush that part when the screws pull up (`L102` at 22.0 mm is the tall one today) — and
+  fails a "sets" pillar that disagrees with a chosen connector pair's mated height.
+  `standoff_problems` holds the table's structure: neighbouring decks only, one pillar per gap. A
+  standoff whose `seating` is `"shimmed"` is deliberately short so a connector pair keeps setting
+  its gap, and is reported, not failed;
 - a height that is `NaN`, negative or missing is a **failure**, never a short part;
 - every unconfirmed height is listed, and the ones that set a gap are named (`load_bearing`);
 - a bottom-side part and a tall part beneath it share a gap only by standing side by side, so each
@@ -104,8 +114,8 @@ deliberately *not* in that gate (owner's measurement, 2026-09-20): the cavity is
 cannot change, while the wall, floor and lid are the design's **own** allowances, so a design that
 does not fit **with** them fails today rather than after the box is drawn. What the undecided
 enclosure still does is keep the requirement from being final, which the report's first line says
-and the failure text names as a lever. Today the design requires **255.0 × 66.65 × 68.4 mm** and
-fits, with 5.00 mm along and 3.35 mm across to spare. The height is not in that list: `stack_height`
+and the failure text names as a lever. Today the design requires **256.0 × 68.49 × 73.3 mm** and
+fits, with 4.00 mm along and 1.51 mm across to spare. The height is not in that list: `stack_height`
 already fails on it through the same gate. Both `board_fit` and `rules` (`HT-CAVITY`) relay it, so
 the two gates cannot give different answers.
 
@@ -352,10 +362,12 @@ flag alone, and flag with wire name, which is what the build emits. `NAMING = "b
 
 - **Every placed item carries a footprint.** The build summary names any that does not, and the
   editor refuses a netlist export while one is missing (its DRC calls a missing footprint fatal).
-- **Place each `…-UNDER` footprint on the bottom layer.** It is the upper half of an inter-board
-  pair, which hangs under its board, and it is generated mirrored: after the flip, plus at most a
-  180° turn, every pad sits over its mate's. A same-numbered dual-row footprint cannot be aligned by
-  any turn — STACK's signals would land on its ground row.
+- **Place each `…-UNDER` footprint on the bottom layer.** It is the upper half of a **mated**
+  inter-board pair (`J406`, `J407`), which hangs under its board, and it is generated mirrored:
+  after the flip, plus at most a 180° turn, every pad sits over its mate's. A same-numbered dual-row
+  footprint cannot be aligned by any turn — STACK's signals would land on its ground row. The
+  **cabled** halves (`J311`, `J312`) also go on OUTPUTS' bottom layer but are ordinary, un-mirrored
+  footprints — a cable has no mate to line up with; the loom carries the orientation.
 - **Set up the HV net class before routing POWER, and J408's keep-out before routing LOGIC**
   (`layout_rules.py`, above).
 - ⬜ **Check the paste layer has no aperture over `J408`'s six pads** (Gerber viewer, top paste). The
@@ -401,9 +413,10 @@ are renamed to the pins they carry:
   it fails on a swapped FET or a reversed diode.
 - `footprint_lib.py` fetches the library footprints through `~/tools/lcsc-search`. `fit()` renames
   each pad to the pin it carries, leaves a pad mapped to `None` unconnected on purpose (a contact the
-  design does not use), and refuses a pad no map accounts for. The inter-board connectors get a generated
-  2.54 mm header pattern, because every family on the options list uses that grid; an upper half's
-  pattern is mirrored (`-UNDER`).
+  design does not use), and refuses a pad no map accounts for. The inter-board connectors get a
+  generated header pattern on their own pitch — the keyed VH halves keep JST's contact numbers, with
+  the omitted position a real gap in the pattern; only a **mated pair's** upper half is mirrored
+  (`-UNDER`), never a cabled half.
 - `drawn_footprints.py` draws a land pattern from the maker's drawing for each part with no library
   device — the converters, the chokes, the lying capacitors, the fuse clips, the net-tie. A footprint
   is the **top view, Y up**; a drawing of the pin face or a bottom view is mirrored into it, and
