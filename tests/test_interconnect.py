@@ -2,20 +2,31 @@
 
 Two halves of an inter-board connector can be mated reversed or one contact
 off; on a MATED PAIR the upper half is mounted upside down on the underside of
-its board, and on a CABLE both halves stand on a top face and the loom can be
-plugged in end for end instead.  A harness plug can be pushed into the wrong
+its board, and on a CABLE both halves stand on a top face and the loom is
+offered to each header by hand.  A harness plug can be pushed into the wrong
 header, and a smaller plug seats, offset, in a larger header of the same pitch.
 Each test below states what must still hold when that happens.
+
+⭐ The two kinds are held to DIFFERENT things, and which one applies is read off
+`model.CROSSING`, never typed: a pair earns its safety by ORDER (a palindrome,
+and no two rails side by side) and a cable by KEYING plus a conductor sized for
+the current it carries, because no order makes four different nets safe to
+reverse.
 """
 from collections import Counter
 from dataclasses import replace
+from unittest import mock
 
 import pytest
 
 from tools import board_params, footprint_lib, netlist, power_budget
 from tools.model import CROSSING, is_cabled
 
-POWER_BUSES = ("PWR-OUT", "PWR-LOGIC")
+#: The power interfaces that are MATED PAIRS, derived: a pair is what an
+#: ordering rule protects. ⛔ Never type this list — PWR-OUT was in it until
+#: IO-20 made it a cable, and a typed list would have kept asking a loom for a
+#: palindrome it cannot have.
+POWER_BUSES = tuple(i for i in ("PWR-OUT", "PWR-LOGIC") if not is_cabled(i))
 #: Read off model.CROSSING, never typed here: a crossing that changes kind must
 #: change which test applies to it, not silently keep passing the old one.
 MATED_PAIRS = tuple(i for i, k in CROSSING.items() if k == "pair")
@@ -59,7 +70,12 @@ def test_every_interface_is_one_crossing_between_neighbours_with_matching_halves
 
 
 def test_a_power_bus_mated_reversed_or_mirrored_lands_every_net_on_itself(d):
+    """⚠️ MATED PAIRS only, and the set is read off model.CROSSING, not typed:
+    a palindrome is what a bus whose halves can be mated reversed needs, and
+    PWR-OUT stopped being one when it became a keyed cable (IO-20). The cable's
+    own contract is two tests below."""
     for iface in POWER_BUSES:
+        assert not is_cabled(iface), f"{iface} is a cable: keying, not order"
         nets = _nets(_halves(d, iface)[0])
         assert nets == nets[::-1], (iface, nets)
 
@@ -83,51 +99,101 @@ def test_a_power_bus_mated_one_contact_off_puts_no_rail_on_another(d):
         assert name in joins, f"{name} is not a choke-winding return"
 
 
-#: What one contact of a 2.54 mm inter-board header carries continuously: a
-#: deliberately conservative floor, not a figure read off a part. The family
-#: is still the owner's open decision (BD-22), and ⛔ NO candidate in the
-#: survey (../docs/esp32-board-design-record.md §4.1) has a published
-#: per-contact rating — that table gives mated height, contact type and
-#: coverage, from LCSC listings rather than makers' drawings, and says so.
-#: ⬜ Confirm against the chosen part's own datasheet when owner item 6 is
-#: decided. It sets the width of the design's biggest new connector.
-CONTACT_A = 1.0
+# ── what carries PWR-OUT's 8.47 A, now that it is a CABLE ───────────────────
+# ⭐ `CONTACT_A` and its arithmetic retired with IO-20, and what replaced them
+# is not a weaker check, it is the right one. A 1.0 A per-contact floor was a
+# STAND-IN for a rating nobody had: no candidate in the 2026-09-20 survey
+# published one, so the bus was widened to 23 contacts to stay inside a figure
+# that was invented. A cable does not divide its current over contacts at all
+# -- it sizes the CONDUCTOR, and both the conductor and the one contact it
+# lands on are now figures off JST's own drawing.
+#: PWR-OUT's nets that carry the whole 12 V load, out and back.
+HEAVY = ("V12", "GND")
 
 
-def _amps_per_contact(load: float, contacts: int) -> float:
-    """With ONE contact fretted OPEN — a header does not fail by halves."""
-    return load / (contacts - 1)
+def test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d):
+    """⚠️ The crossing and the budget must not drift apart — the aux block took
+    it from 2.62 A to 8.47 A in one commit (IO-10), and this is what says so
+    now that no contact count does.
 
+    Protects: the conductor and the contact TOGETHER, which is how JST states
+    it — 10 A AC/DC **with AWG #16**, one figure for the pair. The current is
+    whatever tools/power_budget.py derives, never a typed one.
 
-def test_one_amp_per_contact_is_a_criterion_that_can_fail(d):
-    """⚠️ Proven on a SYNTHETIC width, so it stays a criterion whatever the
-    real bus is. The test below once carried its own bite-proof — 'one contact
-    fewer must fail' — which made it fail the moment anyone WIDENED the bus,
-    with a message that read as a bug. Task 7 may well widen it."""
+    ⚠️ Derating: JST's VH drawing p.1 gives ONE current figure and no table
+    against the number of circuits energised, so 10 A is the figure held to
+    here; its −25…+85 °C range is stated to include the rise the current
+    causes, which is where a loaded connector is really bounded. Only two of
+    the four circuits carry it, and the other two carry ~0.6 A and ~0 A.
+    """
     load = power_budget.budget(d).load_12v_a
-    assert _amps_per_contact(load, 9) > CONTACT_A, (
-        f"at {load:.2f} A even a 9-contact bus would pass, so the check below "
-        f"cannot tell a wide enough bus from a narrow one")
-    assert _amps_per_contact(load, 10) <= CONTACT_A
+    assert load > 8, f"a load of {load:.2f} A would not test anything"
+    for c in _halves(d, "PWR-OUT"):
+        assert c.contact_a, f"{c.refdes} states no per-contact rating"
+        for net in HEAVY:
+            carrying = [cp for cp in c.pins if cp.net == net]
+            assert len(carrying) == 1, (c.refdes, net)
+            assert load <= c.contact_a, (
+                f"{c.refdes}: {load:.2f} A on one contact rated "
+                f"{c.contact_a} A")
+            awg, crimp, _ = netlist.PWROUT_LOOM[net]
+            thinnest, thickest = netlist.VH_CONTACTS[crimp]
+            assert thickest <= awg <= thinnest, (
+                f"{net} is {awg} AWG and {crimp} takes {thinnest}-{thickest}: "
+                f"the wire does not crimp into the contact")
+            assert awg <= RATED_AWG, (
+                f"{net} carries {load:.2f} A on {awg} AWG, and the 10 A the "
+                f"connector is rated at is stated at AWG #{RATED_AWG}")
 
 
-def test_the_power_bus_has_a_contact_for_every_amp_the_budget_derives(d):
-    """⚠️ The bus and the budget must not drift apart. PWR-OUT's width is held
-    to what tools/power_budget.py DERIVES from the netlist, with one contact
-    fretted OPEN, and the aux block took this crossing from 2.62 A to 8.47 A
-    in one commit (IO-10). Widening the bus can only help; narrowing it below
-    what the load needs fails here."""
+#: The gauge JST's 10 A figure is stated at. Anything thinner is outside the
+#: rating even though the CONTACT is unchanged — the two come as a pair.
+RATED_AWG = 16
+
+
+def test_the_conductor_check_fires_on_the_clone_and_on_a_thin_wire(d):
+    """A check nothing can fail is not a check. Both defects are real ones:
+
+    ⛔ THE CLONE. CAX's `VH-4A-HT` (C5453989) lists identically to the JST part
+    — same series name, same 3.96 mm pitch, same 4P, cheaper, in stock — at
+    **3 A**. That is a 2.8× overload at 8.47 A, and it is the Blue Sea failure
+    again: right family, right pitch, wrong rating line.
+    ⛔ THE WIRE. 22 AWG is what the other two conductors use and it crimps into
+    the same housing.
+    """
     load = power_budget.budget(d).load_12v_a
-    up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
-    assert _amps_per_contact(load, up["V12"]) <= CONTACT_A, (load, up["V12"])
-    assert up["GND"] >= up["V12"], "the return carries every amp the feed does"
+    clone = d.replace_connector("J202", contact_a=3.0)
+    with pytest.raises(AssertionError, match="rated 3.0 A"):
+        test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(clone)
+    assert load / 3.0 > 2.5, "the clone would be a 2.8x overload"
+
+    thin = dict(netlist.PWROUT_LOOM, V12=(22, "SVH-21T-P1.1", "too thin"))
+    with mock.patch.object(netlist, "PWROUT_LOOM", thin):
+        with pytest.raises(AssertionError, match="stated at AWG"):
+            test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d)
+
+    wrong_crimp = dict(netlist.PWROUT_LOOM, V12=(16, "SVH-21T-P1.1", "22-18"))
+    with mock.patch.object(netlist, "PWROUT_LOOM", wrong_crimp):
+        with pytest.raises(AssertionError, match="does not crimp"):
+            test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d)
+
+
+def test_every_cabled_half_is_positively_keyed(d):
+    """⛔ What a cable has INSTEAD of a palindrome, and the reason it may not
+    simply be exempted: a loom is offered to its header by hand at every
+    service, and PWR-OUT's four different nets on four contacts admit no order
+    that makes a reversed mate harmless. Rule BUS-ORDER says the same thing on
+    the real design; this holds the FEATURE to being named from a drawing,
+    which is the only form of it anybody can check on the bench."""
+    assert CABLES, "no cabled crossing left to check"
+    for iface in CABLES:
+        for c in _halves(d, iface):
+            assert c.keyed, f"{c.refdes} ({iface}) names no keying"
+            assert any(w in c.keyed for w in ("notch", "lock", "key")), c.refdes
 
 
 def test_each_crossing_carries_what_the_boards_above_it_use(d):
     up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
-    # The V12 COUNT is held to the load by the two tests above; here it only
-    # has to be there. A typed ">= 4" read like the requirement, three lines
-    # under a check that derives ten.
     assert up["V12"] and up["V5"] and up["KEY_SENSE"]
     assert set(up) == {"V12", "V5", "KEY_SENSE", "GND"}
     brain = Counter(_nets(_halves(d, "PWR-LOGIC")[0]))

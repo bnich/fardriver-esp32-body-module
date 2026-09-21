@@ -792,21 +792,117 @@ def test_stack_is_one_row_per_signal_and_carries_exactly_the_contracted_nets(d):
         assert {cp.net for cp in c.pins} - {"GND"} == STACK_CONTRACT
         grounds = [cp for cp in c.pins if cp.net == "GND"]
         assert len(grounds) == len(STACK_CONTRACT), "alternating grounds"
-        assert c.footprint_mm[0] == pytest.approx(2.54 * len(STACK_CONTRACT))
+        # Each half's OWN body, from its own drawing: the socket is 0.4 mm
+        # longer than the header that plugs into it, and one typed figure for
+        # both is 0.4 mm of error that fits nothing.
+        socket = c.board == "OUTPUTS"          # the header is the cut strip
+        want = netlist.hc_body(len(STACK_CONTRACT), rows=2, socket=socket,
+                               cut=not socket)
+        assert c.footprint_mm == pytest.approx(want), c.refdes
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
 
 
-def test_ctrl_carries_the_controller_row_with_a_ground_beside_every_signal(d):
-    """2 × N like STACK, N derived from the contract: the controller row's
-    connectors are on POWER (IO-5) and everything that commands or reads them
-    is above, so each of these signals faces a ground of its own."""
+#: Each connector family's body, as its own drawing states it: the contact
+#: count on one side and what the drawing prints on the other. ⭐ The RULES are
+#: what `netlist` encodes; this table is the drawings, so the two are
+#: independent readings of the same sheets.
+#:   Hong Cheng HC-PM254-8.5H / HC-PZ254-11.5L: a PIN table of DIM A (the pin
+#:     span) and DIM B (N x 2.54), and a body of "B" or "(B+0.4)±0.3".
+#:   BOOMELE PZ2.54-2xNA-11.4MM: the same table with the letters SWAPPED --
+#:     A is the body, B the span -- which is exactly how a typed figure goes
+#:     wrong, and why the cut strip is N x 2.54 with no 0.2 taken off.
+#:   JST VH: a table of A and B per circuit count; B = ways x 3.96 - 0.06.
+#:   Zhouri DC3-2.54-*PAS: the rule is printed ON the drawing, "2.54*N/2+7.6".
+BODY_RULES = [
+    # (call, expected (length, width), the drawing's own row)
+    ((9, dict(rows=1, socket=False)), (22.86, 2.50), "HC-PZ254 PIN 9, DIM B"),
+    ((9, dict(rows=1, socket=True)), (23.26, 2.4), "HC-PM254 PIN 9, (B+0.4)"),
+    ((28, dict(rows=2, socket=True)), (71.52, 5.0), "HC-PM254 PIN 28, (B+0.4)"),
+    ((28, dict(rows=2, socket=False, cut=True)), (71.12, 5.0),
+     "BOOMELE PIN 28, DIM A"),
+    ((11, dict(rows=2, socket=False)), (27.74, 5.0), "a moulded dual row, B-0.2"),
+]
+
+
+@pytest.mark.parametrize("call,want,drawing", BODY_RULES,
+                         ids=[r[2] for r in BODY_RULES])
+def test_the_2_54_family_body_is_computed_from_the_rule_its_drawing_states(
+        call, want, drawing):
+    per_row, kw = call
+    assert netlist.hc_body(per_row, **kw) == pytest.approx(want), drawing
+
+
+def test_a_socket_body_is_never_its_headers_body(d):
+    """⭐ THE DEFECT THE RULE CLOSES. The netlist typed ONE figure for both
+    halves of a pair -- 58.42 for a 1x23, 71.12 for a 2x28 -- and was 0.4 mm
+    short on every socket, because a socket is B + 0.4 and a header is B. A
+    corrected constant closes one instance; a rule that computes the body from
+    the contact count closes the class, and this family is used again on the
+    next board."""
+    for per_row in (2, 9, 28, 40):
+        for rows in (1, 2):
+            socket = netlist.hc_body(per_row, rows=rows, socket=True)
+            header = netlist.hc_body(per_row, rows=rows, socket=False)
+            assert socket[0] - header[0] == pytest.approx(0.4 if rows == 1 else 0.6)
+            assert socket[1] != header[1] or rows == 2
+    # ...and the halves of the real pairs differ by exactly that much:
+    assert d.connector("J307").footprint_mm[0] - \
+        d.connector("J407").footprint_mm[0] == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize("ways,length", [(2, 7.86), (4, 15.78), (5, 19.74),
+                                         (10, 39.54)])
+def test_the_vh_wafer_body_is_the_rule_its_series_drawing_tabulates(ways, length):
+    """JST prints a B column, not a formula; ways × 3.96 − 0.06 reproduces
+    every row of it. ⚠️ `ways` is the ORIGINAL body: the 4-contact part is a
+    five-way wafer with a post omitted, so its body is the 19.74 of a 5."""
+    assert netlist.vh_body(ways) == pytest.approx((length, 8.5))
+
+
+@pytest.mark.parametrize("per_row,length", [(5, 20.30), (12, 38.08), (20, 58.4)])
+def test_the_box_header_body_is_the_rule_printed_on_its_drawing(per_row, length):
+    """Zhouri prints '2.54*N/2+7.6±0.2' on the part itself, N being the contact
+    count: the shroud adds 7.6 mm over the pin field."""
+    assert netlist.dc3_body(per_row) == pytest.approx((length, 8.4))
+
+
+def test_a_signal_list_that_outgrows_its_connector_is_refused_not_truncated():
+    """⚠️ The guard inside the shared function, not at the call site. `_flanked`
+    lays signals out with a ground either side; one more signal than the
+    connector has ways must RAISE, because padding or truncating drops the last
+    signal silently -- and the last signal is the one a reader adds."""
+    eleven = ("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K")
+    assert len(netlist._flanked(eleven, 24)) == 24
+    with pytest.raises(ValueError, match="need 25 contacts"):
+        netlist._flanked(eleven + ("L",), 24)
+
+
+def test_ctrl_carries_the_controller_row_with_a_ground_on_both_sides(d):
+    """24 ways for 11 signals and 13 grounds, and every signal with a ground
+    on BOTH sides of it along the ribbon.
+
+    Protects: the reason 24 ways were taken over 22 when the DC3 family turned
+    out to have no 22-way member. 22 ways force G S G S … G S and the last
+    signal keeps a ground on one side only; paying two ways buys the flanking
+    and leaves contact 23 free for a twelfth signal that would still be
+    flanked. If anyone ever trims this back to the signal count, the thing that
+    was bought is what goes."""
     ends = _interface(d, "CTRL")
     assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
     for c in ends:
-        assert len(c.pins) == 2 * len(CTRL_CONTRACT)
-        assert {cp.net for cp in c.pins} - {"GND"} == CTRL_CONTRACT
-        assert len([cp for cp in c.pins if cp.net == "GND"]) == len(CTRL_CONTRACT)
-        assert c.footprint_mm[0] == pytest.approx(2.54 * len(CTRL_CONTRACT))
+        nets = [cp.net for cp in c.pins]
+        assert len(nets) == 24 and len(nets) % 2 == 0, "2 × 12, an IDC size"
+        assert set(nets) - {"GND"} == CTRL_CONTRACT
+        assert nets.count("GND") == 13
+        for i, net in enumerate(nets):
+            if net == "GND" or {nets[i - 1], net} == {"CANH", "CANL"}:
+                continue
+            before = nets[i - 1] if i else None
+            after = nets[i + 1] if i + 1 < len(nets) else None
+            if {net, after} == {"CANH", "CANL"}:
+                after = nets[i + 2]          # the pair is flanked as a block
+            assert before == "GND" and after == "GND", (c.refdes, i + 1, net)
+        assert c.footprint_mm == pytest.approx(netlist.dc3_body(len(nets) // 2))
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
 
 
@@ -834,17 +930,22 @@ def test_no_rail_rides_a_signal_spine(d):
             assert not (rules.rails(d) & {cp.net for cp in c.pins}), c.refdes
 
 
-def test_pwr_out_shares_the_load_current_over_ten_contacts(d):
+def test_pwr_out_is_four_conductors_numbered_as_the_maker_numbers_them(d):
+    """One conductor per net, and the CONTACT NUMBERS are JST's.
+
+    Protects the key. The body is five circuits wide with the third post
+    omitted, so its circuits are 1, 2, 4, 5 — and the hole in that numbering is
+    what makes `footprint_lib` leave the third position empty. Renumber them
+    1-4 and the design still passes every net check while the board gets four
+    evenly spaced holes and no key at all. The CURRENT is held elsewhere:
+    tests/test_interconnect.py sizes the conductor and the contact against
+    tools/power_budget.py."""
     ends = _interface(d, "PWR-OUT")
     assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
     for c in ends:
-        nets = [cp.net for cp in c.pins]
-        assert nets.count("V12") >= 10, (
-            "8.47 A (IO-10): ten contacts is 0.85 A each and 0.94 A with one "
-            "fretted open. tests/test_interconnect.py holds the count to what "
-            "tools/power_budget.py derives, so the two cannot drift")
-        assert nets.count("GND") >= 10
-        assert set(nets) == {"V12", "GND", "V5", "KEY_SENSE"}
+        assert [(cp.pin, cp.net) for cp in c.pins] == [
+            ("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE")], c.refdes
+        assert c.pitch_mm == 3.96 and c.footprint_mm == netlist.vh_body(5)
     assert ends[0].pins == ends[1].pins
 
 
@@ -894,13 +995,12 @@ def swap_pins(design, refdes, a, b):
     return move_pin(move_pin(design, refdes, a, net_b), refdes, b, net_a)
 
 
-def fewer_v12_contacts(design):
-    """Every V12 contact of PWR-OUT but two becomes a ground."""
+def renumbered_pwr_out(design):
+    """PWR-OUT's contacts renumbered 1-4: the key filled in, quietly."""
     out = design
     for c in _interface(design, "PWR-OUT"):
-        extra = [cp for cp in c.pins if cp.net == "V12"][2:]
         out = out.replace_connector(c.refdes, pins=tuple(
-            replace(cp, net="GND") if cp in extra else cp for cp in c.pins))
+            replace(cp, pin=str(i + 1)) for i, cp in enumerate(c.pins)))
     return out
 
 
@@ -1025,9 +1125,9 @@ DEFECTS = [
     ("a harness wire straight onto a GPIO",
      lambda d: move_pin(d, "U401", "IO18", "UART1_RX_WIRE"),
      test_no_harness_wire_meets_the_mcu_or_an_expander_without_a_series_element, {}),
-    ("12 V over two contacts",
-     fewer_v12_contacts,
-     test_pwr_out_shares_the_load_current_over_ten_contacts, {}),
+    ("the keyed body renumbered 1-4, which fills in the key",
+     renumbered_pwr_out,
+     test_pwr_out_is_four_conductors_numbered_as_the_maker_numbers_them, {}),
     ("a confirmed height with nothing behind it",
      lambda d: d.replace_part("R110", height_confirmed=True),
      test_a_confirmed_height_names_the_pdf_and_the_page, {}),

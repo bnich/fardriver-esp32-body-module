@@ -89,10 +89,34 @@ def two_pad(pitch_mm, pad_w_mm, pad_h_mm, nums=("1", "2")):
             Pad(nums[1], half, 0.0, pad_w_mm, pad_h_mm))
 
 
-def header(pins, pitch_mm, rows=1):
+def header(pins, pitch_mm, rows=1, nums=None, hole_mm=None):
     """A through-hole pin-header land pattern, centred on the origin: `pins`
     posts at `pitch_mm`, in one row, or in two rows numbered across (pin 1 and
-    pin 2 share a column, odd pins in one row) as headers are.  Pin 1 is square."""
+    pin 2 share a column, odd pins in one row) as headers are.  Pin 1 is square.
+
+    `nums` gives the CONTACT NUMBERS instead, for a body with a post left out
+    as a key: each number is its own position in the full body, so
+    ("1", "2", "4", "5") lands four pads in a five-wide body with the third
+    position EMPTY.  The gap is the key, so it has to be in the copper: pads
+    numbered 1-4 evenly spaced would take the part's own drawing's word for the
+    key and then drill the holes as though it were not there.
+
+    `hole_mm` is the drill its maker's PCB layout calls for; the default suits
+    the 0.64 mm square post the 2.54 mm families all use.  The pad keeps the
+    same 0.35 mm annular ring around whatever hole it is given.
+    """
+    drill = HEADER_HOLE_MM if hole_mm is None else hole_mm
+    pad = round(drill + (HEADER_PAD_MM - HEADER_HOLE_MM), 4)
+    if nums is not None:
+        if rows != 1:
+            raise ValueError("a body with a post left out is single-row here")
+        if len(nums) != pins:
+            raise ValueError(f"{pins} pins against {len(nums)} contact numbers")
+        cols = max(int(n) for n in nums)
+        return tuple(
+            Pad(n, round((int(n) - 1 - (cols - 1) / 2) * pitch_mm, 4), 0.0,
+                pad, pad, drill, "RECT" if i == 0 else "ELLIPSE")
+            for i, n in enumerate(nums))
     cols = pins // rows
     if cols * rows != pins:
         raise ValueError(f"{pins} pins do not fill {rows} rows")
@@ -101,8 +125,8 @@ def header(pins, pitch_mm, rows=1):
         col, row = (i // rows, i % rows) if rows == 2 else (i, 0)
         x = (col - (cols - 1) / 2) * pitch_mm
         y = (row - (rows - 1) / 2) * pitch_mm
-        out.append(Pad(str(i + 1), round(x, 4), round(y, 4), HEADER_PAD_MM,
-                       HEADER_PAD_MM, HEADER_HOLE_MM, "RECT" if i == 0 else "ELLIPSE"))
+        out.append(Pad(str(i + 1), round(x, 4), round(y, 4), pad,
+                       pad, drill, "RECT" if i == 0 else "ELLIPSE"))
     return tuple(out)
 
 

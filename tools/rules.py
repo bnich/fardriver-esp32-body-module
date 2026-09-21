@@ -50,7 +50,8 @@ import re
 from collections import Counter, defaultdict, deque
 
 from . import board_params as _bp
-from .model import DOMAIN_VOLTS, Connector, Design, Part, resistance
+from .model import (DOMAIN_VOLTS, Connector, Design, Part, is_cabled,
+                    resistance)
 
 try:                                    # silicon facts have ONE home when it exists
     from . import gpio_budget as _gb
@@ -903,11 +904,29 @@ def rails(d: Design) -> frozenset[str]:
 
 
 def bus_order(d: Design) -> list[str]:
-    """Every inter-board interface, against the two ways a half can be mated
-    wrong. Reversed -- or, the same thing in copper, an upper half mirrored by
-    being mounted under its board -- contact i meets contact n+1-i. One contact
-    off, contact i meets contact i+1. Neither may land a rail or a signal on a
-    DIFFERENT one:
+    """Every inter-board interface, against the ways a half can be mated wrong.
+
+    ⭐ WHICH QUESTION IT ASKS DEPENDS ON THE CROSSING (model.CROSSING).
+
+    A CABLE is asked for POSITIVE KEYING, and nothing else. Its plug is one
+    moulded housing, so it cannot be seated a contact off; what it can be is
+    offered to its header the other way round, by hand, every time the boards
+    are serviced -- and a key makes that mechanically impossible where an
+    ordering rule only makes it survivable.
+
+    ⛔ A cable is NOT exempt, it is held to something stronger, because an
+    unkeyed cable is strictly WORSE than a palindromic bus. A bus's two halves
+    are soldered down facing each other at a fixed spacing and the palindrome
+    lands every net on itself if one is reversed; a loom is a separate part
+    that arrives in somebody's hand, and PWR-OUT's four different nets on four
+    contacts admit no ordering that makes reversing it harmless -- reversed, a
+    rail meets a sense node whatever order they sit in. The key is the only
+    defence a cable has, and a cabled half that names none has none at all.
+
+    A MATED PAIR is asked for the two orderings below. Reversed -- or, the same
+    thing in copper, an upper half mirrored by being mounted under its board --
+    contact i meets contact n+1-i. One contact off, contact i meets contact
+    i+1. Neither may land a rail or a signal on a DIFFERENT one:
 
       opposite pairs  a power bus survives reversal by being a palindrome, so
                       every net lands on itself; a signal spine survives it by
@@ -942,6 +961,23 @@ def bus_order(d: Design) -> list[str]:
         if not c.interface or c.interface in seen:
             continue
         seen.add(c.interface)
+        if is_cabled(c.interface):
+            # BOTH halves, not the first: each end of a loom is presented to
+            # its own header, and only the end that is keyed is safe.
+            for half in d.connectors:
+                if half.interface == c.interface and not half.keyed:
+                    errs.append(
+                        f"BUS-ORDER: {half.interface} ({half.refdes}) is a "
+                        f"CABLE and names no keying, so nothing stops its plug "
+                        f"going in the other way round. A cable is not exempt "
+                        f"from this rule, it is held to more: a mated pair is "
+                        f"soldered down facing its own half and survives being "
+                        f"reversed by reading the same from both ends, while a "
+                        f"loom is offered by hand at every service and no "
+                        f"ordering of four different nets makes reversing it "
+                        f"harmless. Name the feature from the maker's drawing "
+                        f"in `Connector.keyed`, or the interface has nothing.")
+            continue
         nets = [cp.net for cp in c.pins]
         n = len(nets)
         for i in range(n // 2):

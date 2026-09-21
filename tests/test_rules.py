@@ -147,10 +147,13 @@ def _good() -> Design:
         # POWER
         _conn("J101", "POWER", "Battery B+/B-", ("HV_BPLUS", "GND", "GND"), pitch_mm=7.62),
         _conn("J102", "POWER", "Key tap", ("KSW", "GND"), pitch_mm=5.08),
-        _conn("J202", "POWER", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT"),
+        # PWR-OUT is a CABLE (model.CROSSING), so what BUS-ORDER asks of it is
+        # KEYING, not an order -- both halves state it, as the real ones do.
+        _conn("J202", "POWER", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT",
+              keyed="fixture: a polarising notch in the shroud"),
         # OUTPUTS
         _conn("J311", "OUTPUTS", "PWR-OUT", pwr, leaves_box=False, interface="PWR-OUT",
-              side="bottom"),
+              keyed="fixture: a polarising notch in the shroud", side="bottom"),
         _conn("J307", "OUTPUTS", "PWR-LOGIC", pwr_logic, leaves_box=False,
               interface="PWR-LOGIC"),
         _conn("J308", "OUTPUTS", "STACK", stack, leaves_box=False, interface="STACK"),
@@ -1112,15 +1115,22 @@ def _rebus(d, iface, nets):
     return out
 
 
+#: The ordering tests run on a MATED PAIR, because that is what an ordering
+#: rule is for: two halves soldered down facing each other, either of which can
+#: go in reversed. ⚠️ They ran on PWR-OUT until IO-20 made it a cable, and a
+#: cable is asked for keying instead (the two tests at the end of this block).
+ORDERED = "PWR-LOGIC"
+
+
 def test_bus_order_fires_on_a_bus_that_reads_differently_reversed():
     """A bus that is not palindromic: mated reversed, V12 lands where V5 was."""
-    bad = _rebus(GOOD, "PWR-OUT", ("V12", "GND", "KEY_SENSE", "GND", "V5"))
-    assert any("PWR-OUT" in e and "both ends" in e for e in fired(bad, "BUS-ORDER"))
+    bad = _rebus(GOOD, ORDERED, ("V12", "GND", "KEY_SENSE", "GND", "V5"))
+    assert any(ORDERED in e and "both ends" in e for e in fired(bad, "BUS-ORDER"))
 
 
 def test_bus_order_fires_on_a_rail_beside_a_signal():
     """Palindromic, but one contact off puts V12 on KEY_SENSE."""
-    bad = _rebus(GOOD, "PWR-OUT", ("GND", "V12", "KEY_SENSE", "V12", "GND"))
+    bad = _rebus(GOOD, ORDERED, ("GND", "V12", "KEY_SENSE", "V12", "GND"))
     errs = fired(bad, "BUS-ORDER")
     assert any("V12 beside KEY_SENSE" in e for e in errs)
     assert not any("both ends" in e for e in errs)
@@ -1133,7 +1143,7 @@ def test_bus_order_lets_a_converter_return_sit_beside_its_feed():
     shown on a bus built to hold one."""
     assert not fired(GOOD, "BUS-ORDER")
     pair = ("HV_C1_P", "HV_C1_N", "GND", "KEY_SENSE", "GND", "HV_C1_N", "HV_C1_P")
-    assert not fired(_rebus(GOOD, "PWR-OUT", pair), "BUS-ORDER")
+    assert not fired(_rebus(GOOD, ORDERED, pair), "BUS-ORDER")
 
 
 def test_a_spine_passes_on_its_grounds_wherever_the_row_starts():
@@ -1150,12 +1160,38 @@ def test_bus_order_fires_on_a_rail_landing_on_a_ground_reversed():
     is a SHORT when the half is mated reversed or mirrored, and it seats fully
     and looks right. The real design had it: V3P3 sat on the signal spine until
     this test moved it to PWR-LOGIC, two contacts placed symmetrically."""
-    bus = tuple(cp.net for cp in GOOD.connector("J202").pins)
-    assert bus[-1] == "V12"
-    bad = _rebus(GOOD, "PWR-OUT", bus[:-1] + ("GND",))
+    bus = tuple(cp.net for cp in GOOD.connector("J307").pins)
+    assert bus[-1] == "V5"
+    bad = _rebus(GOOD, ORDERED, bus[:-1] + ("GND",))
     errs = fired(bad, "BUS-ORDER")
-    assert any("both ends" in e and "V12 is a supply rail" in e
+    assert any("both ends" in e and "V5 is a supply rail" in e
                and "SHORTS it to GND" in e for e in errs), errs
+
+
+def test_bus_order_fires_on_a_cabled_half_with_no_keying():
+    """⛔ The cable's half of the rule. Take the keying off ONE end of the loom
+    and it fires for that end: a loom is presented by hand, and either end can
+    be offered the wrong way round on its own."""
+    assert not fired(GOOD, "BUS-ORDER")
+    bad = GOOD.replace_connector("J311", keyed="")
+    errs = fired(bad, "BUS-ORDER")
+    assert any("J311" in e and "CABLE and names no keying" in e for e in errs), errs
+    assert not any("J202" in e for e in errs), "the other end is still keyed"
+
+
+def test_a_cable_is_not_exempted_from_bus_order_it_is_held_to_keying():
+    """⚠️ The distinction the rule exists to make. Give the cable an order no
+    mated pair could have — a rail opposite a sense node, reversed — and it
+    still passes, because a keyed shell cannot be offered reversed at all;
+    take the key away from that same order and the rule has something to say
+    about both ends. An exemption would have stayed silent for both."""
+    reversible = ("V12", "GND", "V5", "KEY_SENSE")
+    keyed = _rebus(GOOD, "PWR-OUT", reversible)
+    assert not fired(keyed, "BUS-ORDER")
+    unkeyed = keyed
+    for ref in ("J202", "J311"):
+        unkeyed = unkeyed.replace_connector(ref, keyed="")
+    assert len(fired(unkeyed, "BUS-ORDER")) == 2
 
 
 def test_bus_order_knows_a_rail_from_a_net_of_the_same_class():

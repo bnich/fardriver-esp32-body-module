@@ -107,8 +107,15 @@ def pins_of(x):
 
 def footprint_source(x):
     """The LCSC part whose library footprint `x` uses, or None when its
-    footprint is generated here (or, for an inter-board connector, not yet
-    chosen)."""
+    footprint is generated here.
+
+    ⛔ An inter-board connector is ALWAYS generated here, LCSC part or not.
+    The upper half of a mated pair has to be pre-mirrored so its pads land over
+    its mate's, and a library footprint never is; the cabled power connector is
+    a five-wide body with its third post omitted as a key, and a library 1x4
+    land would space four holes evenly and key nothing."""
+    if isinstance(x, Connector) and x.interface is not None:
+        return None
     mpn = getattr(x, "mpn", "")
     if mpn in FOOTPRINT_FROM_MPN:
         return FOOTPRINT_FROM_MPN[mpn]

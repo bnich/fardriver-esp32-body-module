@@ -302,11 +302,12 @@ def test_a_body_longer_than_the_board_is_wide_opens_its_shelf_first():
     2026-09-20, orders them 26, 31, 6, 6: the 26 opens a 13 mm shelf, the 31 an
     11 mm shelf, the first terminal lands on THAT shelf and deepens it to 51,
     and the second opens another 51. 13 + 51 + 51 = 115 mm, 53 mm of it pure
-    fragmentation -- and on POWER top, whose three biggest bodies are the
-    55.88 mm terminals J101 and J405 and J202's 58.42 mm inter-board PWR-OUT
-    connector, that mechanism reported 321.57 mm against a 214.85 mm pack on the
-    39 mm board of 2026-09-20 (254.93 against 195.45 on the 48 mm one before
-    it)."""
+    fragmentation -- and on the POWER top of 2026-09-20, whose three biggest
+    bodies were the 55.88 mm terminals J101 and J405 and the 58.42 mm PWR-OUT
+    bus J202 then was, that mechanism reported 321.57 mm against a 214.85 mm
+    pack on the 39 mm board (254.93 against 195.45 on the 48 mm one before it).
+    ⚠️ J202 is a 19.74 mm keyed header since IO-20; the mechanism is unchanged
+    and these are the figures of the run that exposed it."""
     rects = [("J1", 50.0, 5.0), ("J2", 50.0, 5.0),
              ("X1", 30.0, 10.0), ("X2", 25.0, 12.0)]
     assert bf.shelf_pack(rects, 40.0) == (pytest.approx(62.0), "")

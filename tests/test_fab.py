@@ -26,9 +26,11 @@ def _fitted(d):
             + [c for c in d.connectors if not c.land])
 
 
-#: The inter-board connectors wait on the owner's choice of family
-#: (still open). When it is made, empty this set.
-AWAITING_OWNER = {"J202", "J311", "J105", "J312", "J307", "J407", "J308", "J406"}
+#: Nothing waits on the owner any more: the inter-board family was chosen on
+#: 2026-09-20 (IO-20) and every half names its LCSC part. ⛔ Keep this EMPTY --
+#: a refdes put back here is a part nobody has chosen, and the assertion below
+#: says which way it drifted.
+AWAITING_OWNER: set[str] = set()
 
 
 def test_every_fitted_item_has_a_way_onto_the_board(d):

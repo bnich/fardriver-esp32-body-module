@@ -92,13 +92,13 @@ def wider_board(board_width):
 @pytest.fixture
 def grown_y_caps():
     """`grown_y_caps(mm)` -- the real netlist with `mm` added to the 18.5 mm
-    side of C203-C206, the four Y-caps whose paired courtyards ARE the pack
-    cliff (`board_params`' envelope search; 18.5 + 2 x COURTYARD = 19.50 across
-    each, and two of those to a shelf is the 39.00 mm step).
+    side of C203-C206, the four Y-caps whose paired courtyards MADE the pack
+    cliff until IO-20 (18.5 + 2 x COURTYARD = 19.50 across each, and two to a
+    shelf was the 39.00 mm step; C207 and J202 pair at 40.84 now).
 
     ⛔ A MUTATION FIXTURE. It exists to prove the cliff guard is derived from
-    the packer and not from a typed 39.00: grow these four and the derived step
-    has to move with them. Negative `mm` shrinks them, which moves it down.
+    the packer and not from a typed width: grow these four past the binding
+    pair and the derived step has to move with them. Negative `mm` shrinks them.
     ⚠️ All four, not one: the step is a PAIR of caps sharing a shelf, so one
     grown cap can still pair with an ungrown one and the step moves by half as
     much (18.5 + 0.5 on one cap alone puts it at 39.50, not 40.00).
@@ -110,4 +110,23 @@ def grown_y_caps():
             w, l = next(p.footprint_mm for p in d.parts if p.refdes == ref)
             d = d.replace_part(ref, footprint_mm=(w, l + mm))
         return d
+    return grow
+
+
+@pytest.fixture
+def grown_body():
+    """`grown_body(refdes, mm)` -- the real netlist with `mm` added to the
+    LONGER side of one body, whichever one the cliff currently answers to.
+
+    ⛔ A MUTATION FIXTURE, and deliberately not tied to a refdes: the pair that
+    makes the pack cliff changed with IO-20, and a fixture that names only
+    yesterday's pair lets a mutation go on passing while it has stopped moving
+    the thing it claims to move.
+    """
+    def grow(refdes: str, mm: float):
+        from tools import netlist
+        d = netlist.current()
+        w, l = next(p.footprint_mm for p in d.parts if p.refdes == refdes)
+        long_side, short = max(w, l), min(w, l)
+        return d.replace_part(refdes, footprint_mm=(short, long_side + mm))
     return grow

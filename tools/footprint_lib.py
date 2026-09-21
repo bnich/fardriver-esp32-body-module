@@ -78,6 +78,13 @@ def open_library():
     return Library(Service())
 
 
+def _missing(nums, cols):
+    """The positions a keyed body leaves empty, as JST writes them: '3' for a
+    five-wide body carrying contacts 1, 2, 4 and 5."""
+    have = {int(n) for n in nums}
+    return "-".join(str(i) for i in range(1, cols + 1) if i not in have)
+
+
 def generated(thing):
     """(title, pads, shared pad numbers, outline) for a footprint generated
     here rather than taken from the library, or None when there is no
@@ -86,10 +93,11 @@ def generated(thing):
     - The parts with no library device, drawn from their datasheets
       (`drawn_footprints`), and the connectors that are copper only (a
       Tag-Connect land).
-    - The inter-board connectors: their family is the owner's open decision
-      (still open), but every family on the list
-      sits on the 2.54 mm grid -- the family sets the mated height, not the
-      holes -- so the land pattern does not wait for it."""
+    - The inter-board connectors, EVERY one of them, whether or not an LCSC
+      part is chosen for it: the upper half of a mated pair has to be
+      pre-mirrored (`...-UNDER`) and no library footprint is, and the one
+      cabled power connector is a 5-wide body with its third post left out as
+      a key, which a 1x4 library land would quietly fill in."""
     from . import drawn_footprints
     from .eprj3 import footprints
     from .model import Connector, Part, is_cabled
@@ -99,12 +107,18 @@ def generated(thing):
     if isinstance(thing, Connector) and thing.land:
         d = drawn_footprints.LANDS[thing.land]
         return d.title, d.pads, d.shared, d.outline
-    if isinstance(thing, Connector) and thing.interface is not None and not thing.lcsc:
+    if isinstance(thing, Connector) and thing.interface is not None:
         n = len(thing.pins)
         rows = 2 if thing.interface in DUAL_ROW_INTERFACES else 1
-        cols = n // rows
-        title = f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM".replace(".", "_")
-        pads = footprints.header(n, thing.pitch_mm, rows=rows)
+        nums = tuple(cp.pin for cp in thing.pins)
+        keyed = rows == 1 and nums != tuple(str(i + 1) for i in range(n))
+        cols = max(int(x) for x in nums) if keyed else n // rows
+        title = (f"HDR-TH_{rows}X{cols}({cols}-{_missing(nums, cols)})"
+                 f"-P{thing.pitch_mm:g}MM" if keyed else
+                 f"HDR-TH_{rows}X{cols}-P{thing.pitch_mm:g}MM").replace(".", "_")
+        pads = footprints.header(n, thing.pitch_mm, rows=rows,
+                                 nums=nums if keyed else None,
+                                 hole_mm=thing.hole_mm)
         if thing.side == "bottom" and not is_cabled(thing.interface):
             # MATED PAIRS ONLY.  The upper half of a pair hangs under its board,
             # and the editor mirrors a part placed there.  Drawn mirrored here,

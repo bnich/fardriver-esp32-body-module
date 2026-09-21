@@ -207,7 +207,7 @@ def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatc
     assert any("DIAG_EN" in e for e in fired(D, "D14"))
 
 
-# ── BUS-ORDER on the real 23-contact power bus (IO-10) ───────────────────────
+# ── BUS-ORDER on the real crossings: order for a pair, keying for a cable ────
 def _rebus(d, iface, nets):
     """Both halves of an interface re-tabled onto `nets`, contact for contact."""
     for c in list(d.connectors):
@@ -217,19 +217,37 @@ def _rebus(d, iface, nets):
     return d
 
 
-def test_m40_the_widened_power_bus_passes_because_it_is_a_palindrome():
-    """⚠️ Not by luck, and not because BUS-ORDER looked away. PWR-OUT went from
-    11 contacts to 23 for IO-10's 8.47 A; swap the V5 at contact 10 with the
-    ground beside it and the tuple stops reading the same from both ends, so a
-    half mated reversed — or mirrored by hanging under OUTPUTS — lands the 5 V
-    rail on a ground. The rule says so."""
-    nets = [cp.net for cp in D.connector("J202").pins]
-    assert len(nets) == 23 and nets == nets[::-1]
+def test_m40_the_rigid_power_bus_passes_because_it_is_a_palindrome():
+    """⚠️ Not by luck, and not because BUS-ORDER looked away. PWR-LOGIC carries
+    the 3.3 V rail back DOWN to OUTPUTS, on two contacts placed symmetrically;
+    swap the V3P3 at contact 3 with the ground beside it and the tuple stops
+    reading the same from both ends, so a half mated reversed — or mirrored by
+    hanging under LOGIC, which this one is — lands the 3.3 V rail on a ground.
+    The rule says so."""
+    nets = [cp.net for cp in D.connector("J307").pins]
+    assert len(nets) == 9 and nets == nets[::-1]
     assert fired(D, "BUS-ORDER") == []
-    nets[9], nets[10] = nets[10], nets[9]
-    errs = fired(_rebus(D, "PWR-OUT", nets), "BUS-ORDER")
-    assert any("both ends" in e and "V5 is a supply rail" in e
+    nets[2], nets[3] = nets[3], nets[2]
+    errs = fired(_rebus(D, "PWR-LOGIC", nets), "BUS-ORDER")
+    assert any("both ends" in e and "V3P3 is a supply rail" in e
                and "SHORTS it to GND" in e for e in errs), errs
+
+
+def test_m40b_the_real_cable_passes_because_both_ends_are_keyed():
+    """⭐ The other half of the same rule, on the real design. PWR-OUT's four
+    conductors cannot be ordered so that a reversed mate is harmless — reversed,
+    V12 meets KEY_SENSE whatever order they sit in — so what protects it is the
+    connector: JST's locking wafer takes its housing one way round only. Take
+    that claim off J202 and BUS-ORDER fires, naming the end that lost it.
+
+    ⛔ This is the test that stops anyone 'simplifying' the rule into an
+    exemption for cables. An exemption passes this mutation."""
+    for ref in ("J202", "J311", "J105", "J312"):
+        assert D.connector(ref).keyed, ref
+    assert fired(D, "BUS-ORDER") == []
+    errs = fired(D.replace_connector("J202", keyed=""), "BUS-ORDER")
+    assert len(errs) == 1 and "J202" in errs[0], errs
+    assert "CABLE and names no keying" in errs[0]
 
 
 def test_the_real_design_passes_every_new_rule():

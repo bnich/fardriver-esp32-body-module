@@ -6,6 +6,7 @@ hold: the bound footprint's pads carry our pin names by the pad map, one
 footprint per device, and nothing is bound without a library.
 """
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -99,8 +100,10 @@ def test_without_a_library_only_generated_footprints_are_bound():
 
 
 def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
-    """The family is the owner's open choice, but every option on the list is
-    on the 2.54 mm grid: the family sets the mated height, not the holes."""
+    """Three of the four crossings are 2.54 mm families -- PWR-LOGIC's and
+    STACK's Hong Cheng pair and CTRL's box header -- so their land is the
+    2.54 mm grid whatever their bodies do above it.  ⛔ The fourth is not:
+    PWR-OUT is a 3.96 mm JST wafer, which the test below covers."""
     design, sheet, bs = _emit("OUTPUTS", {})
     fps = _docs(sheet)["FOOTPRINT"]
     by_title = {d[1][1]["title"]: d for d in fps}
@@ -108,6 +111,38 @@ def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
     stack = next(d for t, d in by_title.items() if f"2X{n // 2}" in t.upper())
     assert sorted(int(p["num"]) for h, p in stack if h["type"] == "PAD") == list(range(1, n + 1))
     assert {"J307", "J308"} <= set(bs.footprints_bound)
+
+
+def test_the_keyed_power_header_leaves_its_omitted_post_empty():
+    """⭐ The key is COPPER, not a note. `B4P(5-3)-VH` is a five-wide wafer with
+    the third post omitted, so the land must have four holes on a five-position
+    3.96 mm grid with the middle one absent, and JST's own ø1.65 drill for a
+    □1.14 post -- not the ø1.0 that suits the 0.64 mm posts every 2.54 mm
+    family here uses.
+
+    Protects: the one thing that makes this connector keyed at all. A 1x4 land
+    would take four evenly spaced holes, the part would not go in it, and every
+    net check would still pass."""
+    d = netlist.current()
+    title, pads, _shared, _outline = footprint_lib.generated(d.connector("J202"))
+    assert title == "HDR-TH_1X5(5-3)-P3_96MM"
+    assert [(p.num, p.x_mm) for p in pads] == [
+        ("1", -7.92), ("2", -3.96), ("4", 3.96), ("5", 7.92)]
+    assert all(p.hole_mm == 1.65 for p in pads)
+    assert not any(p.x_mm == 0.0 for p in pads), "the key position is empty"
+
+
+def test_the_land_fills_the_key_in_when_the_contacts_are_renumbered():
+    """⚠️ THE MUTATION for the test above. Number the same four contacts 1-4 --
+    which is what anyone reading 'a 4-way connector' would do -- and the
+    generator spaces four holes evenly across a four-position body. The key is
+    gone, silently, and only the contact numbers ever said it was there."""
+    d = netlist.current()
+    filled = d.replace_connector("J202", pins=tuple(
+        replace(cp, pin=str(i + 1)) for i, cp in enumerate(d.connector("J202").pins)))
+    title, pads, _s, _o = footprint_lib.generated(filled.connector("J202"))
+    assert title == "HDR-TH_1X4-P3_96MM"
+    assert [p.x_mm for p in pads] == [-5.94, -1.98, 1.98, 5.94]
 
 
 def test_every_footprint_title_is_safe_for_an_allegro_netlist():

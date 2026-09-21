@@ -7,9 +7,11 @@ One line per LCSC part, with every designator that uses it. Parts marked
 `assembly="hand"` are left off: the owner buys and solders them, and they are
 listed separately. Parts marked `assembly="loose"` are left off too: they are
 ordered from LCSC with the boards and the owner fits them (formed to lie
-flat, or clipped in). DNP parts are left off. The LCSC numbers themselves live
-in `netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN, _LOOSE_BY_MPN, _FAB_CONN), and
-nowhere else.
+flat, or clipped in, cut to length, or screwed together). DNP parts are left
+off. The board-to-board standoffs are listed too, from `netlist.STANDOFFS`:
+they are ordered with the boards and they are not parts of the circuit. The
+LCSC numbers themselves live in `netlist.py` (_R_LCSC, _C_LCSC, _FAB_BY_MPN,
+_LOOSE_BY_MPN, _FAB_CONN, STANDOFFS), and nowhere else.
 """
 import argparse
 import csv
@@ -73,11 +75,25 @@ def loose_list(d: Design) -> str:
     lines = []
     for code, xs in sorted(groups.items(), key=lambda kv: _refkey(kv[1][0].refdes)):
         xs.sort(key=lambda x: _refkey(x.refdes))
-        per = netlist.loose_per(xs[0].mpn)
+        # One per refdes unless the part says otherwise (FH201 takes two clips).
+        # A connector is always one: it has no MPN of its own, its LCSC part is
+        # named in `netlist._FAB_CONN`.
+        per = 1 if isinstance(xs[0], Connector) else netlist.loose_per(xs[0].mpn)
         how = xs[0].source.rsplit("; ", 1)[-1]
         lines.append(f"{code:8} x{per * len(xs)} {_label(xs[0])[:24]}, for "
                      f"{' '.join(x.refdes for x in xs)}: {how}")
     return "\n".join(lines)
+
+
+def standoff_list() -> str:
+    """The board-to-board standoffs: ordered from LCSC with the boards, not
+    placed, and screwed in by the owner.  ⬜ They are not in the Design -- a
+    standoff DEFINES a gap rather than standing in one and `board_params` has
+    no term for that yet -- so this reads `netlist.STANDOFFS`, which is their
+    one home, rather than the parts list."""
+    return "\n".join(
+        f"{code:8} x{n} {maker[:24]}, sets {gap:g} mm: {why.split('. ')[0]}"
+        for code, maker, n, gap, why in netlist.standoffs())
 
 
 def hand_list(d: Design) -> str:
@@ -120,6 +136,8 @@ def main(argv=None):
                and getattr(x, "mpn", "") != "NET-TIE"]
     print("\nLOOSE, order with the boards (not placed; you wire them):\n" + plug_list(d))
     print("\nLOOSE, order with the boards (not placed; you fit them):\n" + loose_list(d))
+    print("\nSTANDOFFS, order with the boards (not placed; you screw them in):\n"
+          + standoff_list())
     print("\nHAND-SOLDERED by the owner:\n" + hand_list(d))
     if pending:
         print(f"\n⚠️ NOT YET CHOSEN (no LCSC part, not hand-soldered): {' '.join(pending)}")

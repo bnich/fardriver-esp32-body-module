@@ -107,11 +107,14 @@ def shelf_pack(rects, board_w: float | None = None):
     that must lie lengthwise in the MIDDLE of the order: it then opens the
     deepest shelf of the whole pack after the bodies that could have stood
     beside it have been placed elsewhere. That is one board-wide connector
-    wasting a shelf the length of itself. POWER top's three biggest bodies are
-    two 55.88 mm harness terminals (J101, J405) and J202, the 58.42 mm
-    inter-board PWR-OUT connector; on the 39 mm board of 2026-09-20 the old
-    order reported 321.57 mm where these same bodies pack into 214.85 mm, and
-    on the 48 mm board before that, 254.93 against 195.45.
+    wasting a shelf the length of itself. It was found on a POWER top whose
+    three biggest bodies were two 55.88 mm harness terminals (J101, J405) and
+    the 58.42 mm PWR-OUT bus J202 then was; on the 39 mm board of 2026-09-20
+    the old order reported 321.57 mm where those bodies pack into 214.85 mm,
+    and on the 48 mm board before that, 254.93 against 195.45. ⚠️ J202 is a
+    19.74 mm keyed header since IO-20, so the ordering matters to the two
+    terminals now -- the mechanism is unchanged and the figures above are the
+    run that exposed it.
     """
     width = bp.BOARD_W if board_w is None else board_w
     placed = []

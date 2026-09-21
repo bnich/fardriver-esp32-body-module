@@ -29,8 +29,12 @@ Conventions
             STACK) when a net crosses more than one.
   HEIGHTS   `height_confirmed=True` only where `source` cites the manufacturer
             PDF and the page the figure was read from.
-  CONNECTOR pin numbers are a generator-side index. For the pods the binding
-            key is wire colour + gauge, never the cavity number.
+  CONNECTOR pin numbers are a generator-side index -- EXCEPT where the maker
+            numbers its own circuits and leaves one out: `PWR-OUT` is a
+            five-wide JST wafer carrying 1, 2, 4 and 5, and the hole in that
+            numbering is the key, in the netlist and in the copper. For the
+            pods the binding key is wire colour + gauge, never the cavity
+            number.
   PITCH     the four harness rows (IO-4..IO-6), one row per board face. A screw
             plug seats in ANY header of its own pitch that is at least its
             size, offset if the header is larger, so each group whose mismate
@@ -90,6 +94,14 @@ _DS_KF762 = ("Cixi Kefa KF2EDGRM-7.62 and KF2EDGKM-7.62 drawings rev A "
              "(kefa_C441304.pdf, kefa_C441154.pdf)")
 _DS_KF350 = ("Cixi Kefa KF2EDGRM-3.5 and KF2EDGKM-3.5 drawings rev A "
              "(kefa_C441263.pdf, kefa_C441113.pdf)")
+_DS_VH = "JST VH connector series drawing (jst_vh_C594237.pdf)"
+_DS_DC3 = ("Zhouri DC3-2.54-*PAS drawing ZR20171018-178 rev A/0 "
+           "(zhouri_dc3_C5144580.pdf)")
+_DS_HC_PM = ("Hong Cheng HC-PM254-8.5H drawings rev A, 1 of 1 "
+             "(hongcheng_pm254_C22373895.pdf, hongcheng_pm254_C42163143.pdf)")
+_DS_HC_PZ = ("Hong Cheng HC-PZ254-11.5L-1x9PZ drawing rev A, 1 of 1 "
+             "(hongcheng_pz254_C27985193.pdf)")
+_DS_BOOM = "BOOMELE PZ2.54-2xNA-11.4MM drawing (boomele_pz254_C2333.pdf)"
 _BRK = "brake-circuit.md"
 
 # ── generic chip packages: (footprint w × l, height). Heights are envelopes
@@ -1366,32 +1378,92 @@ _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _POWER_CTRL_PARTS
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFACE PIN MAPS — the four inter-board crossings (BD-3, BD-4): two power
-# buses (PWR-OUT, PWR-LOGIC) and two signal spines (CTRL, STACK).
+# paths (PWR-OUT, a four-conductor keyed loom; PWR-LOGIC, a nine-contact mated
+# bus) and two signal spines (CTRL on ribbon, STACK mated).
 # ════════════════════════════════════════════════════════════════════════════
 # PWR-LOGIC and STACK are MATED PAIRS: the upper half hangs under its board,
 # mirrored, facing the lower one. PWR-OUT and CTRL are CABLES (IO-20), so both
 # their halves stand on a top face and the loom carries the orientation.
 # `model.CROSSING` is where that lives; `integrity` reads it.
-# Every power bus reads the same from either end, so a half mated reversed, or
-# an upper half mirrored by being mounted under its board, lands every net on
-# itself. Two different nets never sit side by side unless one is a return, so
-# a half mated one contact off shorts a rail at worst -- it never puts 84 V or
-# 12 V on KEY_SENSE. Each is ONE crossing between two neighbouring boards.
+# A mated PAIR reads the same from either end, so a half mated reversed, or an
+# upper half mirrored by being mounted under its board, lands every net on
+# itself; two different nets never sit side by side unless one is a return, so
+# a half mated one contact off shorts a rail at worst. A CABLE buys the same
+# safety the other way, with a KEYED shell that cannot be offered either way
+# round -- rule BUS-ORDER asks each kind for its own. Each is ONE crossing
+# between two neighbouring boards.
 
-#: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS. Every 12 V load in the module hangs
-#: off OUTPUTS, so the whole 8.47 A of IO-10 (tools/power_budget.py) crosses
-#: here: 10 × V12 and 10 × GND puts 0.85 A on each contact, and 0.94 A with one
-#: open — inside 1 A either way, which is what a 2.54 mm header contact is good
-#: for. V5 and KEY_SENSE only pass THROUGH OUTPUTS, on up to J307.
-#: ⚠️ A PALINDROME, and by construction, not by luck (rule BUS-ORDER): every
-#: net lands on ITSELF when the loom is plugged in end for end. V12 and V5 are
-#: rails — a rail opposite anything else is a short across the interface — and
-#: KEY_SENSE takes the one contact that is its own mirror, the centre, with a
-#: ground on each side of it. Neither half is mirrored: this is a cable, and
-#: both its ends stand on a top face (IO-20).
-_PWROUT_NETS = ("V12", "V12", "GND", "V12", "V12", "GND", "V12", "GND", "GND", "V5",
-                "GND", "KEY_SENSE", "GND", "V5", "GND", "GND", "V12", "GND", "V12",
-                "V12", "GND", "V12", "V12")
+# ── Connector body sizes: the RULES each maker's drawing states ─────────────
+# ⭐ A family's drawing gives its body length as a FORMULA in the contact
+# count, and the netlist used to type one figure for both halves of a pair --
+# which was 0.4 mm short on every socket and 5.08 wide where every dual-row
+# body is 5.0. Encoding the rule closes the class; a corrected constant closes
+# one instance, and the same families are used again on the next board.
+HDR_PITCH = 2.54
+
+
+def hc_body(per_row: int, *, rows: int, socket: bool,
+            cut: bool = False) -> tuple[float, float]:
+    """(length, width) of one 2.54 mm header or socket body, in mm.
+
+    B = contacts per row × 2.54 in both makers' tables (Hong Cheng calls the
+    pin span A and the body B; BOOMELE swaps the letters, which is exactly how
+    a typed figure goes wrong). The bodies are then:
+
+      socket              B + 0.4   (HC-PM254-8.5H drawings, "(B+0.4)±0.3")
+      header, single row  B         (HC-PZ254-11.5L-1x9PZ, "B±0.3")
+      header, dual row    B − 0.2   (Hong Cheng's moulded dual-row bodies)
+      header, cut to      B         (BOOMELE PZ2.54-2xNA-11.4MM, "A±0.5" =
+        length from a strip          N × 2.54: the cut falls on the grid, so
+                                     the body ends on it)
+
+    Width is per half, not per family: 2.50 a single-row header, 2.4 a
+    single-row socket, 5.0 every dual-row body -- ⛔ never 5.08, which is the
+    figure a reader supplies from the pitch when the drawing is not open.
+    """
+    b = per_row * HDR_PITCH
+    if socket:
+        return round(b + 0.4, 2), 5.0 if rows == 2 else 2.4
+    if rows == 2:
+        return round(b if cut else b - 0.2, 2), 5.0
+    return round(b, 2), 2.50
+
+
+def vh_body(ways: int) -> tuple[float, float]:
+    """(length, width) of a JST VH wafer, from the series drawing's own table:
+    B = ways × 3.96 − 0.06 at every size from 2 to 10 circuits, and the wafer
+    is 8.5 mm deep. ⚠️ `ways` is the size of the ORIGINAL body, so a four-way
+    header with its third post omitted is a five-way body: 19.74 mm."""
+    return round(ways * 3.96 - 0.06, 2), 8.5
+
+
+def dc3_body(per_row: int) -> tuple[float, float]:
+    """(length, width) of a DIN 41651 shrouded box header. The Zhouri drawing
+    prints the rule on the part: 2.54 × N/2 + 7.6 ± 0.2 over the shroud, by
+    8.4 ± 0.15 across it, where N is the contact count."""
+    return round(per_row * HDR_PITCH + 7.6, 2), 8.4
+
+
+#: PWR-OUT, J202 ↔ J311, POWER to OUTPUTS: FOUR conductors in a keyed shell.
+#: Every 12 V load in the module hangs off OUTPUTS, so the whole 8.47 A of
+#: IO-10 (tools/power_budget.py) crosses here -- on ONE 16 AWG conductor out
+#: and one back, into contacts JST rates at 10 A with that gauge. ⛔ The ten
+#: contacts each of V12 and GND this carried until IO-20 were paying a 1 A
+#: per-contact floor that a stamped 2.54 mm header imposes and a crimped
+#: conductor does not; a cable does not share a current out over contacts, it
+#: sizes the wire. V5 and KEY_SENSE only pass THROUGH OUTPUTS, on up to J307.
+#: ⚠️ The CONTACT NUMBERS ARE JST'S: the body is five circuits wide with the
+#: third post omitted, and the omission is the gap in this tuple. Reading it as
+#: 1-2-3-4 would put four evenly spaced holes on the board.
+#: ⛔ NOT a palindrome, and it does not need to be: what stops this being mated
+#: the wrong way round is the wafer's own lock, which only closes one way
+#: (`Connector.keyed`, rule BUS-ORDER). The heavy pair sits together so the
+#: 8.47 A goes out and comes back through adjacent contacts, the smallest loop
+#: the connector allows; the two light conductors sit on the far side of the
+#: key gap.
+_PWROUT_CONTACTS = (("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE"))
+#: The original body the omitted post is counted out of (JST's "(5-3)").
+_PWROUT_WAYS = 5
 
 #: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: the rails between those two
 #: boards, in both directions -- V5 and KEY_SENSE up, and 3.3 V back DOWN for
@@ -1404,17 +1476,49 @@ _PWROUT_NETS = ("V12", "V12", "GND", "V12", "V12", "GND", "V12", "GND", "GND", "
 _PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
                   "GND", "V5")
 
-#: CTRL, J105 ↔ J312, POWER to OUTPUTS: the controller row's signals, every one
-#: beside a ground.  Odd contacts carry these in order, every even contact is
-#: GND.  Nothing here is a rail: the row's own connectors are on POWER (IO-5),
-#: so only commands and sense nodes cross.
+#: CTRL, J105 ↔ J312, POWER to OUTPUTS: the controller row's signals, each one
+#: with a GROUND ON BOTH SIDES OF IT along the ribbon. Nothing here is a rail:
+#: the row's own connectors are on POWER (IO-5), so only commands and sense
+#: nodes cross. The conductors that matter are the ribbon's, so "beside" means
+#: the next CONTACT NUMBER -- a 2.54 mm IDC header numbers across its two rows,
+#: so conductor n lands on contact n, and 150 mm of parallel ribbon is what
+#: couples, not the 8 mm of header.
+#: ⚠️ A PAIR given as a tuple stays ADJACENT and is flanked as one block: CANH
+#: and CANL are a differential pair and must see the same neighbours, ground on
+#: each outer side. ⛔ Never put a switched 12 V-class line (BOOST_CMD, TT_*)
+#: straight outboard of the pair -- an unbalanced aggressor against one half of
+#: a pair injects DIFFERENTIALLY, the one coupling a pair cannot reject. The
+#: order below keeps a ground between the pair and both of them, and
+#: tests/test_interconnect.py holds it there.
 _CTRL_SIGNALS = ("BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX",
-                 "BOOST_CMD", "CANH", "CANL", "TT_L", "TT_R", "TT_HL")
-#: ⚠️ `_ROWS` counts COLUMNS: one per signal, each a signal contact over its
-#: own ground. The name is kept because `2 × N` is how both spines' pinouts are
-#: written everywhere else. The header's length follows on the 2.54 mm grid.
-_CTRL_ROWS = len(_CTRL_SIGNALS)
-_CTRL_FP = (2.54 * _CTRL_ROWS, 2 * 2.54)
+                 ("CANH", "CANL"), "BOOST_CMD", "TT_L", "TT_R", "TT_HL")
+#: 2 × 12 = 24 ways, because the DC3-2.54 family (DIN 41651) has no 22-way
+#: member: it goes 8, 10, 14, 16, 20, 24. Going UP a size rather than losing
+#: the shroud's key is the better half of that trade -- 22 ways force
+#: G S G S … G S, and the last signal then has ground on ONE side. 24 give 11
+#: signals, each flanked, and 13 grounds. ⭐ The two ways past the 22 the order
+#: needs are grounds at the far end: a twelfth signal takes contact 23 and is
+#: still flanked, by 22 and 24.
+_CTRL_WAYS = 24
+
+
+def _flanked(signals: tuple, ways: int) -> tuple[str, ...]:
+    """`signals` laid out over `ways` contacts with a ground on both sides of
+    every one; a tuple of names stays adjacent and is flanked as a block.
+    Spare contacts are grounds, at the end. ⚠️ Raises rather than truncating:
+    a signal list that outgrows its connector must not lose its last member."""
+    out: list[str] = ["GND"]
+    for s in signals:
+        out += list(s) if isinstance(s, tuple) else [s]
+        out.append("GND")
+    if len(out) > ways:
+        raise ValueError(f"{signals} need {len(out)} contacts, not {ways}")
+    return tuple(out + ["GND"] * (ways - len(out)))
+
+
+_CTRL_NETS = _flanked(_CTRL_SIGNALS, _CTRL_WAYS)
+_CTRL_SIGNAL_NAMES = tuple(n for n in _CTRL_NETS if n != "GND")
+_CTRL_FP = dc3_body(_CTRL_WAYS // 2)
 
 #: STACK, J308 ↔ J406, 2 × len(_STACK_SIGNALS): odd contacts carry these in
 #: order, every even contact is GND, so each signal (CS1/CS2 above all) faces a
@@ -1434,9 +1538,11 @@ _STACK_SIGNALS = (
     # until the driver's nine-clock recovery frees it (spec §6).
     "SDA", "SCL",
 )
-#: Contacts per row, and the header's length on the 2.54 mm grid.
+#: Contacts per row, and each half's own body from its maker's drawing: the
+#: socket on OUTPUTS is 0.4 mm longer than the header that plugs into it.
 _STACK_ROWS = len(_STACK_SIGNALS)
-_STACK_FP = (2.54 * _STACK_ROWS, 2 * 2.54)
+_STACK_SOCKET_FP = hc_body(_STACK_ROWS, rows=2, socket=True)
+_STACK_HEADER_FP = hc_body(_STACK_ROWS, rows=2, socket=False, cut=True)
 
 
 def _p(spec: str) -> tuple[tuple[str, str], ...]:
@@ -1446,7 +1552,7 @@ def _p(spec: str) -> tuple[tuple[str, str], ...]:
 
 
 def _pwrout(net: str) -> tuple[tuple[str, str], ...]:
-    return tuple((c, str(i + 1)) for i, n in enumerate(_PWROUT_NETS)
+    return tuple((c, pin) for pin, n in _PWROUT_CONTACTS
                  if n == net for c in ("J202", "J311"))
 
 
@@ -1456,8 +1562,8 @@ def _pwrlogic(net: str) -> tuple[tuple[str, str], ...]:
 
 
 def _ctrl(net: str) -> tuple[tuple[str, str], ...]:
-    i = _CTRL_SIGNALS.index(net)
-    return (("J105", str(2 * i + 1)), ("J312", str(2 * i + 1)))
+    i = _CTRL_NETS.index(net)
+    return (("J105", str(i + 1)), ("J312", str(i + 1)))
 
 
 def _stack(net: str) -> tuple[tuple[str, str], ...]:
@@ -1465,8 +1571,8 @@ def _stack(net: str) -> tuple[tuple[str, str], ...]:
     return (("J308", str(2 * i + 1)), ("J406", str(2 * i + 1)))
 
 
-_CTRL_GND = tuple((c, str(n)) for c in ("J105", "J312")
-                  for n in range(2, 2 * _CTRL_ROWS + 1, 2))
+_CTRL_GND = tuple((c, str(i + 1)) for c in ("J105", "J312")
+                  for i, n in enumerate(_CTRL_NETS) if n == "GND")
 
 _STACK_GND = tuple((c, str(n)) for c in ("J308", "J406")
                    for n in range(2, 2 * _STACK_ROWS + 1, 2))
@@ -1589,8 +1695,8 @@ _NETS_RAILS = (
         + _STACK_GND,
         domain="GND", interface="PWR-OUT",
         source="The star net, on all three boards and across all four "
-               "interfaces (PWR-OUT × 4, every even CTRL contact, PWR-LOGIC × 4, "
-               "every even STACK contact); "
+               "interfaces (one 16 AWG conductor of PWR-OUT, 13 of CTRL's 24 "
+               "contacts, PWR-LOGIC × 4, every even STACK contact); "
                "`interface` names the lowest. Both converters' -Vout, every "
                "lamp common (plan §6.0.2), both B− conductors of J101, and "
                "both anode pads of every TVS array land here. ⛔ Display pin 3 "
@@ -1959,9 +2065,9 @@ _NETS_LOGIC = (
         source="IN-12, ADC1_CH0: KSW through 330 k / 10 k, 84 V → 2.47 V. "
                "Tapped UPSTREAM of the hold-up diode, so key-off shows at once "
                "while C2 keeps the logic alive (plan §3.2.2). Divider on POWER, "
-               "pin on LOGIC behind R476: crosses PWR-OUT and PWR-LOGIC, a "
-               "ground either side of it on each. Key state only "
-               "— never a battery gauge"),
+               "pin on LOGIC behind R476: crosses PWR-OUT on its own 22 AWG "
+               "conductor and PWR-LOGIC with a ground either side of it. Key "
+               "state only — never a battery gauge"),
     Net("KEY_SENSE_PIN", _p("R476.2 C437.1 U401.IO1"), domain="3V3", gpio="GPIO1",
         source="KEY_SENSE at the ADC pin, behind its 1 kΩ, with the HDG's "
                "0.1 µF at the pin"),
@@ -2320,6 +2426,38 @@ def _bus(nets: tuple[str, ...]) -> tuple[ConnPin, ...]:
     return tuple(ConnPin(str(i + 1), n) for i, n in enumerate(nets))
 
 
+def _keyed_bus(contacts: tuple[tuple[str, str], ...]) -> tuple[ConnPin, ...]:
+    """A bus whose contact numbers are the MAKER'S: a body with a post omitted
+    as a key numbers its circuits over the whole body, so the key is a hole in
+    the numbering here and a hole in the land pattern there."""
+    return tuple(ConnPin(pin, net) for pin, net in contacts)
+
+
+#: The two JST VH crimp contacts and the wire each one takes (VH series
+#: drawing p.2, "Contact"). ⛔ SVH-21T-P1.1 STOPS AT AWG #18: the conductors
+#: that carry 8.47 A are 16 AWG and take the SVH-41T-P1.1. A survey that wrote
+#: "SVH-21T-P1.1 class, 22-16 AWG" had read across the two rows of that table,
+#: and a 16 AWG wire does not crimp into a 22-18 barrel.
+VH_CONTACTS = {"SVH-21T-P1.1": (22, 18), "SVH-41T-P1.1": (20, 16)}
+
+#: PWR-OUT's loom, conductor by conductor: net -> (AWG, crimp contact, why).
+#: ⭐ The gauge is the whole current story now: a cable does not spread a load
+#: over contacts, it sizes the wire, and JST states this header's 10 A rating
+#: AT AWG #16 -- so the conductor and the rating come off the same line of the
+#: same drawing, and the check cannot be satisfied by one without the other.
+#: The housings and crimps are owner-buys: JLC places board parts only.
+PWROUT_LOOM = {
+    "V12": (16, "SVH-41T-P1.1", "the whole 8.47 A of IO-10, out"),
+    "GND": (16, "SVH-41T-P1.1", "the same 8.47 A back: ⛔ the ONLY sized "
+                                "return between the boards, since the brass "
+                                "standoffs are bonded at the OUTPUTS end only "
+                                "(IO-21)"),
+    "V5": (22, "SVH-21T-P1.1", "~0.6 A to LOGIC's regulator, passing through "
+                               "OUTPUTS to J307"),
+    "KEY_SENSE": (22, "SVH-21T-P1.1", "a divided sense node, ~0 A"),
+}
+
+
 def _signal_gnd_pins(signals: tuple[str, ...]) -> tuple[ConnPin, ...]:
     """2 × len(signals): odd = signal, even = GND. One column per signal, so a
     signal spine cannot silently run out of contacts or carry an empty one.
@@ -2344,25 +2482,90 @@ _INPUTS_NOTE = (
     "firmware's own input health catches"
 )
 
-_INTERBOARD = ("⬜ Connector family unchosen, and the mated pair SETS the board "
-               "gap rather than fitting under a ceiling. Samtec ESQ elevated "
-               "sockets exist at 11.05 / 13.59 / 16.13 / 18.67 mm bodies only "
-               "(esq.pdf); an SLW low-profile socket body is 4.06 mm (slw.pdf). "
-               "Height here is a generic 2.54 mm part, unconfirmed")
+#: The MATED PAIR that spans OUTPUTS ↔ LOGIC, said once for all four halves.
+#: The two bodies butt insulator to insulator and that IS the board spacing:
+#: 2.5 (header insulator) + 8.5 (socket body) = 11.00 mm on PWR-LOGIC, 2.54 +
+#: 8.5 = 11.04 on STACK. ⚠️ STACK is therefore the hard stop and PWR-LOGIC's
+#: insulators sit 0.04 mm apart -- far inside tolerance, and worth saying which
+#: is which. A 6.0 mm pin in an 8.5 mm bore leaves 2.5 mm of headroom, so it is
+#: the PLASTIC that stops, not the pin.
+_INTERBOARD = ("Hong Cheng 2.54 mm, gold flash over brass, 3 A, 1000 V AC "
+               "withstanding, 20 mΩ, -40…+105 °C, PA6T (HC-PZ254-11.5L-1x9PZ "
+               "and HC-PM254-8.5H-*PZ drawings, 1 of 1 each; the BOOMELE strip "
+               "PZ2.54-2xNA-11.4MM). Body sizes come from `hc_body`, each "
+               "half's own rule. The two bodies BUTT, and their sum is the "
+               "board spacing")
 
 #: The two POWER ↔ OUTPUTS crossings (IO-20, 2026-09-20). No stocked connector
 #: spans that 25.1 mm gap, so a LOOM carries it, and the loom takes the
 #: orientation: neither half faces the other and neither is mirrored. Both
 #: halves therefore stand on their boards' TOP faces — a facing pair of shrouds
 #: bounds at 22 mm per end, hanging into the same gap L101/L102 already stand
-#: 22.0 mm in. ⬜ Connector family unchosen; height here is a generic 2.54 mm
-#: part, unconfirmed.
-_CABLED = ("⬜ Connector family unchosen. A CABLE crossing (IO-20): no stocked "
-           "connector spans the 25.1 mm POWER→OUTPUTS gap, so a loom carries "
-           "it. The cable takes the orientation, so this half neither faces "
-           "its mate nor is mirrored, and both ends stand on a TOP face, "
+#: 22.0 mm in.
+_CABLED = ("A CABLE crossing (IO-20): no stocked connector spans the 25.1 mm "
+           "POWER→OUTPUTS gap, so a loom carries it and the M3×30 standoffs "
+           "set the gap. The cable takes the orientation, so this half neither "
+           "faces its mate nor is mirrored, and both ends stand on a TOP face, "
            "keeping a tall connector body out of a gap L101/L102 already stand "
-           "22.0 mm in. Height here is a generic 2.54 mm part, unconfirmed")
+           "22.0 mm in")
+
+#: PWR-OUT's connector: JST's VH locking header, top entry, five circuits wide
+#: with the third post omitted. ⛔ THE TRAP, and it is the Blue Sea failure
+#: again: "VH" CLONES ARE RATED 3 A. CAX's VH-4A-HT (C5453989) lists
+#: identically — same series name, same 3.96 mm pitch, same 4P, cheaper, in
+#: stock — and at 8.47 A that is a 2.8× overload. This part is GENUINE JST or
+#: it is the wrong part.
+_VH = (f"LCSC C594237: JST B4P(5-3)-VH(LF)(SN), a VH locking header, top entry, "
+       "PA 66 UL94V-0 with brass tin-plated posts. ⛔ GENUINE JST, never a "
+       "'VH' clone (CAX VH-4A-HT C5453989 lists the same series, pitch and 4P "
+       "at 3 A — a 2.8× overload here). 10 A AC/DC per contact with AWG #16 "
+       f"and 250 V, from {_DS_VH} p.1, which states ONE current "
+       "figure and no derating for the number of circuits loaded; its "
+       "-25…+85 °C range is stated to INCLUDE the rise the current causes, "
+       "which is where a fully loaded connector is really held. Wafer 3.2 "
+       "thick and 8.5 deep, posts □1.14 standing 7.7 above it and 3.7 below "
+       "the board, body ways × 3.96 - 0.06 = 19.74 long; JST's PCB layout "
+       "calls for ø1.65 +0.1 holes, not the 1.0 mm a 0.64 mm post takes")
+#: The post tips, 3.2 mm of wafer plus 7.7 mm of post above the board.
+_VH_H = 10.9
+_VH_LEAD = 3.7
+_VH_KEY = ("the wafer's lock ramp stands proud on ONE wall, and the VHR "
+           "housing has its cutout on one side, so a housing offered the other "
+           "way round meets the ramp and cannot seat; the omitted third post "
+           "keys it against a plug of any other size. ⚠️ The OMISSION is not "
+           "what polarises it: JST's post-omitted page gives polarity to an "
+           "omission at the 2nd or (N-1)th circuit and says a symmetric one "
+           "gives none, and the third post of five is symmetric — the ramp "
+           "does that work. ⬜ Confirm on the first sample that a reversed "
+           "housing will not go down; if it will, the loom needs the shrouded "
+           "VH (B5P-VH-FB-B) instead")
+
+#: CTRL's connector: a DIN 41651 shrouded box header at each end of a 24-way
+#: ribbon. Its POLARISING NOTCH is the whole reason 24 ways were taken over 22
+#: (the family has no 22-way member): the alternative was a bare header the
+#: socket could be pushed onto either way round.
+_DC3 = (f"LCSC C5144580: ZHOURI DC3-2.54-24PAS, a 2×12 shrouded box header, "
+        "glass-filled PBT UL94V-0, brass contacts gold over nickel. 1.5 A per "
+        "contact, 500 V AC for one minute, 20 mΩ, -40…+105 °C; pins □0.64 on "
+        "2.54, shroud 8.6 ±0.15 above the board, tails 3.1 ±0.1, body "
+        "2.54 × N/2 + 7.6 = 38.08 by 8.4 ±0.15 — the drawing prints that rule "
+        f"on the part ({_DS_DC3} p.1). Its cable end "
+        "is an FC-2.54-24P IDC socket (C5274612) on 3M 3365/24 ribbon, which "
+        "LCSC does not carry")
+_DC3_H = 8.6
+_DC3_LEAD = 3.1
+_DC3_KEY = ("a 4.5 ±0.15 mm polarising notch in the shroud with the pin-1 "
+            "triangle beside it: the IDC socket's key enters it one way round "
+            "only, and nothing else enters at all")
+
+#: ⬜ What neither drawing dimensions: how deep the plug goes in, and so how
+#: tall the MATED assembly stands. Said once, on every cabled half, because it
+#: is the same gap in both drawings — and because the figure that would settle
+#: it must be measured, never typed from a bound.
+_MATED_UNKNOWN = ("⬜ height_mm is the BARE header off the drawing; the mated "
+                  "height is undimensioned there, so it is not confirmed — "
+                  "measure it on the first sample. Nothing rests on it: the "
+                  "standoffs set this gap, not these two halves")
 
 _CONNECTORS = (
     # ── POWER ───────────────────────────────────────────────────────────────
@@ -2385,15 +2588,18 @@ _CONNECTORS = (
                             "in it and its plug seats in no other header. 84 V "
                             "sits 7.62 mm from its return (BD-4)"),
     Connector("J202", "POWER", "PWR-OUT, POWER side, on top of the board: "
-              "10 × V12, 10 × GND, 2 × V5, KEY_SENSE", _bus(_PWROUT_NETS), 8.5,
-              footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54),
-              leaves_box=False, interface="PWR-OUT", source=_CABLED),
+              "V12 and GND at 8.47 A, V5, KEY_SENSE", _keyed_bus(_PWROUT_CONTACTS),
+              _VH_H, footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96,
+              hole_mm=1.65, contact_a=10.0, keyed=_VH_KEY,
+              leaves_box=False, interface="PWR-OUT", lead_mm=_VH_LEAD,
+              source=f"{_CABLED}. {_VH}. {_MATED_UNKNOWN}"),
     Connector("J105", "POWER",
-              f"CTRL, POWER side, on top of the board: 2 × {_CTRL_ROWS}, the "
-              f"controller row's signals with a ground beside each",
-              _signal_gnd_pins(_CTRL_SIGNALS),
-              8.5, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
-              source=_CABLED),
+              f"CTRL, POWER side, on top of the board: 2 × {_CTRL_WAYS // 2}, "
+              f"the controller row's signals with a ground on both sides of "
+              f"each", _bus(_CTRL_NETS),
+              _DC3_H, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
+              hole_mm=1.0, contact_a=1.5, keyed=_DC3_KEY, lead_mm=_DC3_LEAD,
+              source=f"{_CABLED}. {_DC3}. {_MATED_UNKNOWN}"),
     _tb("J309", "POWER", "FarDriver motor cut and throttle supply sense: BL "
         "out, ACC+ in", (
             _cp("1", "BL", "yellow/green, OUT. ⛔ Not grey BH — High Brake "
@@ -2506,24 +2712,39 @@ _CONNECTORS = (
                  "below the 12 V terminals"),
         side="bottom"),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, on top of the board: "
-              "10 × V12 for the drivers and the 5 V buck, 10 × GND back, V5 "
-              "and KEY_SENSE on up to J307", _bus(_PWROUT_NETS), 2.54,
-              footprint_mm=(2.54 * len(_PWROUT_NETS), 2.54), leaves_box=False,
-              interface="PWR-OUT", source=_CABLED),
+              "V12 for the drivers and the 5 V buck, GND back, V5 and "
+              "KEY_SENSE on up to J307", _keyed_bus(_PWROUT_CONTACTS), _VH_H,
+              footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=1.65,
+              contact_a=10.0, keyed=_VH_KEY, leaves_box=False,
+              interface="PWR-OUT", lead_mm=_VH_LEAD,
+              source=f"{_CABLED}. {_VH}. {_MATED_UNKNOWN}"),
     Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
               "to LOGIC, 3.3 V back down, ground on every other contact",
-              _bus(_PWRLOGIC_NETS), 8.5,
-              footprint_mm=(2.54 * len(_PWRLOGIC_NETS), 2.54), leaves_box=False,
-              interface="PWR-LOGIC", source=_INTERBOARD),
+              _bus(_PWRLOGIC_NETS), 8.5, height_confirmed=True,
+              footprint_mm=hc_body(len(_PWRLOGIC_NETS), rows=1, socket=True),
+              leaves_box=False, contact_a=3.0, lead_mm=3.0,
+              interface="PWR-LOGIC",
+              source=f"The SOCKET, LCSC C22373895: HC-PM254-8.5H-1x9PZ, body "
+                     f"8.5 ±0.15 tall over the board and (B+0.4)±0.3 long, "
+                     f"2.4 ±0.15 wide, tails 3.0 ±0.2, ø1.02 holes ({_DS_HC_PM} p.1). "
+                     f"{_INTERBOARD}"),
     Connector("J308", "OUTPUTS",
               f"STACK, OUTPUTS side: 2 × {_STACK_ROWS}, alternating grounds",
-              _signal_gnd_pins(_STACK_SIGNALS), 4.06, footprint_mm=_STACK_FP,
-              leaves_box=False, interface="STACK", source=_INTERBOARD),
+              _signal_gnd_pins(_STACK_SIGNALS), 8.5, height_confirmed=True,
+              footprint_mm=_STACK_SOCKET_FP, contact_a=3.0, lead_mm=3.0,
+              leaves_box=False, interface="STACK",
+              source=f"The SOCKET, LCSC C42163143: HC-PM254-8.5H-2x28PZ, body "
+                     f"8.5 ±0.15 tall and (B+0.4)±0.3 long by 5.0 ±0.15 — ⛔ "
+                     f"5.0, not the 5.08 the pitch suggests. Tails 3.0 ±0.2, "
+                     f"ø1.02 holes ({_DS_HC_PM} p.1). This is the pair that STOPS: 8.5 + 2.54 = "
+                     f"11.04 mm, 0.04 mm more than PWR-LOGIC's 11.00, so "
+                     f"J307's insulators sit that far apart. {_INTERBOARD}"),
     Connector("J312", "OUTPUTS",
-              f"CTRL, OUTPUTS side, on top of the board: 2 × {_CTRL_ROWS}, "
-              f"alternating grounds", _signal_gnd_pins(_CTRL_SIGNALS), 2.54,
-              footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
-              source=_CABLED),
+              f"CTRL, OUTPUTS side, on top of the board: 2 × {_CTRL_WAYS // 2}, "
+              f"a ground on both sides of every signal", _bus(_CTRL_NETS),
+              _DC3_H, footprint_mm=_CTRL_FP, leaves_box=False, interface="CTRL",
+              hole_mm=1.0, contact_a=1.5, keyed=_DC3_KEY, lead_mm=_DC3_LEAD,
+              source=f"{_CABLED}. {_DC3}. {_MATED_UNKNOWN}"),
     # ── LOGIC ───────────────────────────────────────────────────────────────
     _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
@@ -2573,13 +2794,28 @@ _CONNECTORS = (
     Connector("J406", "LOGIC",
               f"STACK, LOGIC side, under the board: 2 × {_STACK_ROWS}, "
               f"alternating grounds", _signal_gnd_pins(_STACK_SIGNALS), 2.54,
-              footprint_mm=_STACK_FP, leaves_box=False, interface="STACK",
-              side="bottom", source=_INTERBOARD),
+              height_confirmed=True, footprint_mm=_STACK_HEADER_FP,
+              contact_a=3.0, lead_mm=3.0,
+              leaves_box=False, interface="STACK", side="bottom",
+              source=f"The HEADER, LCSC C2333: a BOOMELE 2.54-2*40P strip CUT "
+                     f"TO 2×28, insulator 2.54 (⚠️ not Hong Cheng's 2.5 — the "
+                     f"0.04 mm that makes this pair the stop), pins 6.00 +0.2 "
+                     f"above it and 3.0 ±0.2 below the board, body N × 2.54 "
+                     f"long because the cut falls on the grid, 5.0 ±0.1 wide, "
+                     f"ø1.0 holes ({_DS_BOOM} p.1). 3 A, 550 V AC, 20 mΩ, -55…+105 °C, PBT. "
+                     f"{_INTERBOARD}"),
     Connector("J407", "LOGIC", "PWR-LOGIC, LOGIC side, under the board",
-              _bus(_PWRLOGIC_NETS), 2.54,
-              footprint_mm=(2.54 * len(_PWRLOGIC_NETS), 2.54),
+              _bus(_PWRLOGIC_NETS), 2.5, height_confirmed=True,
+              footprint_mm=hc_body(len(_PWRLOGIC_NETS), rows=1, socket=False),
+              contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="PWR-LOGIC", side="bottom",
-              source=_INTERBOARD),
+              source=f"The HEADER, LCSC C27985193: HC-PZ254-11.5L-1x9PZ, "
+                     f"insulator 2.5 (its H) with 6.0 mm of pin into the "
+                     f"socket and 3.0 ±0.2 below the board, body B ±0.3 long "
+                     f"by 2.50 wide, ø1.02 holes ({_DS_HC_PZ} p.1). 2.5 + 8.5 = 11.00 mm, "
+                     f"insulator to insulator: a 6.0 mm pin in an 8.5 mm bore "
+                     f"has 2.5 mm to spare, so the PLASTIC is the stop. "
+                     f"{_INTERBOARD}"),
     Connector("J408", "LOGIC", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "
               "land on UART0 — first flash, the console, and recovery when OTA "
               "fails (hold IO0 low, pulse EN, flash over UART0)", (
@@ -2719,6 +2955,56 @@ _HAND_BY_MPN = {
 }
 
 
+#: The board-to-board STANDOFFS, and the gap each one sets (IO-20, IO-21).
+#: (LCSC, maker part, how many, the gap it sets in mm, what it does).
+#:
+#: ⬜ NOT `Part`s, and that is the current state rather than an oversight:
+#: `board_params` knows a thing that STANDS IN a gap, which it clears by
+#: CLEARANCE, and a connector PAIR whose mated bodies ARE the gap. A standoff
+#: is the second kind and has no entry in that model yet, so adding it as an
+#: ordinary part would derive a gap 1.0 mm taller than the standoff and fail
+#: the 11.00 mm connector stop the nylon one is deliberately shimmed under. The
+#: mounting holes themselves are already board geometry (`board_params`
+#: subtracts the four M3 corners); this table is what goes through them.
+#: ⭐ IO-21, owner 2026-09-21: the brass posts are bonded to GND at the OUTPUTS
+#: END ONLY, landing on a copper-free pad at POWER. Defined potential beside
+#: POWER's 84 V pins, and NO second path between the boards -- ⛔ bonding both
+#: ends would put the return on two paths, the 16 AWG conductor the budget
+#: sizes and an unrated one through brass threads and screw torque that nothing
+#: checks and that changes as fasteners age.
+STANDOFFS = (
+    ("C775781", "Shuntian M3X30", 4, 30.0,
+     "POWER → OUTPUTS: brass, female-female, 30.0 ±0.2 (inspected 29.96-29.98), "
+     "hex 4.7 AF. ⭐ This is what sets that gap: no connector spans it any more. "
+     "BRASS, not nylon -- rigidity is the standoffs' whole job now, nylon creeps "
+     "under preload so the screws back off, LCSC's nylon M3 range stops at 20 mm, "
+     "and 94V-2 is the weakest flame class to put on the 84 V board. ⚠️ The cost "
+     "is a post at chassis potential beside POWER's 84 V pins: pay it in layout "
+     "with a copper keep-out annulus (≈3.5 mm radius, both layers, mask over, no "
+     "HV net inside it) around every POWER mounting hole. Bonded to GND at the "
+     "OUTPUTS end only (IO-21)"),
+    ("C118174", "HIWA TP-11", 4, 11.0,
+     "OUTPUTS → LOGIC: nylon 66 94V-2, M3×11+6 male-female, hex 5.5 AF. ⚠️ Its "
+     "±0.5 mm is the whole problem: 11.0 nominal against an 11.00 mm CONNECTOR "
+     "stop means 11.5 holds the boards apart and un-seats both connectors by "
+     "0.5 mm of their 6.0 mm engagement -- 8 % of the wipe, on the stamped "
+     "contacts -- while 10.5 fights them and bows the boards. ✅ So it is "
+     "specified DELIBERATELY SHORT and shimmed to fit: the CONNECTORS set this "
+     "gap and the standoff only stops the boards flexing apart. Measure the "
+     "delivered length before fitting"),
+    ("C115937", "HIWA PN-3", 8, 0.5,
+     "the shim: a 0.5 mm nylon M3 nut/washer, to take up whatever the TP-11 "
+     "measures short. Nylon, so it cannot bridge anything"),
+)
+
+
+def standoffs() -> tuple[tuple, ...]:
+    """The board-to-board standoffs. ⚠️ `STANDOFFS` is the one home for them;
+    ⬜ `board_params` does not read it yet, so the derived POWER → OUTPUTS gap
+    is still the one the obstructions need, not the 30.0 mm these set."""
+    return STANDOFFS
+
+
 def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     """Parts with their LCSC part from _FAB_BY_MPN.  An entry no part uses is
     an error: a stale choice would read as a checked one."""
@@ -2748,12 +3034,31 @@ def _with_fab(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     return tuple(out)
 
 
-#: Connectors, by refdes: (LCSC, maker part, note), or "hand" and why. Empty
-#: today, and that is a statement: every harness connector takes its codes from
-#: `_TERMINALS` (its pitch and size), and the inter-board connectors are absent
-#: on purpose -- their family is the owner's open decision. A connector that is
-#: neither goes here.
-_FAB_CONN: dict[str, tuple[str, ...]] = {}
+#: Connectors by refdes, for everything that is not a harness terminal: (LCSC,
+#: maker part, who fits it, note), or ("hand", why). A harness terminal takes
+#: its codes from `_TERMINALS` instead, by pitch and size.
+#: ⚠️ `loose` here means the same as it does for a part: ordered from LCSC with
+#: the boards and fitted by the owner, and JLC is told not to place it.
+_FAB_CONN: dict[str, tuple[str, ...]] = {
+    "J202": ("C594237", "JST B4P(5-3)-VH(LF)(SN)", "loose",
+             "the keyed 10 A power header at each end of the loom"),
+    "J311": ("C594237", "JST B4P(5-3)-VH(LF)(SN)", "loose",
+             "the keyed 10 A power header at each end of the loom"),
+    "J105": ("C5144580", "ZHOURI DC3-2.54-24PAS", "loose",
+             "the shrouded box header the ribbon plugs into. ⚠️ 180 in stock "
+             "and nothing behind it: buy spares with the first order"),
+    "J312": ("C5144580", "ZHOURI DC3-2.54-24PAS", "loose",
+             "the shrouded box header the ribbon plugs into"),
+    "J307": ("C22373895", "Hong Cheng HC-PM254-8.5H-1x9PZ", "jlc",
+             "the 8.5 mm socket half of the 11.00 mm pair"),
+    "J407": ("C27985193", "Hong Cheng HC-PZ254-11.5L-1x9PZ", "jlc",
+             "the 2.5 mm header half, under LOGIC"),
+    "J308": ("C42163143", "Hong Cheng HC-PM254-8.5H-2x28PZ", "jlc",
+             "the 8.5 mm socket half of the 11.04 mm pair"),
+    "J406": ("C2333", "BOOMELE(Boom Precision Elec) 2.54-2*40P", "loose",
+             "a 2×40 strip CUT TO 2×28 and soldered into LOGIC's underside: "
+             "the cutting is why JLC cannot place it"),
+}
 
 
 def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
@@ -2770,9 +3075,12 @@ def _with_fab_conn(connectors: tuple[Connector, ...]) -> tuple[Connector, ...]:
         elif fab and fab[0] == "hand":
             c = replace(c, assembly="hand", source=f"{c.source}. HAND-SOLDERED: {fab[1]}")
         elif fab:
-            lcsc, maker, note = fab
-            c = replace(c, lcsc=lcsc, assembly="jlc",
-                        source=f"{c.source}. LCSC {lcsc}: {maker}, JLC Extended; {note}")
+            lcsc, maker, how, note = fab
+            fits = ("ordered loose and fitted by the owner" if how == "loose"
+                    else "placed by JLC")
+            c = replace(c, lcsc=lcsc, assembly=how,
+                        source=f"{c.source}. LCSC {lcsc}: {maker}, JLC "
+                               f"Extended, {fits}; {note}")
         out.append(c)
     stale = set(_FAB_CONN) - {c.refdes for c in connectors}
     if stale:
@@ -2792,6 +3100,8 @@ def lcsc_catalogue() -> dict[str, str]:
     for fab in _FAB_CONN.values():
         if fab[0] != "hand":
             out[fab[0]] = fab[1]
+    for lcsc, maker, *_ in STANDOFFS:
+        out[lcsc] = maker
     return out
 
 

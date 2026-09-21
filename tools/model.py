@@ -175,6 +175,23 @@ class Connector:
     #: A land drawn from its maker's drawing (`drawn_footprints.LANDS`), for a
     #: connector that is copper only: a Tag-Connect pad set.
     land: str = ""
+    #: The POSITIVE keying that makes a wrong mate mechanically impossible,
+    #: named from the maker's drawing (a polarising notch, an omitted circuit,
+    #: a latch that only closes one way). "" says nothing prevents it.
+    #: ⛔ A CABLED crossing has no other defence: a mated pair is soldered down
+    #: facing its own half at a fixed spacing and survives being mated reversed
+    #: by being a palindrome, while a loom is presented by hand every time it
+    #: is serviced and can be offered to its header either way round. Rule
+    #: BUS-ORDER asks a pair for the palindrome and a cable for this.
+    keyed: str = ""
+    #: Continuous current ONE contact may carry, from the maker's drawing, with
+    #: `source` saying whether that figure is derated when every circuit is
+    #: loaded. None: the drawing states none, so nothing may be assumed.
+    contact_a: float | None = None
+    #: The drill its maker's PCB layout calls for, when the generic 1.0 mm of a
+    #: 0.64 mm square post does not take its post (a 1.14 mm VH post needs
+    #: 1.65). None: the generic land pattern.
+    hole_mm: float | None = None
 
 
 @dataclass(frozen=True)
