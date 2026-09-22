@@ -36,8 +36,12 @@ ROW_FACE = {
 }
 #: The 3.81 mm pitch is shared by two rows on purpose, so the SIZES must not
 #: be: a plug of one row seats in any header of its pitch at least its size.
-TWELVE_VOLT_ROW = {"J301", "J302", "J303", "J304", "J305", "J313"}
-INPUT_ROW = {"J306", "J402", "J403", "J409", "J410"}
+#: Which headers those rows hold is READ OFF `board_fit.edge_budget`, never
+#: typed here: the 12 V row is the face on top of OUTPUTS and the INPUTS row
+#: the face on top of LOGIC (IO-6), so a terminal added to either face is in
+#: the size check the moment it is in the row.
+TWELVE_VOLT_FACE = ("OUTPUTS", "top")
+INPUT_FACE = ("LOGIC", "top")
 
 #: A pitch owned by ONE group: nothing outside it may use that pitch, because a
 #: plug seats in any header of its own pitch that is at least its size.
@@ -171,6 +175,16 @@ def test_a_class_a_network_left_on_another_board_is_refused():
     assert len(problems) == 1
 
 
+def row_sizes(d, face):
+    """{refdes: (pitch, positions)} of every harness header in the row on
+    `face`, read off `edge_budget` -- the same grouping board_fit measures."""
+    edge = next((e for e in bf.edge_budget(d) if (e.board, e.side) == face), None)
+    if edge is None:
+        return {}
+    return {r: (d.connector(r).pitch_mm, len(d.connector(r).pins))
+            for r in edge.headers}
+
+
 def shared_sizes(d):
     """(pitch, positions) that a 12 V terminal and an input terminal both use.
 
@@ -189,10 +203,20 @@ def shared_sizes(d):
     Neither hurts, which is exactly why the dangerous groups got pitches of
     their own instead.
     """
-    sizes = {name: {(d.connector(r).pitch_mm, len(d.connector(r).pins))
-                    for r in row}
-             for name, row in (("12 V", TWELVE_VOLT_ROW), ("inputs", INPUT_ROW))}
-    return sizes["12 V"] & sizes["inputs"]
+    return (set(row_sizes(d, TWELVE_VOLT_FACE).values())
+            & set(row_sizes(d, INPUT_FACE).values()))
+
+
+def repeated_sizes(d):
+    """{(pitch, positions): (refdes, ...)} for every size more than one 12 V
+    terminal uses. Two 12 V terminals of one size swap freely, and the row's
+    polarity conventions differ -- [G,+,+,+], [+,G,+,G], [+,-,+,-] -- so the
+    swap is not an output into its own current limit, it is a load driven
+    REVERSED, or a lamp common held at +12 V (IO-24)."""
+    by_size = {}
+    for r, size in row_sizes(d, TWELVE_VOLT_FACE).items():
+        by_size.setdefault(size, []).append(r)
+    return {size: tuple(refs) for size, refs in by_size.items() if len(refs) > 1}
 
 
 def test_no_size_is_shared_between_the_12_v_row_and_the_inputs_row():
@@ -206,6 +230,55 @@ def test_a_12_v_terminal_the_size_of_an_input_terminal_is_caught():
     j = D.connector("J313")
     bad = D.replace_connector("J313", pins=j.pins + (ConnPin("8", "GND"),))
     assert shared_sizes(bad) == {(3.81, 8)}
+
+
+def test_a_terminal_is_in_the_size_check_the_moment_it_is_in_the_row():
+    """The rows are read off `edge_budget`, so there is no list a new 12 V
+    terminal can be left out of. J314 is the 5 V terminal UNDER OUTPUTS, in no
+    row this file ever named: stood on top of the board at the 3.81 mm pitch
+    and eight ways, it is in the 12 V row and shares J409's and J410's size."""
+    j = D.connector("J314")
+    bad = D.replace_connector("J314", side="top", pitch_mm=3.81)
+    assert "J314" in row_sizes(bad, TWELVE_VOLT_FACE)
+    assert shared_sizes(bad) == {(3.81, len(j.pins))} == {(3.81, 8)}
+
+
+def _grown(d, refdes, positions):
+    """`refdes` with empty ways added up to `positions`, as J403 carries its
+    sixth: the plug of a smaller terminal seats in it offset, the plug of the
+    same terminal seats nowhere else once every plug is in."""
+    c = d.connector(refdes)
+    extra = tuple(ConnPin(str(i), "", "empty way") for i in range(len(c.pins) + 1, positions + 1))
+    return d.replace_connector(refdes, pins=c.pins + extra,
+                               footprint_mm=(round(positions * 3.81 + 10.48, 2),
+                                             c.footprint_mm[1]))
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "M7 / IO-24: J301, J303 and J305 are all 3.81 × 4 with three polarity "
+    "conventions. The fix -- two of them grow an empty way -- is blocked on an "
+    "owner decision: every size 2-9 at 3.81 mm is taken, the 11P Kangnex header "
+    "(C3030059) is stock 0, and 10 + 12 puts the 12 V row at 220.28 mm, 2.48 mm "
+    "over the IO-14 90 % tripwire in tests/test_board_params.py. Strict: the "
+    "moment the sizes land this XPASSES and the marker comes off."))
+def test_no_two_12_v_terminals_share_a_size():
+    assert repeated_sizes(D) == {}
+
+
+def test_two_12_v_terminals_of_one_size_are_caught():
+    """⚠️ THE MUTATIONS for the check above, on a design where the sizes are
+    distinct -- J303 grown to ten ways and J305 to twelve, the two smallest
+    sizes nothing else at 3.81 mm uses. Undo one and the check names both
+    terminals that share the size; the pre-fix netlist names all three."""
+    fixed = _grown(_grown(D, "J303", 10), "J305", 12)
+    assert repeated_sizes(fixed) == {}
+    assert shared_sizes(fixed) == set()
+    # The four conductors each carries, empty ways off: the pre-fix size.
+    four = {r: fixed.connector(r).pins[:4] for r in ("J303", "J305")}
+    one_back = fixed.replace_connector("J305", pins=four["J305"])
+    assert repeated_sizes(one_back) == {(3.81, 4): ("J301", "J305")}
+    pre_fix = one_back.replace_connector("J303", pins=four["J303"])
+    assert repeated_sizes(pre_fix) == {(3.81, 4): ("J301", "J303", "J305")}
 
 
 def test_a_row_is_as_long_as_its_headers_and_the_gaps_between_them():
