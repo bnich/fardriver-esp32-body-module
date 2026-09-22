@@ -720,7 +720,8 @@ def test_check_routing_exits_zero_on_what_the_tool_wrote(placed_project, ix, tmp
     src = str(placed_project)
     assert route.main(["--rules", "--file", src, "--out", str(out)]) == 0
     assert route.main(["--pours", "--file", str(out), "--out", str(out)]) == 0
-    assert route.main(["--heavy", "--file", str(out), "--out", str(out)]) == 0
+    assert route.main(["--heavy", "--file", str(out), "--out", str(out),
+                       "--docs", str(tmp_path / "docs")]) == 0
     capsys.readouterr()
     assert route.main(["--check-routing", "--file", str(out)]) == 0
     assert "passes every class rule" in capsys.readouterr().out
@@ -742,3 +743,213 @@ def test_draw_writes_one_picture_per_board(routed, ix, tmp_path):
     paths = route.draw(project, pl, ix, tmp_path)
     assert len(paths) == len(bp.STACK_ORDER)
     assert all(p.exists() and p.stat().st_size > 1000 for p in paths)
+
+
+# --- IO-29: the clearance between two HV nets is their own voltage difference --------
+def test_the_ipc_table_is_the_standard_s_rows():
+    """IPC-2221B (February 2012) Table 6-1, column B2 -- External Conductors,
+    uncoated, sea level to 3050 m -- read against "Voltage Between Conductors
+    (DC or AC Peaks)". A voltage between two integer rows takes the higher."""
+    for volts, mm in ((0, 0.1), (15, 0.1), (16, 0.1), (30, 0.1), (31, 0.6), (50, 0.6),
+                      (100, 0.6), (150, 0.6), (151, 1.25), (170, 1.25), (250, 1.25),
+                      (300, 1.25), (500, 2.5)):
+        assert route.ipc_clearance_mm(volts) == mm, volts
+    assert route.ipc_clearance_mm(15.5) == 0.1          # between rows: the higher one
+    assert route.ipc_clearance_mm(150.5) == 1.25
+    assert route.ipc_clearance_mm(600) == pytest.approx(1.5)   # 0.0025 mm/V over 500
+
+
+def test_ipc_table_self_check_fires(monkeypatch):
+    """⛔ A check is not a check until a test shows it firing. Break the row the
+    160 V do-not-exceed falls in and the table no longer reproduces the HV
+    class's 1.25 mm, which `place`'s check 7 also stands on."""
+    route._check_ipc_table()                       # the real table is consistent
+    monkeypatch.setattr(route, "IPC_2221B_B2",
+                        ((15, 0.1), (30, 0.1), (50, 0.6), (100, 0.6), (150, 0.6),
+                         (170, 0.6), (250, 1.25), (300, 1.25), (500, 2.5)))
+    with pytest.raises(RuntimeError, match="check 7"):
+        route._check_ipc_table()
+
+
+def test_three_pairs_by_hand():
+    """HAND, from the node voltages `soft_start` derives:
+
+      * `D13_GATE` to `HV_BPLUS` -- the gate against its own source. The widest
+        they ever stand apart is D102's 15 V clamp (at a 160 V pack, the
+        unclamped divider would give 25). 15 V is IPC-2221B B2's 0-15 row →
+        **0.1 mm**, and the pair the decision was written about.
+      * `HV_BPLUS` to `GND` -- pack voltage against low-voltage copper. `GND`
+        is not in the class, so it is the 160 V figure → **1.25 mm**.
+      * `HV_C1_P` to `HV_C1_N` -- the two sides of C201, the bulk cap across
+        the brick's input. They are a whole pack apart with the key on, 160 V
+        at the ceiling → **1.25 mm**. ⚠️ `HV_C1_N` sits at 0 V DC and still
+        gets the pack figure here, because the voltage BETWEEN them is what the
+        table asks for.
+    """
+    assert route.hv_pair_volts("D13_GATE", "HV_BPLUS") == 15.0
+    assert route.pair_clearance("D13_GATE", "HV_BPLUS") == 0.1
+    assert route.pair_clearance("HV_BPLUS", "GND") == layout_rules.HV_CLEARANCE_MM == 1.25
+    assert route.hv_pair_volts("HV_C1_P", "HV_C1_N") == 160.0
+    assert route.pair_clearance("HV_C1_P", "HV_C1_N") == 1.25
+
+
+def test_two_nets_that_swing_together_are_not_a_pack_apart():
+    """⛔ The difference is taken inside each operating point. `HV_SW` and `KSW`
+    each swing 0 to 160 V, and are at the same voltage in every world -- an
+    envelope of each would have called them 160 V apart."""
+    assert route.hv_pair_volts("HV_SW", "KSW") == 0.0
+    assert route.pair_clearance("HV_SW", "KSW") == 0.1
+
+
+def test_the_hold_up_pair_keeps_the_full_figure():
+    """⭐ D201 blocks, so during the ride-out `HV_C2_HOLD` is near pack voltage
+    with `HV_SW` already at 0. Steady states alone would have read these two as
+    one diode drop apart and relaxed the copper between them to 0.1 mm."""
+    assert route.hv_pair_volts("HV_SW", "HV_C2_HOLD") == 160.0
+    assert route.pair_clearance("HV_SW", "HV_C2_HOLD") == 1.25
+
+
+def test_every_hv_net_has_a_derived_voltage(ix, design):
+    nodes = route.hv_node_voltages(design)
+    for board in bp.STACK_ORDER:
+        assert set(ix.hv.get(board, ())) <= set(nodes), board
+    assert set(nodes) == set(layout_rules.hv_nets(design, "POWER"))
+
+
+def test_an_hv_net_with_no_derived_voltage_is_refused(monkeypatch, design):
+    """⛔ A new 84 V net nothing derives must FAIL, never fall through to a
+    relaxed figure by default."""
+    from tools import soft_start
+    real = soft_start.hv_node_ranges
+
+    def short(d=None):
+        out = dict(real(d))
+        out.pop("HV_SW")
+        return out
+    monkeypatch.setattr(soft_start, "hv_node_ranges", short)
+    monkeypatch.setattr(route, "_HV_VOLTS", {})
+    with pytest.raises(RuntimeError, match="HV_SW.*no derived node voltage"):
+        route.hv_node_voltages(design)
+
+
+def test_required_clearance_keeps_the_floor_off_the_hv_branch(ix):
+    """⛔ The floor is the run's own class figure, and applying it to an HV pair
+    would undo IO-29: `max(1.25, 0.1)` is 1.25."""
+    assert route.required_clearance(ix, "POWER", "D13_GATE", "HV_BPLUS",
+                                    floor=route.HV.clearance_mm) == 0.1
+    assert route.required_clearance(ix, "POWER", "V12", "GND", floor=route.PWR12.clearance_mm) \
+        == route.PWR12.clearance_mm
+
+
+def _clear_spot(c, frame, want, need=3.0):
+    """A (u, v) on layer 1 with nothing of anybody's within `need` mm of a
+    `want` mm long strip there -- so a mutation measures itself and not the
+    placement it happened to land on."""
+    for v in [x / 2 for x in range(4, int(frame.width * 2) - 4)]:
+        for u in [x for x in range(2, int(frame.length) - int(want) - 2)]:
+            box = place.Box(u - need, v - need, u + want + need, v + need)
+            if not any(it.box.overlaps(box) for it in c.on_layer(1)):
+                return u, v
+    raise AssertionError("no clear spot on POWER layer 1 for the mutation")
+
+
+def _hv_pair_at(project, pl, ix, a, b, gap_mm):
+    """Lay two segments `gap_mm` apart, edge to edge, on clear board -- the
+    mutation both clearance tests are built on. The geometry is identical every
+    time; only the two NETS change, which is what makes the verdict a statement
+    about the voltage between them."""
+    frame = pl.frame("POWER")
+    c = route.copper(project, pl, ix, "POWER")
+    w, length = 0.2, 10.0
+    u, v = _clear_spot(c, frame, length)
+    _add(project, "POWER", "LINE", _line(frame, a, 1, u, v, u + length, v, w))
+    _add(project, "POWER", "LINE",
+         _line(frame, b, 1, u, v + w + gap_mm, u + length, v + w + gap_mm, w))
+
+
+def test_a_gate_network_pair_at_half_a_millimetre_passes(fresh, ix):
+    """⭐ THE MUTATION IO-29 ASKS FOR, first half. Two HV-class segments 0.5 mm
+    apart: under the class rule both would have failed at 1.25 mm. `D13_GATE`
+    against `HV_BPLUS` is the zener's 15 V, which B2 meets at 0.1 mm."""
+    project, pl = fresh
+    _hv_pair_at(project, pl, ix, "D13_GATE", "HV_BPLUS", 0.5)
+    assert [p for p in _problems(project, pl, ix, "POWER") if "clearance" in p] == []
+
+
+def test_the_same_geometry_fails_when_the_voltage_says_so(fresh, ix):
+    """⭐ And the other half: the SAME two segments in the same place, on the
+    two sides of C201 instead. A whole pack stands across them, so 0.5 mm is
+    short of the 1.25 mm B2 asks for -- the verdict is the voltage, not the
+    class, and the class is HV both times."""
+    project, pl = fresh
+    _hv_pair_at(project, pl, ix, "HV_C1_P", "HV_C1_N", 0.5)
+    bad = [p for p in _problems(project, pl, ix, "POWER") if "class HV clearance" in p]
+    assert bad, "a 160 V pair at 0.5 mm has to fail"
+    assert "needs 1.25 mm" in bad[0] and "160.0 V between them" in bad[0], bad[0]
+
+
+def test_a_middling_pair_gets_the_middling_row(fresh, ix):
+    """Not just the two ends: `D13_GATE` to `D13_PD_MID` is 72.5 V, IPC-2221B
+    B2's 51-100 row, 0.6 mm -- so 0.5 mm fails and the message says 0.60."""
+    project, pl = fresh
+    _hv_pair_at(project, pl, ix, "D13_GATE", "D13_PD_MID", 0.5)
+    bad = [p for p in _problems(project, pl, ix, "POWER") if "class HV clearance" in p]
+    assert bad and "needs 0.60 mm" in bad[0], bad
+
+
+# --- IO-29: the DRC exception list ---------------------------------------------------
+def test_the_exception_list_holds_the_joins_the_editor_will_flag(routed, ix):
+    """One line per pair inside the editor's 1.25 mm that IO-29 accepts, with
+    the voltage and the IPC figure it meets."""
+    project, pl = routed
+    c = route.copper(project, pl, ix, "POWER")
+    rows = route.drc_exceptions(c, ix, "POWER")
+    assert rows, "no accepted join at all -- the list would prove nothing"
+    hv = set(ix.hv["POWER"])
+    for na, nb, pa, pb, layers, g, volts, want in rows:
+        assert na in hv and nb in hv                    # never an HV-to-LV join
+        assert g < layout_rules.HV_CLEARANCE_MM         # the editor WILL flag it
+        assert g >= want - route.TOL                    # and IO-29 accepts it
+        assert route.ipc_clearance_mm(volts) == want
+        assert layers and pa and pb
+
+
+def test_a_real_hv_violation_never_reaches_the_exception_list(fresh, ix):
+    """⛔ THE MUTATION. Pack voltage 0.5 mm from `GND` is a defect, not an
+    exception: it must be absent from the list and present in the check."""
+    project, pl = fresh
+    _hv_pair_at(project, pl, ix, "HV_BPLUS", "GND", 0.5)
+    c = route.copper(project, pl, ix, "POWER")
+    rows = route.drc_exceptions(c, ix, "POWER")
+    assert not [r for r in rows if "GND" in (r[0], r[1])]
+    assert [p for p in _problems(project, pl, ix, "POWER") if "class HV clearance" in p]
+
+
+def test_the_exception_list_includes_pad_to_pad(routed, ix):
+    """⚠️ Unlike the class check. `--rules` raises every cell of the editor's
+    clearance matrix, so an 0603's own two pads on different 84 V nets ARE a
+    DRC hit there, and the owner needs them listed."""
+    project, pl = routed
+    c = route.copper(project, pl, ix, "POWER")
+    rows = route.drc_exceptions(c, ix, "POWER")
+    pads = [r for r in rows if "." in r[2] and "." in r[3]]
+    assert pads, "no pad-to-pad row: the sweep is not looking at land patterns"
+
+
+def test_heavy_writes_the_exception_document(placed_project, ix, tmp_path, monkeypatch, capsys):
+    """Generated, like the placement tables: regenerated on every `--heavy`,
+    and the file says an unlisted DRC hit is a defect."""
+    monkeypatch.setattr(place, "editor_running", lambda: False)
+    out, docs = tmp_path / "w.eprj2", tmp_path / "docs"
+    src = str(placed_project)
+    assert route.main(["--rules", "--file", src, "--out", str(out)]) == 0
+    assert route.main(["--pours", "--file", str(out), "--out", str(out)]) == 0
+    assert route.main(["--heavy", "--file", str(out), "--out", str(out),
+                       "--docs", str(docs)]) == 0
+    capsys.readouterr()
+    path = docs / "POWER-drc-exceptions.md"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert "is a defect" in text and "IPC-2221B B2" in text
+    # no board without pack voltage gets one
+    assert not (docs / "LOGIC-drc-exceptions.md").exists()

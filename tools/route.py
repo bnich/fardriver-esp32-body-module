@@ -4,7 +4,7 @@
     python3 -m tools.route --check-routing [--board BOARD ...] [--file PATH]
     python3 -m tools.route --rules   [--board BOARD ...] [--file PATH] [--out PATH]
     python3 -m tools.route --pours   [--board BOARD ...] [--file PATH] [--out PATH]
-    python3 -m tools.route --heavy   [--board BOARD ...] [--file PATH] [--out PATH]
+    python3 -m tools.route --heavy   [--board BOARD ...] [--file PATH] [--out PATH] [--docs DIR]
     python3 -m tools.route --strip-routing BOARD [BOARD ...] [--file PATH] [--out PATH]
     python3 -m tools.route --draw DIR [--file PATH]          # and with any mode
 
@@ -20,6 +20,15 @@ runs, and the check that reads a saved route back and refuses it.
 copper whose width and path the rules DETERMINE -- an 8.47 A bus has one
 shape -- and the editor's autorouter does the ~250 signal nets afterwards,
 inside those rules.  `--check-routing` then gates the result.
+
+⭐ THE TOOL IS THE HV AUTHORITY (IO-29).  IPC-2221B Table 6-1 sets clearance by
+the voltage BETWEEN two conductors, and the editor's rules bind a clearance to
+a NET, so the two cannot be made to agree.  `--rules` therefore leaves the HV
+class at 1.25 mm to everything -- which is what keeps the autorouter's
+low-voltage copper away from pack voltage -- while `pair_clearance` holds two
+84 V nets to their own difference, `--heavy` routes to it, `--check-routing`
+checks to it, and `--heavy` writes the joins the editor will flag and the
+decision accepts to `layout/<BOARD>-drc-exceptions.md`.
 
 THE FRAME.  `place.Frame` maps the file's portrait outline to the board frame
 (u along the 242 mm length, v across, v = 0 the connector face).  Everything
@@ -44,7 +53,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools import board_params as bp, eprj2, layout_rules, netlist, place  # noqa: E402
+from tools import board_params as bp, eprj2, layout_rules, netlist, place, soft_start  # noqa: E402
 
 MIL_PER_MM = place.MIL_PER_MM
 TOL = place.TOL
@@ -126,10 +135,60 @@ SENSE = NetClass("SENSE", 0.25, 0.3, "an analog input: clearance is the whole po
 #: the JLCPCB capability template already holds.
 DEFAULT = NetClass("default", 0.2, 0.2, "a signal; JLC's 4-layer capability")
 
+#: IPC-2221B (February 2012) Table 6-1, column B2 -- External Conductors,
+#: uncoated, sea level to 3050 m -- as (top of the band in volts, minimum
+#: spacing mm).  ⭐ The table's row is "Voltage Between Conductors (DC or AC
+#: Peaks)": the clearance is set by the difference between the two conductors,
+#: which is IO-29's whole point.  Written out in full, bands that share a
+#: figure included, so the boundaries are visible and a moved node voltage
+#: lands in the right row by itself.  Above 500 V the standard gives a
+#: per-volt figure instead; it is unreachable here and is carried so the table
+#: is the standard's and not a summary of it.
+#: ⚠️ B2 -- external and uncoated -- is what this project uses on INNER layers
+#: too (B1 would allow 0.05-0.1 mm), the same conservative reading
+#: `layout_rules` already takes, and IO-29 keeps it.
+IPC_2221B_B2 = ((15, 0.1), (30, 0.1), (50, 0.6), (100, 0.6), (150, 0.6),
+                (170, 1.25), (250, 1.25), (300, 1.25), (500, 2.5))
+#: Over 500 V, IPC-2221B B2 is 0.0025 mm per volt.
+IPC_2221B_B2_PER_VOLT = 0.0025
+
+
+def ipc_clearance_mm(volts):
+    """Minimum external-conductor spacing, mm, for `volts` BETWEEN two
+    conductors.  A voltage that falls between two integer rows takes the higher
+    row: the standard tabulates whole volts, and rounding the other way would
+    buy clearance with arithmetic."""
+    for top, mm in IPC_2221B_B2:
+        if volts <= top:
+            return mm
+    return volts * IPC_2221B_B2_PER_VOLT
+
+
+def _check_ipc_table():
+    """The table has to reproduce the figure the project already stands on.
+
+    ⛔ `layout_rules.HV_CLEARANCE_MM` is the HV class's 1.25 mm, chosen as B2
+    at the 160 V do-not-exceed, and `place`'s check 7 uses the same constant as
+    a placement proxy.  If this table says anything else at that voltage, one
+    of the two is wrong and neither should be used -- so it is checked at
+    import rather than left to be found on a board.  ✔ Proven to fire:
+    `tests/test_route.py::test_ipc_table_self_check_fires`.
+    """
+    ceiling = soft_start.pack_ceiling_v()
+    at_ceiling = ipc_clearance_mm(ceiling)
+    if abs(at_ceiling - layout_rules.HV_CLEARANCE_MM) > 1e-9:
+        raise RuntimeError(
+            f"the IPC-2221B B2 table gives {at_ceiling} mm at the {ceiling:g} V "
+            f"do-not-exceed, but the HV class -- and place.py's check 7 with it -- "
+            f"stands on {layout_rules.HV_CLEARANCE_MM} mm")
+
+
 #: Strongest first.  ⚠️ The order is load-bearing: `HV_C1_P` and `HV_C2_HOLD`
 #: are in `rules.rails(d)` as well as in the HV set, and a net that reaches the
 #: RAIL row first would be routed at 0.6 mm and 0.25 mm clearance at 84 V.
 CLASS_ORDER = (HV, PWR12, PWR5AUX, CH12, CH5, DIFF, SENSE, RAIL)
+
+_check_ipc_table()
 
 #: A `SENSE` segment keeps this from any `PWR12`, `PWR5AUX` or `CH12` segment
 #: on the same layer (PROCESS.md R3).  1.0 mm is four times the 0.25 mm the
@@ -248,6 +307,102 @@ def heavy_classes():
     determined by the current they carry and the pads they join, so a tool can
     write them.  Everything else is the autorouter's."""
     return (HV, PWR12, PWR5AUX, CH12, CH5)
+
+
+# --- IO-29: the clearance between two HV nets is their own difference ---------------
+#: {net: ((low, high) volts at each of `soft_start.operating_points`)} for every
+#: net in the HV class, built once.
+_HV_VOLTS: dict = {}
+
+
+def hv_node_voltages(d=None):
+    """The HV class's nodes and what they sit at, from `soft_start`.
+
+    ⛔ THE VOLTAGES ARE NOT TYPED HERE AND MUST NOT BE.  `soft_start` walks the
+    netlist for them -- the switch, the chokes, the blocking diode, the divider
+    strings' own resistor values -- so a resistor changed there moves the node,
+    the IPC band it falls in and the copper spacing with it.  This function's
+    only job is to take the nets the HV class actually holds and REFUSE if one
+    of them has no derived voltage: a new 84 V net that nothing derives would
+    otherwise fall through `pair_clearance`'s guard and be given a relaxed
+    figure by default.  ✔ Proven to fire: `test_route.py::
+    test_an_hv_net_with_no_derived_voltage_is_refused`.
+    """
+    if not _HV_VOLTS:
+        d = d or netlist.current()
+        derived = soft_start.hv_node_ranges(d)
+        wanted = {n for board in bp.STACK_ORDER for n in layout_rules.hv_nets(d, board)}
+        missing = sorted(wanted - set(derived))
+        if missing:
+            raise RuntimeError(
+                f"{', '.join(missing)}: in the HV class with no derived node voltage. "
+                f"Derive it in tools/soft_start.py -- IO-29 sets the clearance between "
+                f"two 84 V nets from their difference, and a net with no voltage has no "
+                f"difference to set it from")
+        _HV_VOLTS.update({n: derived[n] for n in sorted(wanted)})
+    return _HV_VOLTS
+
+
+def hv_pair_volts(net_a, net_b, nodes=None):
+    """The worst-case voltage BETWEEN two HV nets, volts: the widest difference
+    they reach at any one of `soft_start.operating_points`.
+
+    ⚠️ The difference is taken inside each operating point and the maximum
+    taken afterwards -- never the difference of two per-net envelopes.  `HV_SW`
+    and `KSW` both swing 0 to 160 V and are never more than a switch drop
+    apart, because they swing TOGETHER; envelopes would have called them 160 V
+    apart and held 1.25 mm between two nets that are at the same voltage all
+    day.  The two ends of F201 are the same story with a diode drop in it.
+    """
+    nodes = hv_node_voltages() if nodes is None else nodes
+    return max(abs(a - b) for a, b in zip(nodes[net_a], nodes[net_b]))
+
+
+def pair_clearance(net_a, net_b, nodes=None):
+    """IO-29: the clearance two nets need from each other, mm.
+
+    **Both nets in the HV class** -- their own difference on IPC-2221B B2.  The
+    1.25 mm the class carries is B2 at the 160 V do-not-exceed, and that is the
+    figure for pack voltage against LOW-VOLTAGE copper; between two 84 V nets
+    the standard asks for the voltage BETWEEN them, which around Q101's gate is
+    a gate drive and not a pack.  ⭐ It is not a relaxation of the rule, it is
+    the rule read off the right row.
+
+    **Anything else** -- the full `layout_rules.HV_CLEARANCE_MM`.  A net with
+    no derived node voltage is not in the class, so pack voltage against a
+    signal, a rail, a plane or an unnetted pad keeps the whole figure, and so
+    do `HV_C1_N` / `HV_C2_N`: they are the pack's negative and sit at 0 V DC,
+    but the choke winding that makes them 0 V DC is what puts the section's
+    switching and surge swing on them, and to GND they are 84 V-section copper.
+
+    ⚠️ It answers for a PAIR, which is why it cannot be written into the
+    editor: EasyEDA Pro 3.2.149 binds a clearance to a net.  The joins its DRC
+    will flag because of that are `drc_exceptions`.
+    """
+    if net_a == net_b:
+        return 0.0
+    nodes = hv_node_voltages() if nodes is None else nodes
+    if net_a not in nodes or net_b not in nodes:
+        return layout_rules.HV_CLEARANCE_MM
+    return ipc_clearance_mm(hv_pair_volts(net_a, net_b, nodes))
+
+
+def required_clearance(ix, board, net_a, net_b, floor=0.0):
+    """What two pieces of copper have to keep from each other on `board`, mm.
+
+    HV is the pairwise rule above; everything else is the stronger of the two
+    classes, with `floor` for a run whose own class figure is not derivable
+    from its net alone (the 12 V bus's ground twin is drawn at `PWR12`'s
+    clearance although `GND` is a RAIL).
+
+    ⛔ The floor does NOT apply to the HV branch: the floor there IS the HV
+    class's 1.25 mm, and taking the larger of the two would undo IO-29.
+    """
+    ca = net_class(ix, board, net_a) if net_a else DEFAULT
+    cb = net_class(ix, board, net_b) if net_b else DEFAULT
+    if ca is HV or cb is HV:
+        return pair_clearance(net_a, net_b)
+    return max(ca.clearance_mm, cb.clearance_mm, floor)
 
 
 # --- the copper, read back --------------------------------------------------------
@@ -633,54 +788,65 @@ def _buckets(items, extra):
     return out
 
 
-def clearance_problems(c, ix, board):
-    """Every pair of copper on `board` that is closer than the stronger of the
-    two nets' class clearances, one entry per class: the worst offender.
+def copper_pairs(c, ix, board, margin, pad_to_pad=False):
+    """Every pair of copper on `board` that comes within `margin` of each other
+    on a layer both are on, as (layer, a, b, gap): the one sweep both the class
+    check and the DRC exception list read.
 
-    ⛔ PAD TO PAD IS NOT CHECKED, and that is deliberate.  Two pads of a
+    ⛔ PAD TO PAD IS OFF by default, and that is deliberate.  Two pads of a
     manufacturer's land pattern sit where the manufacturer put them; a class
     rule is about what ROUTING may do, and the editor's own rules keep pad
     spacing out of it too (`OTHER.deviceClearance`, 0 in the JLC template).
-    What is checked is what the router chose: segment to segment, segment to
-    pad, and a via to anything -- a via's barrel crosses every layer, so it is
-    the one object compared against copper on all of them."""
-    need = {}
-
-    def cls_of(net):
-        return net_class(ix, board, net) if net else DEFAULT
-
-    worst = {}
+    What the check looks at is what the router chose: segment to segment,
+    segment to pad, and a via to anything -- a via's barrel crosses every
+    layer, so it is the one object compared against copper on all of them.
+    ⚠️ `drc_exceptions` turns it ON, because the EDITOR's rules do not make
+    that distinction: `_safe_rule` raises every cell of the clearance matrix,
+    pad-to-pad included, so an 0603's neighbour IS a DRC hit there."""
     layers = sorted({s.layer for s in c.segs} | set(OUTER))
     for layer in layers:
         items = c.on_layer(layer)
-        for it in items:
-            need.setdefault(_net_of(it), cls_of(_net_of(it)))
-        widest = max((need[_net_of(it)].clearance_mm for it in items), default=0.0)
-        bk = _buckets(items, widest)
         seen = set()
-        for _, group in sorted(bk.items()):
+        for _, group in sorted(_buckets(items, margin).items()):
             for i, a in enumerate(group):
                 for b in group[i + 1:]:
                     if _net_of(a) == _net_of(b) or not _meets(a, b):
                         continue
-                    if isinstance(a, Pad) and isinstance(b, Pad):
+                    if not pad_to_pad and isinstance(a, Pad) and isinstance(b, Pad):
                         continue
                     key = (id(a), id(b)) if id(a) < id(b) else (id(b), id(a))
                     if key in seen:
                         continue
                     seen.add(key)
-                    ca, cb = need[_net_of(a)], need[_net_of(b)]
-                    want = max(ca.clearance_mm, cb.clearance_mm)
                     g = gap(a, b)
-                    if g >= want - TOL:
-                        continue
-                    strong = ca if ca.clearance_mm >= cb.clearance_mm else cb
-                    slack = want - g
-                    n = worst[strong.name][6] + 1 if strong.name in worst else 1
-                    if strong.name not in worst or slack > worst[strong.name][0]:
-                        worst[strong.name] = (slack, want, g, a, b, layer, n)
-                    else:
-                        worst[strong.name] = worst[strong.name][:6] + (n,)
+                    if g < margin - TOL:
+                        yield layer, a, b, g
+
+
+def clearance_problems(c, ix, board):
+    """Every pair of copper on `board` closer than that PAIR's own required
+    clearance, one entry per class: the worst offender and the count.
+
+    ⭐ IO-29: the figure is `required_clearance`, so between two HV nets it is
+    their own voltage difference on IPC-2221B B2 and not the class's 1.25 mm --
+    the same rule `--heavy` routes to, because a router and a DRC that disagree
+    are worse than either alone.  The entry is still keyed by the stronger of
+    the two CLASSES, which is what names the rule a reader goes looking for."""
+    worst = {}
+    for layer, a, b, g in copper_pairs(c, ix, board, WIDEST_CLEARANCE):
+        na, nb = _net_of(a), _net_of(b)
+        want = required_clearance(ix, board, na, nb)
+        if g >= want - TOL:
+            continue
+        ca = net_class(ix, board, na) if na else DEFAULT
+        cb = net_class(ix, board, nb) if nb else DEFAULT
+        strong = ca if ca.clearance_mm >= cb.clearance_mm else cb
+        slack = want - g
+        n = worst[strong.name][6] + 1 if strong.name in worst else 1
+        if strong.name not in worst or slack > worst[strong.name][0]:
+            worst[strong.name] = (slack, want, g, a, b, layer, n)
+        else:
+            worst[strong.name] = worst[strong.name][:6] + (n,)
     return worst
 
 
@@ -754,13 +920,28 @@ def _check_widths(c, ix, board):
 
 
 def _check_clearances(c, ix, board):
+    """⚠️ The figure is reported PER PAIR, not per class: since IO-29 two HV
+    nets are held to their own voltage difference, so "short of 1.25 mm" would
+    be the wrong sentence about a pair that needs 0.6."""
     out = []
     for name, (slack, want, got, a, b, layer, n) in sorted(
             clearance_problems(c, ix, board).items()):
-        out.append(f"{board}: class {name} clearance -- {n} pair(s) short of {want:.2f} mm; "
-                   f"the worst is {_describe(a)} to {_describe(b)} at {got:.3f} mm on layer "
-                   f"{layer} (short by {slack:.3f})")
+        out.append(f"{board}: class {name} clearance -- {n} pair(s) short of what that pair "
+                   f"needs; the worst is {_describe(a)} to {_describe(b)} at {got:.3f} mm on "
+                   f"layer {layer}, which needs {want:.2f} mm{_why_clearance(ix, board, a, b)} "
+                   f"(short by {slack:.3f})")
     return out
+
+
+def _why_clearance(ix, board, a, b):
+    """", 160 V between them (IPC-2221B B2)" for an HV pair, else nothing."""
+    na, nb = _net_of(a), _net_of(b)
+    nodes = hv_node_voltages()
+    if na in nodes and nb in nodes:
+        return f", {hv_pair_volts(na, nb, nodes):.1f} V between them (IPC-2221B B2)"
+    if na in nodes or nb in nodes:
+        return " -- pack voltage against copper that is not in the HV class"
+    return ""
 
 
 def hv_plane_layers(c, ix, board, pl):
@@ -1439,13 +1620,14 @@ def _blocker(c, ix, board, segs, net, clearance, frame, extra, ends=()):
                 continue
             if isinstance(other, Seg) and other.layer != s.layer:
                 continue
-            # ⚠️ the STRONGER of the two classes, which is what
-            # `clearance_problems` measures.  Using the run's own figure alone
-            # wrote a 1.0 mm CH12 channel 0.25 mm from a `V12` pad, and the
-            # tool's own check then refused it: a router and a DRC that
-            # disagree are worse than either alone.
-            need = max(clearance, net_class(ix, board, other.net).clearance_mm
-                       if other.net else DEFAULT.clearance_mm)
+            # ⚠️ what THIS PAIR needs, which is what `clearance_problems`
+            # measures.  Using the run's own figure alone wrote a 1.0 mm CH12
+            # channel 0.25 mm from a `V12` pad, and the tool's own check then
+            # refused it: a router and a DRC that disagree are worse than
+            # either alone.  Since IO-29 that includes the HV pairwise rule --
+            # `clearance` is passed as the FLOOR and is deliberately ignored
+            # where the pair is two 84 V nets.
+            need = required_clearance(ix, board, net, other.net, floor=clearance)
             g = gap(s, other)
             if g < need - TOL:
                 near = any(other.ref == ref for ref, _, _ in ends) \
@@ -1583,6 +1765,100 @@ def _plane_is_cut(c, net):
                for p in c.pours)
 
 
+# --- IO-29: the joins the editor's DRC will flag and the decision accepts -----------
+#: The generated document, one per board that carries pack voltage.  Same shape
+#: as `place.py`'s placement tables: a record of what the tool wrote, rewritten
+#: on every run, never hand-edited.
+EXCEPTIONS_DOC = "{board}-drc-exceptions.md"
+
+
+def _piece(x):
+    """A piece of copper named the way the editor's DRC report names it."""
+    if isinstance(x, Seg):
+        return f"trace on layer {x.layer}"
+    if isinstance(x, Via):
+        return "via"
+    return f"{x.ref}.{x.pin}"
+
+
+def drc_exceptions(c, ix, board):
+    """Every pair of copper on `board` that the EDITOR will flag and IO-29
+    accepts: [(net a, net b, piece a, piece b, layers, gap mm, volts, needed mm)].
+
+    The editor's HV rule is `layout_rules.HV_CLEARANCE_MM` to EVERYTHING,
+    because EasyEDA Pro 3.2.149 binds a clearance to a net and not to a pair
+    (IO-29), and `--rules` raises every cell of its matrix -- so any HV copper
+    inside 1.25 mm of another net is a hit there.  A hit whose pair is legal
+    under `required_clearance` is one of these; a hit that is NOT is a real
+    violation and belongs to `--check-routing`, which is why it is left out
+    here rather than listed.
+
+    ⚠️ PAD TO PAD IS INCLUDED, unlike the class check.  The check leaves it out
+    because a land pattern is the manufacturer's business; the editor does not
+    make that distinction, and the 0603 pads 0.6-0.9 mm apart inside the
+    soft-start gate network are exactly the hits the owner will see.
+    """
+    hv = set(ix.hv.get(board, ()))
+    if not hv:
+        return []
+    found = {}
+    for layer, a, b, g in copper_pairs(c, ix, board, layout_rules.HV_CLEARANCE_MM,
+                                       pad_to_pad=True):
+        na, nb = _net_of(a), _net_of(b)
+        if na not in hv and nb not in hv:
+            continue
+        want = required_clearance(ix, board, na, nb)
+        if g < want - TOL:
+            continue            # a real violation: --check-routing reports it
+        # ⭐ both nets are necessarily HV here: for any other pair the figure IS
+        # the 1.25 mm this sweep uses as its margin, so `g < want` has already
+        # sent it to `--check-routing` as a violation.  That is the mutation
+        # the brief asks for -- a genuine HV-to-low-voltage join cannot reach
+        # this list.
+        key = tuple(sorted(((na, _piece(a)), (nb, _piece(b)))))
+        (na, pa), (nb, pb) = key
+        volts = hv_pair_volts(na, nb)
+        hit = found.get(key)
+        if hit is None or g < hit[5]:
+            found[key] = [na, nb, pa, pb, {layer}, g, volts, want]
+        else:
+            hit[4].add(layer)
+    return [tuple(r[:4]) + (tuple(sorted(r[4])),) + tuple(r[5:])
+            for r in sorted(found.values(), key=lambda r: (r[0], r[1], r[5]))]
+
+
+def exceptions_doc(c, ix, board):
+    """`layout/POWER-drc-exceptions.md` as text."""
+    rows = drc_exceptions(c, ix, board)
+    out = [f"# {board} — DRC exceptions accepted by IO-29", "",
+           f"Generated by `tools/route.py --heavy`; regenerated on every run. **Do not "
+           f"hand-edit.**", "",
+           f"The editor's `HV` rule holds pack-voltage copper "
+           f"**{layout_rules.HV_CLEARANCE_MM} mm from everything**, because EasyEDA Pro "
+           f"3.2.149 binds a clearance to a net and not to a pair. IPC-2221B Table 6-1 sets "
+           f"clearance by the voltage *between* two conductors, so between two 84 V nets the "
+           f"figure is their own difference (IO-29). The rows below are the joins where those "
+           f"two readings differ: the editor will flag them and the decision accepts them.", "",
+           f"⛔ **An editor DRC hit that is NOT on this list is a defect.** Check the report "
+           f"against this file line by line; anything unlisted is copper that breaks a rule "
+           f"nobody signed off, and it goes back to `--check-routing` and the placement.", "",
+           f"⚠️ The voltages are derived (`tools/soft_start.py`), not typed: each node is "
+           f"walked from the netlist and the pair's figure is the widest difference the two "
+           f"reach at any operating point — pack 43/60/84/160 V, key on, key off, and the "
+           f"hold-up's ride-out.", ""]
+    if not rows:
+        out += ["No exception: every HV join on this board meets the editor's "
+                f"{layout_rules.HV_CLEARANCE_MM} mm as well. Any DRC hit is a defect."]
+        return "\n".join(out) + "\n"
+    out += [f"{len(rows)} accepted join(s).", "",
+            "| Net A | Net B | Copper A | Copper B | Layer | Gap mm | V between | "
+            "IPC-2221B B2 |", "|---|---|---|---|---|---|---|---|"]
+    for na, nb, pa, pb, layers, g, volts, want in rows:
+        out.append(f"| {na} | {nb} | {pa} | {pb} | {', '.join(str(x) for x in layers)} | "
+                   f"{g:.3f} | {volts:.1f} | {want:.2f} mm |")
+    return "\n".join(out) + "\n"
+
+
 def _line_record(frame, seg):
     x0, y0 = frame.to_file(seg.u0, seg.v0)
     x1, y1 = frame.to_file(seg.u1, seg.v1)
@@ -1591,9 +1867,13 @@ def _line_record(frame, seg):
             "width": _mil(seg.width), "locked": False, "zIndex": -1}
 
 
-def write_heavy(project, pl, ix, boards=None):
-    """R2's rule-driven copper into every named board.  Returns
-    {board: ([Leg], [Refusal])}."""
+def write_heavy(project, pl, ix, boards=None, docs=None):
+    """R2's rule-driven copper into every named board, and each board's IO-29
+    DRC exception list into `docs`.  Returns {board: ([Leg], [Refusal])}.
+
+    ⚠️ The exception list is written from the copper AS WRITTEN, re-read off the
+    edited document, so what the owner checks the editor's DRC against is the
+    file the editor opens and not the tool's intention for it."""
     out = {}
     for board in (boards or bp.STACK_ORDER):
         if board not in project.pcbs:
@@ -1602,13 +1882,16 @@ def write_heavy(project, pl, ix, boards=None):
         legs, refusals = heavy_runs(project, pl, ix, board, c)
         doc = DocEdit(project, board)
         frame = pl.frame(board)
-        n = 0
         for leg in legs:
             for seg in leg.segs:
                 doc.append("LINE", _rid(board, "LINE", seg.net, seg.layer, seg.u0, seg.v0,
                                         seg.u1, seg.v1, seg.width), _line_record(frame, seg))
-                n += 1
         out[board] = (legs, refusals)
+        if docs is not None and ix.hv.get(board):
+            path = Path(docs) / EXCEPTIONS_DOC.format(board=board)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(exceptions_doc(copper(project, pl, ix, board), ix, board),
+                            encoding="utf-8")
     return out
 
 
@@ -1760,6 +2043,9 @@ def main(argv=None):
     ap.add_argument("--file", default=None,
                     help=f"the .eprj2 to read (default: the editor's {place.PROJECT_FILE})")
     ap.add_argument("--out", default=None, help="where to write (default: --file, keeping .prev)")
+    ap.add_argument("--docs", default=str(Path(__file__).resolve().parent.parent / "layout"),
+                    help="where --heavy writes each pack-voltage board's IO-29 DRC exception "
+                         "list (default: layout/). Regenerated on every run")
     ap.add_argument("--rules-doc", default=None, metavar="PATH",
                     help="also write the whole class table, and each class's nets per board, as "
                          "text for hand entry in the editor. Not written unless asked: the rules "
@@ -1812,8 +2098,8 @@ def main(argv=None):
                 for ln in lines:
                     print(f"  {ln}")
         elif a.heavy:
-            for board, (legs, refusals) in sorted(write_heavy(project, pl, ix,
-                                                              boards=picked).items()):
+            for board, (legs, refusals) in sorted(write_heavy(project, pl, ix, boards=picked,
+                                                              docs=a.docs).items()):
                 total = sum(len(l.segs) for l in legs)
                 print(f"{board}: {len(legs)} run(s), {total} segment(s), "
                       f"{len(refusals)} refused")

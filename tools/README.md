@@ -66,7 +66,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `board_fit.py` | Area, height and connector-row budget, and the cavity the design requires (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `power_budget.py` | The 12 V load against the parts that carry it: the converter, its input choke and the B+ tap fuse, at the LVC. It states which case it models |
-| `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in |
+| `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in — and the DC voltage of every 84 V node, walked from the netlist for `route.py`'s pairwise clearances |
 | `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
@@ -78,7 +78,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
 | `place.py` | Places the four boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
-| `route.py` | Part 2 of `layout/PROCESS.md`, a sibling of `place.py` that reads the design through it and owns the copper: `--rules` writes the net classes and design rules into every PCB document, `--pours` the planes (GND on layer 2 everywhere, cut back at POWER's partition), `--heavy` the runs whose width and path the rules decide — refusing by name rather than routing round an obstacle — `--check-routing` the DRC by those classes (never writes, exits 1), `--strip-routing` takes a bad autoroute off, `--draw` draws the copper |
+| `route.py` | Part 2 of `layout/PROCESS.md`, a sibling of `place.py` that reads the design through it and owns the copper: `--rules` writes the net classes and design rules into every PCB document, `--pours` the planes (GND on layer 2 everywhere, cut back at POWER's partition), `--heavy` the runs whose width and path the rules decide — refusing by name rather than routing round an obstacle — plus each pack-voltage board's `layout/<BOARD>-drc-exceptions.md`, `--check-routing` the DRC by those classes (never writes, exits 1), `--strip-routing` takes a bad autoroute off, `--draw` draws the copper. ⭐ Two 84 V nets are held to their own voltage difference on IPC-2221B B2 and not to the class's 1.25 mm (IO-29); the node voltages come from `soft_start.py` |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
@@ -257,6 +257,18 @@ integrates the decay beside the bound, which lands a little under it and puts th
 missing one. The `KeyOff` docstring says what a further refinement would take: a converter
 under-voltage shutdown threshold, which TDK does not publish for the CN-B110.
 
+**It also owns the 84 V section's node voltages** (`hv_node_ranges()`, IO-29), because the gate
+network is already here and a second walk elsewhere would be a second thing to keep true.
+`hv_node_voltages()` gives every node in the section one DC voltage per operating point, walked
+from the netlist: the switch's source is the B+ tap, its drain follows the key, its gate is the
+source less `static_v_sg`, the shifter's drain and gate come off the same circuit, and everything
+else is reached across a choke winding, a fuse or the hold-up rectifier — the divider mids read
+off their own resistor values. The points are pack 43 · 60 · 84 · 160 V (`pack_ceiling_v()`, the
+lowest input rating among the fitted converters, not a typed 160) × key on · key off · the
+hold-up's **ride-out**, at both ends of the rectifier's drop. ⛔ One value per node per point, not
+a band: a band would make the two ends of F201 — the same copper — read a diode drop apart.
+`route.pair_clearance` takes the differences; nothing here knows which pairs exist on the board.
+
 ### `layout_rules.py` — the HV net class and the land keep-outs
 
 ```bash
@@ -274,6 +286,12 @@ voltage, never from the label alone. Today: 14 nets on POWER, none elsewhere. `b
 `build-eprj3/layout-rules.txt`. ⚠️ **Set the class up in the editor before routing POWER:**
 PCB → Design → Net Class, a class `HV` holding those nets; Design Rules → Safe Spacing, a 1.25 mm
 rule applied to `HV`.
+
+⭐ **1.25 mm is the figure against LOW-VOLTAGE copper.** IPC-2221B sets clearance by the voltage
+*between* two conductors, so between two of these nets it is their own difference (IO-29), which
+`route.py` routes and checks to. The editor's rule deliberately stays at 1.25 mm to everything —
+it is what keeps the autorouter's low-voltage copper away from pack voltage — and the joins it
+will flag as a result are listed in `layout/POWER-drc-exceptions.md`.
 
 It also lists each drawn land's keep-out: `J408`, the Tag-Connect TC2030-NL service pads, wants no
 track or via between its pad centres and nothing within 0.51 mm of a pad (Tag-Connect's drawing,

@@ -53,6 +53,13 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   pack-voltage nets. ⭐ **`tools/route.py --rules` now writes every class INTO the project** — a
   named `RULE` per category plus one `RULE_SELECTOR` per member net, the form the editor's own
   `Example_3D Shell Design.eprj2` carries. 📄 `layout/PROCESS.md` Part 2 R0.
+  ⭐ **The 1.25 mm is what pack voltage keeps from LOW-VOLTAGE copper; between two 84 V nets the
+  clearance is their own voltage difference** on the same IPC-2221B B2 table (IO-29). The editor
+  binds a clearance to a net and not to a pair, so `tools/route.py` is the authority: it routes and
+  checks pairwise, its rule to the editor stays 1.25 mm to everything, and `--heavy` writes the
+  joins the editor's DRC will flag and the decision accepts to `layout/POWER-drc-exceptions.md`.
+  ⛔ **A DRC hit that is not on that list is a defect.** The node voltages are derived by
+  `tools/soft_start.py` from the netlist, never typed.
 - After the owner exports a board's netlist from EasyEDA (to `~/Downloads`), prove it:
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only
