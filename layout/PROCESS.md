@@ -124,7 +124,9 @@ their partners wins (that is what tells 0 from 180 on a symmetric body). It is a
 
 **POWER places its 84 V parts first**, as one group: the bulk (bricks under the board, chokes,
 cans, the fuse clip) packs against the end `J101` stands at, and the HV passives fill the gaps; the
-low-voltage parts then take the rest of the board. ⚠️ The bulk's front is the **board's own edge**,
+low-voltage parts then take the rest of the board. Three of them have a u of their own instead,
+and check 19 below says why: the row-blocking brick, seated against the partition before the pack,
+and each brick's input bulk cap, aimed at its own brick's pack-voltage pins. ⚠️ The bulk's front is the **board's own edge**,
 not the row's depth: it is a REGION, not a band, and `J101` is only 56 mm of the 242, so charging
 the bulk for standing in front of the row leaves the strip beside `J101` empty and pushes the
 region 15 mm further along the board — length the low-voltage end needs. And each 84 V part lands
@@ -133,9 +135,13 @@ luck in the packing order (check 13).
 
 If a board cannot seat every part at the engine's 3 mm HV strip, it is placed again with the strip
 at the check's 1.25 mm floor and says so — the built-in revision. POWER has a second: the
-partition below is **measured on a first pass and used on a second**, and if holding the
-low-voltage parts out then costs the 84 V parts room they used to borrow, the 84 V end is grown by
-the length those parts pack into and the board is placed again, up to `PARTITION_GROWTHS` times.
+partition below is **measured on a first pass and used on a second**, and the second pass can find
+that measure wrong in either direction. If holding the low-voltage parts out costs the 84 V parts
+room they used to borrow, the 84 V end is grown by the length those parts pack into; if instead
+they pack short of the end reserved for them — leaving the row-blocking brick standing off its own
+bulk, which is a hole in the region and length the low-voltage end could have had — the line is
+pulled in by the slack. Either way the board is placed again, up to `PARTITION_GROWTHS` times
+between them, and the note says which happened.
 
 ## The two rules IO-26 decided (3a and 4a)
 
@@ -185,7 +191,8 @@ squeezed somewhere illegal. Each check is numbered in the tool's output, every c
 `place.py` says what it protects, and `tests/test_place.py` proves each check fires on a placement
 that breaks it. The first nine are the placement's own; **checks 10–16 exist because the board must
 be routed afterwards (owner, 2026-09-22) — placement decides whether routing is possible**; check 17
-is the board itself, which has two faces and one set of holes; check 18 is IO-26's partition.
+is the board itself, which has two faces and one set of holes; check 18 is IO-26's partition, and
+check 19 the order inside it.
 
 📄 **Where the two rules IO-26 decided live:** (3a), the slot the driver line leaves for the loom's
 pins, is **folded into check 11** — the bus is a line AND the feed enters it from inside, which is
@@ -273,6 +280,29 @@ walled in by pack voltage whatever the construction believed.
     derives the line the board was built to. The one part allowed in the 84 V end is a straddler's
     own satellite — a brick's 100 nF, which belongs against that brick's low-voltage pads; check 13
     still asks that it not be walled in.
+19. **The heavy path on POWER** — the ORDER inside the 84 V end, which 18 says nothing about. Two
+    placements can both pass 18 and put the brick's 12 V output 24 mm from the connector the
+    **8.47 A** leaves by or 104 mm from it, threaded past the chokes, the fuse clip and both bulk
+    cans; the one this repo shipped on 2026-09-22 was the second. So: **the row-blocking brick**
+    (`board_fit.row_blockers` — the underside body too deep to sit behind the face row, `U201`) is
+    **the last body in the 84 V end**, its 12 V pins at the strip, which is the one arrangement
+    where 4a's own sentence holds literally — its 84 V pads in the 84 V end, its low-voltage pads
+    in the low-voltage end. **The 12 V output's own parts are the low-voltage end's first
+    tenants** (`place.v12_output`, from the PWR12 net, largest body first: `C207` then `J202`),
+    so the brick's `+V` → the bulk cap → the contact is one short run, measured at
+    `HEAVY_PATH_MM` (25 mm; 23.65 as placed, and the arithmetic is in the constant). ⛔ **This
+    overrides the loom's own target for `J202`**: the cable is five flying conductors in a 30 mm
+    gap and can run at an angle, an 8.47 A pour cannot. And **each brick's input bulk cap stands
+    at its pack-voltage pins** — `BULK_REACH` (9 mm), the brick's own body discounted because a
+    through-hole pad may not come up inside a case on the other face (check 17), which is what
+    lets one figure hold `C201` at `U201`'s pins (2.70 mm) and `C202` round `U202`'s 50.8 mm case
+    (8.03 mm). Which cap belongs to which brick is read off the nets (`HV_C1_*` against
+    `HV_C2_*`), never off a name. The engine seats them in that order — brick, its bulk, the 84 V
+    pack, then the 12 V output — and the 84 V end is measured **without** the brick and its own
+    length added, so the line is where the rest of the region packs to. ⚠️ A greedy packer
+    re-flows when the brick moves, so when the region ends up short of the end reserved for it the
+    board is placed again with the line pulled in (`PARTITION_GROWTHS`, the mirror of the growth
+    revision) — and check 13 stays the backstop that reports a region still in two pieces.
 
 Every comparison allows a micrometre: the file holds mils to four decimals, and a coordinate
 written and read back may move by nanometres.

@@ -706,9 +706,16 @@ def test_13_hv_region_one_group_no_lv_enclosed(placed, ix):
     # another one and the group never splits -- a mutation that moves nothing.
     # ⚠️ And not into a board corner either: an M3 washer square is a keep-out,
     # so check 1 fires there and check 13 never gets a chance to.
-    _, far, line = place.hv_partition(pl, ix, "POWER")
+    # ⚠️ And PAST THE REGION, not past the derived line: since check 19 the
+    # last body in the 84 V end is the row-blocking brick, whose 84 V pads are
+    # at the far side of it -- so `hv_partition`'s line falls INSIDE the
+    # brick's own case, and a part moved 20 mm beyond it lands on that case,
+    # touching the group it is supposed to have left.
+    hv_end = max(p.box.u1 for p in pl.placed("POWER").values() if ix.is_hv(p.refdes))
+    clear_of_corner = pl.frame("POWER").length - 2 * place.M3_KEEPOUT
     d102 = pl.get("D102")
-    apart = moved(pl, "D102", du=(line + 20.0) - d102.box.cu, dv=20.0 - d102.box.cv)
+    apart = moved(pl, "D102", du=(hv_end + clear_of_corner) / 2 - d102.box.cu,
+                  dv=20.0 - d102.box.cv)
     got = place.check(apart, ix)
     assert any(s.startswith("13 HV region: POWER's 84 V parts form 2 groups")
                and "D102" in s for s in got), got
@@ -754,6 +761,75 @@ def test_18_the_hv_lv_partition_is_kept(placed, ix):
         assert any("low-voltage pins" in s and "toward the 84 V end" in s for s in got), got
 
 
+def test_19_the_heavy_path_is_short_and_each_bulk_cap_is_at_its_brick(placed, ix):
+    """(check 19) The 8.47 A copper: the brick's 12 V output to the contact
+    that takes the bus off the board, and each brick's input bulk at its
+    pack-voltage pins.  Three mutations, each one a placement that passes
+    every other check -- which is the point of the rule: 18 says which END a
+    part belongs in and nothing about the ORDER inside it."""
+    _, pl = placed
+    assert not any(s.startswith("19 ") for s in place.check(pl, ix))
+    src, away, mm = place.heavy_path(pl, ix, "POWER")
+    assert (src, away) == ("U201", "J202")
+    assert mm <= place.HEAVY_PATH_MM
+    # which cap belongs to which brick is read off the NETS, never the names
+    assert place.bulk_caps(ix, "POWER") == {"C201": "U201", "C202": "U202"}
+    assert place.row_blocking_brick(ix, "POWER") == "U201"
+    j101, j202, brick = pl.get("J101"), pl.get("J202"), pl.get("U201")
+    head = j101.box.u1 + place.CLEAR          # the head of the bulk pack, behind the row
+    # (a) the contact seated under `J311`'s loom, which is where the loom's
+    # own rule asks for it -- the trade-off check 19 decides, and the reason
+    # `_seat_v12_output` overrides that target
+    loom = moved(pl, "J202", du=pl.get("J311").box.cu - j202.box.cu)
+    got = place.check(loom, ix)
+    assert any(s.startswith("19 heavy path: POWER U201") and "J202" in s for s in got), got
+    # (b) the brick seated 40 mm short of the partition: its 12 V end is then
+    # 40 mm of 84 V region away from the bus it feeds
+    short = moved(pl, "U201", du=-40.0)
+    got = place.check(short, ix)
+    assert any(s.startswith("19 heavy path: POWER U201") for s in got), got
+    # (c) the input bulk parked at the head of the bulk pack instead of at its
+    # brick's pins -- where the 84 V region's own packing rule would put it
+    parked = moved(pl, "C201", du=head - pl.get("C201").box.u0, dv=-pl.get("C201").box.v0)
+    got = place.check(parked, ix)
+    assert any(s.startswith("19 bulk: POWER C201") and "U201" in s for s in got), got
+    # (d) ⭐ THE DEFECT THIS RULE EXISTS FOR, in miniature: the brick packed
+    # against the face row, which is where the 84 V bulk rule alone puts it
+    # and where the placement that passed all EIGHTEEN other checks had it
+    # (2026-09-22: 104.5 mm from `U201`'s `+V` to `J202`, 93 mm from `C201`
+    # to the brick's `+Vin`).  Both halves of 19 fire.
+    packed = moved(pl, "U201", du=head - brick.box.u0)
+    got = place.check(packed, ix)
+    assert any(s.startswith("19 heavy path: POWER U201") for s in got), got
+    assert any(s.startswith("19 bulk: POWER C201") for s in got), got
+    # ⚠️ Each of these also trips a collision check or two -- one part moved
+    # inside a packed region lands on the parts that took that space, and on
+    # the 84 V end there is no spare room to move it into.  What is proven
+    # here is that 19 NAMES the defect: the length of the 8.47 A copper.
+
+
+def test_19_the_engine_builds_the_84v_end_in_that_order(placed, ix):
+    """The rule in the ENGINE, not only in the check: the row-blocking brick
+    is the last body in the 84 V end, its 12 V pins face the low-voltage end,
+    and the first tenants of that end are the bus's own parts.  ⚠️ Read off
+    the placement rather than off the reasons, so a table that says the right
+    thing about a part standing in the wrong place still fails."""
+    _, pl = placed
+    items = pl.placed("POWER")
+    brick = items[place.row_blocking_brick(ix, "POWER")]
+    others = [p for r, p in items.items() if ix.is_hv(r) and r != brick.refdes]
+    # nothing 84 V stands beyond it: it closes the end
+    assert max(p.box.u1 for p in others) <= brick.box.u1 + place.TOL
+    # and the region is continuous up to it
+    assert len(place.hv_groups([p for r, p in items.items() if ix.is_hv(r)])) == 1
+    # the bus's own parts are the first past the strip, ahead of every other
+    # low-voltage part on the board
+    _, _, bus = place.v12_output(ix, "POWER")
+    rest = [p for r, p in items.items()
+            if not ix.is_hv(r) and r not in bus and not place.straddler_satellite(ix, "POWER", r)]
+    assert min(items[r].box.u0 for r in bus) <= min(p.box.u0 for p in rest) + place.TOL
+
+
 def test_the_84v_end_is_grown_when_the_partition_squeezes_it(synthetic_project, ix):
     """The revision: an 84 V end measured on a pass with no partition in it can
     be short once the low-voltage parts are held out, and the engine grows it
@@ -772,6 +848,44 @@ def test_the_84v_end_is_grown_when_the_partition_squeezes_it(synthetic_project, 
     _, far, _ = place.hv_partition(pl, ix, "POWER")
     assert far > tight[1]
     assert sum("grown by the" in n for n in notes) <= place.PARTITION_GROWTHS
+
+
+def test_the_84v_end_is_pulled_in_when_its_parts_pack_short_of_it(synthetic_project, ix):
+    """The MIRROR revision (check 19): an end reserved longer than the 84 V
+    parts need leaves the row-blocking brick standing off its own bulk -- a
+    hole in the region (check 13) and length the low-voltage end could have
+    had.  Driven from the LONGEST end the board admits, one that reaches the
+    far M3 corner, so the path is exercised and its note is the one the owner
+    reads.
+
+    ⚠️ What it claims is that the line comes IN, not that one pull closes the
+    region: the packer is greedy and re-flows when the brick moves, so the
+    revision is bounded (`PARTITION_GROWTHS`) and check 13 stays the backstop
+    that reports a region still in two pieces.
+
+    ⚠️ The SYNTHETIC project only: the hand-made end it drives from reaches
+    the far M3 corner, and on the owner's real land patterns the low-voltage
+    parts then have nowhere to go, so the run ends in the unplaced/relaxed
+    revision instead and proves nothing about this one.  The real board's
+    84 V parts pack right up to their end, which is the state this revision
+    exists to reach."""
+    if os.environ.get("REVV1_PLACE_PROJECT"):
+        pytest.skip("drives a partition the real footprints have no low-voltage room for")
+    project = place.load(synthetic_project)
+    pl = place.Placement(project, ix)
+    L = pl.frame("POWER").length
+    loose = (True, L - 2 * place.M3_KEEPOUT, L - 2 * place.M3_KEEPOUT + place.HV_STRIP)
+    place._place_board(pl, "POWER", "centre", set(), partition=loose)
+    notes = [n for n in pl.notes if n.startswith("POWER:")]
+    assert any("short of the end measured for them" in n for n in notes), notes
+    # the brick ends up nearer than the end it was given -- by more than the
+    # strip, so this is the revision moving it and not a rounding -- and it
+    # comes to rest within one strip of the region it closes
+    pr = place.Placer(pl, "POWER")
+    brick = place.row_blocking_brick(ix, "POWER")
+    assert pl.get(brick).box.u1 < loose[1] - place.HV_STRIP
+    assert place._blocker_slack(pl, pr, brick, loose) < place.HV_STRIP
+    assert sum("short of the end" in n for n in notes) <= place.PARTITION_GROWTHS
 
 
 def test_18_the_engine_turns_every_straddler_the_right_way(placed, ix):

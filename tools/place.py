@@ -124,6 +124,48 @@ BUS_REACH = 15.0
 #: `CLEAR`, because that is exactly the room one 0.2 mm trace with its
 #: clearances needs to pass between the pin and the driver beside it.
 DRIVER_SLOT_MARGIN = CLEAR
+#: (check 19, THE HEAVY PATH) The u-distance from the brick's `V12` output pad
+#: to the contact that takes the 12 V bus OFF the board.  What it protects: an
+#: **8.47 A** pour that must not thread between 84 V through-hole pins.  POWER
+#: is partitioned along its length (4a), so a bus that leaves the brick at one
+#: end of the 84 V region and a connector seated wherever the low-voltage end
+#: had room put the whole 8.47 A across the chokes, the fuse clip and the bulk
+#: cans -- 104.5 mm of it on the placement before this rule (2026-09-22).
+#:
+#: THE ARITHMETIC, from the library land patterns, in the order the bus is
+#: soldered: the brick's `+V` pad stands **4.30** mm inside its output end;
+#: the body ends at the partition, so the **3.00** mm `HV_STRIP` is next; then
+#: the bulk cap, which stands across the board and takes **10.50** mm of the
+#: run; `CLEAR` (**1.60**) between it and the connector; and `J202`'s `V12`
+#: contact **4.25** mm inside its body, its pin row lying across the board.
+#: 4.30 + 3.00 + 10.50 + 1.60 + 4.25 = **23.65 mm**, which is what the engine
+#: places, and 25.0 carries it with ~6 % to spare.  The defects it stands
+#: between: the cap turned to lie ALONG the run instead of across it puts its
+#: 19.1 mm side in the way and scores 32; the connector left where the
+#: low-voltage end had room for it scores ~50; the placement before this rule
+#: scored **104.5**.
+HEAVY_PATH_MM = 25.0
+#: (check 19) A brick's INPUT bulk cap stands at its pack-voltage pins: the
+#: u-distance from the cap's pads to the brick's `+Vin`/`-Vin` pads, LESS the
+#: brick's own body where that lies between them -- board the cap may not
+#: stand on, because two bodies on one face keep `CLEAR` and a through-hole
+#: pad may not come up inside a body on the other face (check 17).  So the
+#: figure is how far the cap is from the nearest place it could stand, and one
+#: constant holds both bricks: `C201`, whose pins `U201` offers it, and
+#: `C202`, whose 50.8 mm brick lies under the face row with its input pins at
+#: the far side of its own case.
+#:
+#: THE ARITHMETIC, the two bricks in turn: `C201` stands at `U201`'s own pins
+#: -- `CLEAR` (1.60, one 0.2 mm trace with its clearances between two
+#: courtyards) + the can's leads 1.10 mm inside its end = **2.70**.  `C202`
+#: has to round `U202`, and what it clears is not the brick but the FACE ROW
+#: over it: `J101`'s body runs 5.30 mm past the brick's case, so 5.30 + 1.60 +
+#: 1.10 = **8.03** as placed.  The 9.0 carries the worse of the two with ~12 %
+#: to spare.  The defects it stands between: a can turned leads-away from its
+#: brick scores 27, and one parked in the bulk pack instead of at its brick's
+#: pins ~50.  What it protects: the 84 V input loop -- the cap IS the brick's
+#: input source impedance, and a metre of loop is not a bulk cap.
+BULK_REACH = 9.0
 #: A through-hole connector longer than this, laid across the board's short
 #: axis, cuts the ground plane in two.
 PLANE_CUT = 40.0
@@ -833,6 +875,65 @@ def v12_bus(ix, board):
     return ics, (chosen[0] if chosen else None)
 
 
+def row_blocking_brick(ix, board):
+    """The underside through-hole body too deep to sit behind the face row
+    (`board_fit.row_blockers`): its pins would land in the row's plastic, so
+    it takes a length of the connector edge itself.  On POWER that is `U201`,
+    58.3 x 37.2 mm on a 41.84 mm board -- nothing can share its u, so where it
+    stands decides the ORDER of the whole 84 V end, and (check 19) it stands
+    against the partition with its 12 V end at the low-voltage end.  The
+    largest where a board has several; None where it has none."""
+    refs = [r for e in board_fit.edge_budget(ix.d) if e.board == board
+            for r in e.blockers if r in ix.items]
+    return max(refs, key=lambda r: (ix.items[r].body[0] * ix.items[r].body[1], r), default=None)
+
+
+def bulk_caps(ix, board):
+    """{input bulk cap: the brick it belongs to} on `board`, from the NETS and
+    never from a name: a capacitor whose nets are exactly a converter's own
+    pack-voltage input nets is that converter's input bulk.  `C201` sits on
+    `HV_C1_P`/`HV_C1_N` and `C202` on `HV_C2_HOLD`/`HV_C2_N`, so each one
+    names its brick by the copper it is on; the Y2 caps, which go from one of
+    those nets to `BASEPLATE`, do not match and are not bulk."""
+    out = {}
+    for brick in ix.on(board):
+        if brick.kind != "CONVERTER":
+            continue
+        high, _ = hv_pins(ix, brick.refdes)
+        nets = {brick.pin_net[p] for p in high}
+        if len(nets) < 2:
+            continue
+        for it in ix.on(board):
+            if it.kind == "C" and set(it.nets) == nets:
+                out[it.refdes] = brick.refdes
+    return out
+
+
+def v12_output(ix, board):
+    """The 12 V output on `board`, all of it from the COPPER: `(the converter
+    that makes the bus, the connector that takes it off the board, its other
+    low-voltage parts -- largest body first)`.  PWR12 is the net the seated
+    brick's own `+V` pin is on (`power_classes`), never a net's name, and the
+    connector is the one whose other half stands on another board: `V12`
+    leaves POWER on the loom and nowhere else.
+
+    Largest first because (check 19) these are the low-voltage end's FIRST
+    tenants and the big two -- the bulk cap and the connector -- are the ones
+    that have to reach the strip; the bus's chip caps follow their adjacency
+    to whichever of them is down."""
+    pwr12 = ix.classes["PWR12"]
+    here = [it for it in ix.on(board) if any(n in pwr12 for n in it.nets)]
+    src = next((it.refdes for it in sorted(here, key=lambda i: _ref_key(i.refdes))
+                if it.kind == "CONVERTER"), None)
+    away = [it.refdes for it in here if it.kind == "CONN" and it.interface
+            and any(o.interface == it.interface and o.board != board
+                    for o in ix.items.values() if o.refdes != it.refdes)]
+    parts = sorted((it.refdes for it in here
+                    if it.refdes != src and not ix.is_hv(it.refdes)),
+                   key=lambda r: (-ix.items[r].body[0] * ix.items[r].body[1], _ref_key(r)))
+    return src, (sorted(away, key=_ref_key)[0] if away else None), parts
+
+
 def driver_slot(pads):
     """(u0, u1) of the gap a driver line leaves for a feed whose through-hole
     pad boxes are `pads`: the pad row plus `DRIVER_SLOT_MARGIN` at each end
@@ -986,6 +1087,51 @@ def straddles(ix, ref):
     return bool(high and low)
 
 
+def heavy_path(pl, ix, board):
+    """(the brick, the contact that takes the 12 V bus off `board`, the worst
+    u-distance from one of the brick's bus pads to one of that contact's), or
+    None where the board carries no 12 V output.  The WORST of them, not the
+    mean: every one of those pads carries the 8.47 A or senses it."""
+    src, away, _ = v12_output(ix, board)
+    if src is None or away is None:
+        return None
+    a, b = pl.get(src), pl.get(away)
+    if a is None or b is None or a.unplaced or b.unplaced:
+        return None
+    frame, pwr12 = pl.frame(board), ix.classes["PWR12"]
+    us = [u for num, u, _ in a.pads(frame) if ix.items[src].pin_net.get(num) in pwr12]
+    them = [u for num, u, _ in b.pads(frame) if ix.items[away].pin_net.get(num) in pwr12]
+    if not us or not them:
+        return None
+    return src, away, max(abs(x - y) for x in us for y in them)
+
+
+def bulk_reach(pl, ix, cap, brick):
+    """How far `cap` stands from the nearest place it could stand at `brick`'s
+    pack-voltage pins: the worst u-distance from one of its pads to the
+    nearest of those pins, LESS the brick's own body where that lies between
+    them.  The brick's body is board the cap cannot use -- two bodies on one
+    face keep `CLEAR`, and a through-hole pad may not come up inside a body on
+    the other one (check 17) -- so discounting it is what lets ONE constant
+    hold a cap at a brick's pins and a cap that has to stand round a 50.8 mm
+    case to reach them."""
+    a, b = pl.get(cap), pl.get(brick)
+    if a is None or b is None or a.unplaced or b.unplaced:
+        return None
+    frame = pl.frame(ix.items[cap].board)
+    high, _ = hv_pins(ix, brick)
+    pins = [u for num, u, _ in b.pads(frame) if num in high]
+    if not pins:
+        return None
+    worst = 0.0
+    for _, u, _ in a.pads(frame):
+        near = min(pins, key=lambda p: abs(p - u))
+        lo, hi = min(u, near), max(u, near)
+        blocked = max(0.0, min(hi, b.box.u1) - max(lo, b.box.u0))
+        worst = max(worst, (hi - lo) - blocked)
+    return worst
+
+
 class Placement:
     """Every placed item of every board, in the board frame."""
 
@@ -1065,6 +1211,12 @@ class Placer:
         self.hv_board = board == "POWER"
         self.extra = {}             # refdes -> [Box] keep-outs that bind it alone
         self.target_u = {}          # refdes -> (u, why) the engine must aim at
+        #: refdes -> (u, why): aim the body's FAR EDGE at this u rather than
+        #: its centre.  (check 19) The row-blocking brick stands against the
+        #: partition, and what has to land there is the end its 12 V output
+        #: leaves by -- a centre target would put half its 58.3 mm past the
+        #: line and the other half short of it, whichever way it is turned.
+        self.target_end = {}
         self.target_v = {}          # refdes -> (box front v, why)
         self.floor_v = {}           # refdes -> (v, why): a FLOOR, not a target
         self._tht_cache = {}        # refdes -> [Box] of its through-hole pads
@@ -1183,7 +1335,7 @@ class Placer:
                 max(0.0, HV_EDGE - z1u), max(0.0, HV_EDGE - z1v))
 
     def _slot(self, ref, band, angle, target_u, v_front, back_flush=False, near=None,
-              reserve=None, v_min=None, require_room=False, touch=None):
+              reserve=None, v_min=None, require_room=False, touch=None, align_end=False):
         """The cheapest free origin for `ref` at `angle`: nearest `target_u`,
         then nearest `v_front` (ahead of it costs more).  With `near`, a Box,
         the cost is the body's distance from that box instead: a satellite
@@ -1195,8 +1347,10 @@ class Placer:
         (the S3's antenna end at the back edge, check 8) is not something the
         adjacency may outbid.  `touch`, a list of boxes, requires the body to
         come within `HV_STRIP` of at least one of them -- how the 84 V parts
-        are kept ONE group by construction (check 13).  None if it fits
-        nowhere on its face."""
+        are kept ONE group by construction (check 13).  With `align_end` the
+        body's FAR EDGE is aimed at `target_u` instead of its centre (check
+        19's brick against the partition).  None if it fits nowhere on its
+        face."""
         env = self.env(ref)
         layer = self.layer_of(ref)
         bottom = layer == 2
@@ -1248,7 +1402,7 @@ class Placer:
                 lo = max(lo, f1)
             if lo <= hi_lim:
                 free.append((lo, hi_lim))
-            want = target_u - a / 2
+            want = target_u - (a if align_end else a / 2)
             for f0, f1 in free:
                 if f1 < f0 - 1e-9:
                     continue
@@ -1375,7 +1529,7 @@ class Placer:
         # function parts (an IC anchors its passives), then passives; each by
         # area; a decoupler waits for its host and follows it at once
         def order(r):
-            fixed = 0 if r in self.target_u or r in self.target_v else 1
+            fixed = 0 if r in self.target_u or r in self.target_v or r in self.target_end else 1
             passive = 1 if self.item(r).kind in PASSIVE_KINDS | {"L"} else 0
             return (fixed, passive, -area[r], _ref_key(r))
         refs.sort(key=order)
@@ -1423,13 +1577,7 @@ class Placer:
         else:
             v_front = BAND_FRONT.get(band, row_depth + CHANNEL)
         back_flush = ref in self.target_v
-        if self.is_hv(ref) and band != 2 and ref not in self.target_u and ref not in self.target_v:
-            # the 84 V bulk -- chokes, bricks, cans, the fuse -- packs against
-            # the end J101 stands at, straight behind the row, so the HV group
-            # is one compact blob and the low-voltage parts have the rest
-            hv_row = [p for p in self.pl.face(self.board, 1) if p.band == 1 and self.ix.is_hv(p.refdes)]
-            end = 0.0 if not hv_row or hv_row[0].box.cu < self.frame.length / 2 else self.frame.length
-            target, why = end, f"HV bulk, packed toward the {'left' if end == 0 else 'right'} end"
+        if self.is_hv(ref) and band != 2 and ref not in self.target_v:
             # ⚠️ The bulk's front is the board's own edge, NOT the row's depth.
             # The 84 V bulk is a REGION, not a band: it fills one end of the
             # board to both edges, and the row it stands behind is only 56 mm
@@ -1437,7 +1585,28 @@ class Placer:
             # left the whole strip beside `J101` empty and pushed the region
             # 15 mm further along the board (measured on the owner's
             # footprints, 2026-09-22) -- length the low-voltage end needs.
+            # ⚠️ The REGION binds every 84 V part, including one the heavy
+            # path aims at a u of its own (check 19): a bulk cap given a
+            # target and left in band 3's front stood at v 19 with the strip
+            # at the face empty in front of it, which cost the region 20 mm
+            # of its length and turned the can's leads away from the brick.
             v_front = 0.0
+            if ref not in self.target_u and ref not in self.target_end:
+                # the 84 V bulk -- chokes, bricks, cans, the fuse -- packs
+                # against the end J101 stands at, straight behind the row, so
+                # the HV group is one compact blob and the low-voltage parts
+                # have the rest
+                hv_row = [p for p in self.pl.face(self.board, 1)
+                          if p.band == 1 and self.ix.is_hv(p.refdes)]
+                end = 0.0 if not hv_row or hv_row[0].box.cu < self.frame.length / 2 \
+                    else self.frame.length
+                target, why = end, f"HV bulk, packed toward the {'left' if end == 0 else 'right'} end"
+        align_end = ref in self.target_end
+        if align_end:
+            # (check 19) the row-blocking brick against the partition: the u
+            # given is where its BODY ENDS, and the region it stands at the
+            # end of is still the board's own edge in v.
+            target, why = self.target_end[ref]
         near = None
         if ref in self.target_pt:
             target, v_front, why = self.target_pt[ref]
@@ -1480,10 +1649,16 @@ class Placer:
         # HV_STRIP of one already down, so the region is contiguous by
         # construction rather than by luck in the packing order
         touch = None
-        if self.hv_board and self.is_hv(ref):
+        if self.hv_board and self.is_hv(ref) and not align_end:
             group = [p.box for p in self.pl.boards[self.board].values()
                      if not p.unplaced and self.ix.is_hv(p.refdes)]
             touch = group or None
+        # ⚠️ The brick seated against the partition is the region's OTHER
+        # anchor and is exempt: it goes down first, at the far end, and the
+        # 84 V parts then pack from the row toward it, each touching the one
+        # before.  Requiring IT to touch the group would put it back against
+        # `J101`, which is the placement check 19 exists to undo -- and if
+        # the pack does not close up to it, check 13 says so.
         best = None
         # Each rule in turn, strongest first: the group, the satellite's room
         # and the floor are dropped only when nothing on the board satisfies
@@ -1501,7 +1676,7 @@ class Placer:
             for ang in angles:
                 got = self._slot(ref, band, ang, target, v_front, back_flush=back_flush,
                                  near=near, reserve=reserve, v_min=floor,
-                                 require_room=require, touch=group)
+                                 require_room=require, touch=group, align_end=align_end)
                 if got is None:
                     continue
                 u, v, cost = got
@@ -1795,11 +1970,97 @@ def _apply_partition(pl, pr, partition):
                     f"at u {line:.1f}, a {HV_STRIP:g} mm strip apart (4a)")
 
 
-#: How many times the 84 V end may be grown when it cannot seat its own
-#: parts.  Every millimetre it takes is one the low-voltage end does not have,
-#: so the revision moves in small steps -- the shelf pack of what it could not
-#: seat -- and stops: a board that still cannot place everything after three is
-#: a board to look at, not one to keep stretching.
+def _seat_heavy_path(pl, pr, only):
+    """(check 19, the 84 V half) The converters, then each one's input bulk
+    cap aimed at its pack-voltage pins -- before the rest of the 84 V region.
+
+    ⚠️ THE BRICKS BEFORE THE CAPS, and not only because they are the biggest
+    bodies: a cap's target is READ OFF its brick's placed pads, so the brick
+    has to be down before there is a target to give.  The blocker among them
+    carries `target_end` and lands against the partition; the other takes the
+    ordinary bulk rule and ends up under the face row's back.
+
+    The cap is given a `target_u` and not a place against the body, because
+    what it has to be near is the PINS: `U201` offers its own, while `U202`
+    puts 50.8 mm of case between its input pins and the nearest board a
+    through-hole can may stand on, and a u-target lets the packer take the
+    first legal position on that line instead of hugging a corner of the case
+    and standing across the width the input path needs."""
+    ix = pr.ix
+    bricks = [it.refdes for it in ix.on(pr.board) if it.kind == "CONVERTER"
+              and it.refdes in only and it.refdes in pr.pending()]
+    bricks.sort(key=lambda r: (0 if r in pr.target_end else 1,
+                               -ix.items[r].body[0] * ix.items[r].body[1], _ref_key(r)))
+    for ref in bricks:
+        pr.place_with_satellites(ref, pr.band.get(ref, 3), only=only)
+    for cap, brick in sorted(bulk_caps(ix, pr.board).items()):
+        p = pl.get(brick)
+        if cap not in only or cap in pr.keep or p is None or p.unplaced:
+            continue
+        high, _ = hv_pins(ix, brick)
+        us = [u for num, u, _ in p.pads(pr.frame) if num in high]
+        if us:
+            pr.target_u[cap] = (sum(us) / len(us),
+                                f"at {brick}'s {' '.join(high)} pads (u {sum(us) / len(us):.1f}): "
+                                f"a brick's input bulk stands at its pack-voltage pins (check 19)")
+
+
+def _seat_v12_output(pl, pr, partition, keep):
+    """(check 19, the low-voltage half) The 12 V output's own parts are the
+    low-voltage end's FIRST tenants, seated at the strip in that order, so the
+    brick's `+V`/`-V` pins -> the bulk cap -> the contact that takes 8.47 A
+    off the board is one short run instead of the length of the 84 V end.
+
+    ⚠️ This OVERRIDES the loom's own target for that contact.  The loom wants
+    its two halves near each other so the cable runs straight (`J202` under
+    `J311`), but the cable is five flying conductors in a 30 mm gap and can
+    run at an angle; the 8.47 A pour on the board cannot, and `J202` is barred
+    from the 84 V end anyway.  The pour wins, and says so in the table."""
+    line = partition[2]
+    _, _, parts = v12_output(pr.ix, pr.board)
+    for ref in parts:
+        if ref not in pr.doc.components or ref in keep:
+            continue
+        pr.target_u[ref] = (line, f"at the strip (u {line:.1f}), a first tenant of the "
+                                  f"low-voltage end: the 12 V output's own parts stand at the "
+                                  f"brick's output end (check 19)")
+        if ref in pr.pending():
+            pr.place_with_satellites(ref, pr.band.get(ref, 4))
+
+
+def _blocker_slack(pl, pr, blocker, partition):
+    """How far the row-blocking brick stands off the region it closes: the gap
+    between the group it is in and the nearest other 84 V group, less the
+    `CLEAR` it keeps from it.  0 while the region is ONE group, which is the
+    state check 13 asks for.
+
+    ⚠️ Measured between GROUPS, with the same adjacency check 13 uses, not
+    between the brick and the far edge of everything else: the brick's own
+    input bulk cap stands at its pins and is therefore the far edge of
+    "everything else", which would read every hole as zero."""
+    if blocker is None:
+        return 0.0
+    b = pl.get(blocker)
+    if b is None or b.unplaced:
+        return 0.0
+    hv = [p for p in pl.placed(pr.board).values() if pr.ix.is_hv(p.refdes)]
+    groups = hv_groups(hv)
+    mine = next((g for g in groups if blocker in g), None)
+    if mine is None or len(groups) < 2:
+        return 0.0
+    here = [p for p in hv if p.refdes in mine]
+    gap = min(p.box.separation(q.box) for p in here for q in hv if q.refdes not in mine)
+    return gap - CLEAR
+
+
+#: How many times the 84 V end may be re-measured: GROWN when it cannot seat
+#: its own parts, or pulled IN when they pack short of it.  Every millimetre
+#: it takes is one the low-voltage end does not have, so the revision moves in
+#: small steps -- the shelf pack of what it could not seat, or the slack the
+#: brick was left standing in -- and stops: a board that still cannot place
+#: everything after three is a board to look at, not one to keep stretching.
+#: One counter for both directions, so a board cannot be walked back and forth
+#: between them.
 PARTITION_GROWTHS = 3
 
 
@@ -1878,6 +2139,33 @@ def _place_board(pl, board, anchor, keep, relaxed=False, partition=None, grown=0
             # the 84 V parts go down first, as one group behind J101, so the
             # low-voltage parts then keep the strip from copper that exists
             hv_refs = {r for r in pr.doc.components if pr.is_hv(r)}
+            # (check 19) The row-blocking brick stands against the partition,
+            # so the 84 V end is measured WITHOUT it and its own length added:
+            # what decides the line is where the rest of the 84 V parts pack
+            # to, and the brick then fills the end of the region with its 12 V
+            # pins at the strip.  Measured on a pass that has it in the middle,
+            # the line lands wherever the packing order happened to leave it.
+            blocker = row_blocking_brick(ix, board)
+            if blocker not in pr.doc.components or blocker in keep:
+                blocker = None
+            measuring = partition is None and blocker is not None
+            first = hv_refs - {blocker} if measuring else hv_refs
+            if partition is not None:
+                _apply_partition(pl, pr, partition)
+                if blocker is not None:
+                    pr.target_end[blocker] = (
+                        partition[1], f"seated against the partition at u {partition[1]:.1f}, its "
+                                      f"12 V end at the low-voltage end: the row-blocking brick is "
+                                      f"the last body in the 84 V end (check 19)")
+            # the bricks are the biggest bodies on the board and go down first
+            # of all, before the bands: placed after the bulk, a through-hole
+            # part 58.3 x 37.2 mm has nowhere on the far face to bring its pins
+            # up that is not inside a body.  Their input bulk caps follow them
+            # at once, because what those caps aim at is read off the placed
+            # brick's own pads (check 19).
+            _seat_heavy_path(pl, pr, first)
+            for band in (3, 4, 2):           # the bulk first, its passives into the gaps
+                pr.place_band(band, only=first)
             if partition is None:
                 # ⭐ THE FIRST PASS MEASURES THE PARTITION (IO-26 4a).  Where
                 # the 84 V end ends is the 84 V parts' own lengths, and the
@@ -1885,16 +2173,21 @@ def _place_board(pl, board, anchor, keep, relaxed=False, partition=None, grown=0
                 # place them once and read it off.  The board is then thrown
                 # away and placed again with the line known -- the same
                 # revision the HV strip already does below.
-                for band in (3, 4, 2):
-                    pr.place_band(band, only=hv_refs)
                 part = hv_partition(pl, ix, board)
                 if part is not None:
+                    low, far, _ = part
+                    L, W = pl.frame(board).length, pl.frame(board).width
+                    if blocker is not None:
+                        # ...plus the brick that was held out of the measure:
+                        # it stands beyond everything else, one `CLEAR` gap on
+                        # from the pack, and the 84 V end reaches its far edge.
+                        span = CLEAR + placed_box(pr.env(blocker), pr.frame, 0, 0, 0,
+                                                  pr.layer_of(blocker) == 2).w
+                        far = far + span if low else far - span
                     # ...and it may not take more than it leaves: the
                     # low-voltage end has to be at least as long as the
                     # low-voltage parts' own shelf pack, or they are the ones
                     # with nowhere to go.  Whichever of the two is shorter.
-                    low, far, _ = part
-                    L, W = pl.frame(board).length, pl.frame(board).width
                     room = lv_end_needs(ix, board, W) + HV_STRIP
                     cap = L - room if low else room
                     far = min(far, cap) if low else max(far, cap)
@@ -1903,13 +2196,27 @@ def _place_board(pl, board, anchor, keep, relaxed=False, partition=None, grown=0
                     pl.notes = [n for n in pl.notes if not n.startswith(f"{board}:")]
                     return _place_board(pl, board, anchor, keep, relaxed, partition=part)
             else:
-                _apply_partition(pl, pr, partition)
-            # the bricks are the biggest bodies on the board and go down first
-            # of all within band 3: placed after the bulk, a through-hole part
-            # 58.3 x 37.2 mm has nowhere on the far face to bring its pins up
-            # that is not inside a body
-            for band in (3, 4, 2):           # the bulk first, its passives into the gaps
-                pr.place_band(band, only=hv_refs)
+                # ⭐ A REVISION, and the MIRROR of the growth below: the 84 V
+                # end was measured on a pass with the brick held out, and the
+                # region has packed SHORTER than the end that measure reserved
+                # -- so the brick stands away from its own bulk, with a hole
+                # where the 84 V group should be continuous (check 13) and a
+                # gap the low-voltage end could have had (check 19's whole
+                # point).  Pull the line in by the slack and place again.
+                slack = _blocker_slack(pl, pr, blocker, partition)
+                if slack > TOL and grown < PARTITION_GROWTHS:
+                    low, far, _ = partition
+                    far = far - slack if low else far + slack
+                    pl.boards[board] = {}
+                    pl.notes = [n for n in pl.notes if not n.startswith(f"{board}:")]
+                    pl.notes.append(
+                        f"{board}: the 84 V parts packed {slack:.1f} mm short of the end measured "
+                        f"for them, leaving {blocker} standing off its own bulk; the line is pulled "
+                        f"in to u {far:.1f} and the board placed again")
+                    return _place_board(pl, board, anchor, keep, relaxed,
+                                        (low, far, far + HV_STRIP if low else far - HV_STRIP),
+                                        grown + 1)
+                _seat_v12_output(pl, pr, partition, keep)
         # what has a fixed target goes before the bands, so the bands gather round it
         for ref in sorted(set(pr.target_u) | set(pr.target_v) | set(pr.target_pt), key=_ref_key):
             if ref in pr.pending():
@@ -2080,6 +2387,7 @@ def check(pl, ix=None, boards=None):
     out += _check_antenna(pl, ix, boards)
     out += _check_bus(pl, ix, boards)
     out += _check_partition(pl, ix, boards)
+    out += _check_heavy_path(pl, ix, boards)
     out += _check_sensitive(pl, ix, boards)
     return out
 
@@ -2210,25 +2518,11 @@ def _check_hv(pl, ix, boards=None):
             out.append(f"7 HV clearance: POWER {q.refdes}'s courtyard is {worst[0]:.2f} mm from "
                        f"{worst[1]}'s 84 V copper; the HV class needs {HV_CLEARANCE:g} mm")
     # 13a -- one group at HV_STRIP adjacency
-    if len(hv) > 1:
-        parent = {p.refdes: p.refdes for p in hv}
-
-        def root(r):
-            while parent[r] != r:
-                parent[r] = parent[parent[r]]
-                r = parent[r]
-            return r
-        for i, a in enumerate(hv):
-            for b in hv[i + 1:]:
-                if a.box.separation(b.box) <= HV_STRIP + TOL:
-                    parent[root(a.refdes)] = root(b.refdes)
-        groups = {}
-        for p in hv:
-            groups.setdefault(root(p.refdes), []).append(p.refdes)
-        if len(groups) > 1:
-            out.append(f"13 HV region: POWER's 84 V parts form {len(groups)} groups, not one: "
-                       + " | ".join(" ".join(sorted(g, key=_ref_key)) for g in groups.values())
-                       + f" (grouped at {HV_STRIP:g} mm)")
+    groups = hv_groups(hv)
+    if len(groups) > 1:
+        out.append(f"13 HV region: POWER's 84 V parts form {len(groups)} groups, not one: "
+                   + " | ".join(" ".join(sorted(g, key=_ref_key)) for g in groups)
+                   + f" (grouped at {HV_STRIP:g} mm)")
     # 13b -- no LV part between HV copper
     zone_boxes = [z for _, z in zones]
     for q in lv:
@@ -2245,6 +2539,32 @@ def _check_hv(pl, ix, boards=None):
                        f"(copper {', '.join(k for k, v in sides.items() if v)}); its traces would "
                        f"have to cross it")
     return out
+
+
+def hv_groups(hv):
+    """The 84 V parts of `hv` (placed items) as groups, each part within
+    `HV_STRIP` of another in its own: one group is what check 13 asks for, and
+    the same grouping is what tells the engine's revision how far the
+    row-blocking brick is standing off its own region (`_blocker_slack`).
+    Written once so the check and the revision cannot disagree about what a
+    region is."""
+    if not hv:
+        return []
+    parent = {p.refdes: p.refdes for p in hv}
+
+    def root(r):
+        while parent[r] != r:
+            parent[r] = parent[parent[r]]
+            r = parent[r]
+        return r
+    for i, a in enumerate(hv):
+        for b in hv[i + 1:]:
+            if a.box.separation(b.box) <= HV_STRIP + TOL:
+                parent[root(a.refdes)] = root(b.refdes)
+    out = {}
+    for p in hv:
+        out.setdefault(root(p.refdes), []).append(p.refdes)
+    return [sorted(g, key=_ref_key) for g in out.values()]
 
 
 def _check_antenna(pl, ix, boards=None):
@@ -2356,6 +2676,48 @@ def _check_partition(pl, ix, boards=None):
                        f"({' '.join(lows)}, centred on u {lm:.1f}) toward the 84 V end and its "
                        f"pack-voltage pins ({' '.join(high)}, u {hm:.1f}) toward the low-voltage "
                        f"end; a straddling part faces the other way")
+    return out
+
+
+def _check_heavy_path(pl, ix, boards=None):
+    """19 -- THE HEAVY PATH on POWER: the order the 84 V end is built in,
+    measured on the copper that carries the current.
+
+    The partition (check 18) says which end of the board a part belongs in and
+    says nothing about where in it; two placements that both pass it can put
+    the brick's 12 V output 104 mm from the connector the 8.47 A leaves by or
+    10 mm from it.  This is the one that asks:
+
+    (a) the brick's `V12` output pad to that contact, within `HEAVY_PATH_MM`
+        of u.  It is where the ORDER shows up: the row-blocking brick stands
+        against the partition with its output end at the strip, and the 12 V
+        output's own parts are the low-voltage end's first tenants, so the run
+        is the strip, the bulk cap and a gap.  A brick packed against `J101`
+        instead runs the pour past the chokes, the fuse clip and both bulk
+        cans, and no other check notices.
+    (b) each brick's INPUT bulk cap within `BULK_REACH` of its pack-voltage
+        pins, the brick's own body discounted (`bulk_reach`): the cap IS the
+        brick's input source impedance.  Which cap belongs to which brick
+        comes from the nets (`bulk_caps`), never from a name."""
+    out = []
+    board = "POWER"
+    if not pl.boards.get(board) or (boards is not None and board not in boards):
+        return out
+    got = heavy_path(pl, ix, board)
+    if got is not None:
+        src, away, mm = got
+        if mm > HEAVY_PATH_MM + TOL:
+            out.append(f"19 heavy path: POWER {src}'s 12 V output pins stand {mm:.1f} mm of u from "
+                       f"{away}'s contact, over {HEAVY_PATH_MM:g}: {src} seats against the "
+                       f"partition and {away} is a first tenant of the low-voltage end, so the "
+                       f"8.47 A crosses the strip and nothing else")
+    for cap, brick in sorted(bulk_caps(ix, board).items()):
+        reach = bulk_reach(pl, ix, cap, brick)
+        if reach is not None and reach > BULK_REACH + TOL:
+            high, _ = hv_pins(ix, brick)
+            out.append(f"19 bulk: POWER {cap} stands {reach:.1f} mm of u from {brick}'s "
+                       f"{' '.join(high)} pads with {brick}'s own body discounted, over "
+                       f"{BULK_REACH:g}; a brick's input bulk belongs at its pack-voltage pins")
     return out
 
 
