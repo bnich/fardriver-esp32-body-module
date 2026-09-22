@@ -13,6 +13,7 @@ import json
 import pytest
 
 from tools import netlist, padmap
+from tools.model import ConnPin, Connector, Part
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +39,17 @@ def test_every_fitted_item_with_a_footprint_has_a_map_covering_every_pin(d):
     ("AO3400A", "1", "G"), ("AO3400A", "2", "S"), ("AO3400A", "3", "D"),
     ("BSS127", "3", "D"), ("IXTA26P20P-TRL", "2", "D"), ("IXTA26P20P-TRL", "3", "S"),
     ("SS14", "1", "K"), ("SMCJ90A", "2", "A"),
+    # R+O SMF18A rev 2.2 p.4: the band is at pad 2, so pad 1 is the ANODE --
+    # deliberately opposite the generic diode rule. Reversed, the clamp shorts
+    # its lamp output to ground through the driver.
+    ("SMF18A", "1", "A"), ("SMF18A", "2", "K"),
+    # TI SLVSCV8E, HTSSOP-28: VS on 20-23, OUT4 on 15-16, OUT1 on 27-28. VS and
+    # OUT swapped puts the 12 V rail on a lamp channel and its load on the
+    # driver's supply pins.
+    ("TPS4H160BQPWPRQ1", "20", "VS"), ("TPS4H160BQPWPRQ1", "23", "VS"),
+    ("TPS4H160BQPWPRQ1", "15", "OUT4"), ("TPS4H160BQPWPRQ1", "16", "OUT4"),
+    ("TPS4H160BQPWPRQ1", "27", "OUT1"), ("TPS4H160BQPWPRQ1", "28", "OUT1"),
+    ("TPS4H160BQPWPRQ1", "3", "IN1"), ("TPS4H160BQPWPRQ1", "1", "GND"),
 ])
 def test_the_pins_a_reversal_would_hurt(d, mpn, pad, pin):
     part = next(p for p in d.parts if p.mpn == mpn)
@@ -100,6 +112,56 @@ def test_the_load_switch_matches_its_source(d):
 def _library_pins():
     from tools import lcsc_fixture
     return {code: rec["symbol_pins"] for code, rec in lcsc_fixture.load().items()}
+
+
+def _part(kind="IC", package="SOIC-8", pins=("1", "2")):
+    return Part("X1", "x", package, "LOGIC", kind, tuple(pins), 1.0)
+
+
+_CONN = Connector("J1", "LOGIC", "j", (ConnPin("1", "GND"), ConnPin("2", "V5")), 5.0)
+
+
+@pytest.mark.parametrize("ours, lib, x, agree", [
+    # Agreement, one case per alias class in `_LIB_ALIASES` and the rules:
+    ("VS", "VS", _part(), True),
+    ("vs", "VS", _part(), True),                       # case
+    ("GND", "GND#", _part(), True),                    # a trailing '#'
+    ("K", "4", _part("TVS"), True),                    # numeric: no information
+    ("K", "", _part("TVS"), True),                     # unnamed: no information
+    ("K", "None", _part("TVS"), True),
+    ("EPAD", "EP", _part(), True), ("PAD", "EP", _part(), True),
+    ("PAD", "GND", _part(), True), ("EPAD", "GND", _part(), True),
+    ("K", "C", _part("D"), True),                      # cathode as 'C'
+    ("IO44", "RXD0", _part("MODULE"), True), ("IO43", "TXD0", _part("MODULE"), True),
+    ("FAULT", "/FAULT", _part(), True),
+    ("NC11", "NC", _part(), True),                     # our numbered NC pins
+    ("K1", "K", _part("TVS"), True),                   # array pin: its role
+    ("A2", "A", _part("TVS"), True),
+    ("1", "GND", _CONN, True),                         # a connector pad: its net
+    # Disagreement -- the reversals a wrong table would make:
+    ("D", "S", _part("NFET", "SOT-23", ("G", "D", "S")), False),
+    ("S", "D", _part("NFET", "SOT-23", ("G", "D", "S")), False),
+    ("G", "D", _part("PFET", "TO-263AA", ("G", "D", "S")), False),
+    ("A", "K", _part("TVS", "SOD-123FL", ("A", "K")), False),
+    ("K", "A", _part("D", "SMA", ("A", "K")), False),
+    ("VS", "OUT4", _part(), False), ("OUT4", "VS", _part(), False),
+    ("OUT1", "OUT2", _part(), False),
+    ("IN", "OUT", _part(), False),
+    ("K1", "A", _part("TVS"), False),                  # array cathode on an anode pad
+    ("A2", "K", _part("TVS"), False),
+    ("PAD", "VS", _part(), False),                     # an exposed pad on a supply
+    ("GND", "VDD", _part(), False),
+    ("NC11", "GND", _part(), False),                   # our NC on a real pin
+    ("GND", "NC", _part(), False),                     # a real pin on the library's NC
+    ("K1", "K", _part("IC"), False),                   # 'K1' is a role only on a TVS
+    ("2", "GND", _CONN, False),                        # connector pad 2 is V5
+    ("1", "V5", _CONN, False),
+])
+def test_names_agree_says_yes_to_each_alias_class_and_no_to_a_reversal(ours, lib, x, agree):
+    """The library check hangs on this one predicate (H17): until 2026-09-21
+    nothing ever handed it a mismatch, and `return True` at its top passed
+    every test."""
+    assert padmap.names_agree(ours, lib, x) is agree
 
 
 def test_every_map_agrees_with_the_library_symbol(d):
