@@ -1011,7 +1011,7 @@ def reset_off_en(design, refdes):
     from tools.model import Net, Part
     lifted = design.without_pin(refdes, "RESET")
     pull = Part("R999", "R-10k", "0805", lifted.board_of(refdes), "R", ("1", "2"),
-                0.0, v_max=150.0, value="10k", source="mutation fixture")
+                0.6, v_max=150.0, value="10k", source="mutation fixture")
     own = Net("RESET_OWN", ((refdes, "RESET"), ("R999", "1")), "3V3",
               source="mutation fixture")
     v3 = lifted.net("V3P3")

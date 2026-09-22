@@ -17,7 +17,10 @@ from tools.model import ConnPin, Connector, Design, Part, Standoff
 
 def part(ref, board, height, footprint=(2.0, 1.25), *, side="top", confirmed=True,
          package="0805", mpn="X"):
-    return Part(ref, mpn, package, board, "R", ("1", "2"), height, confirmed,
+    """A BODY with a height and a footprint: kind MECH, because the fit model
+    reads neither kind nor value, and a resistor with no value is what the
+    model refuses (M11)."""
+    return Part(ref, mpn, package, board, "MECH", ("1", "2"), height, confirmed,
                 footprint, side=side)
 
 
@@ -211,9 +214,12 @@ def test_a_row_that_fits_its_board_is_no_verdict_at_all(capsys):
     assert bf.face_verdicts(d) == [] and run(capsys, d)[0] == 0
 
 
-def test_an_unknown_height_fails_instead_of_vanishing(capsys):
-    code, out = run(capsys, good().replace_part("L101", height_mm=float("nan")))
-    assert code == 1 and "height: L101" in out
+def test_an_unknown_height_fails_instead_of_vanishing():
+    """A nan height is refused by the model at construction (H11: the report
+    once printed `⛔ OVER by nan mm` and `✅ PASS` on one run), so no design
+    the tool can be handed carries one."""
+    with pytest.raises(ValueError, match="L101: height_mm=nan"):
+        good().replace_part("L101", height_mm=float("nan"))
 
 
 # --- the cavity the design REQUIRES (IO-14, M18) ---------------------------------------

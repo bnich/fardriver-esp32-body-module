@@ -305,11 +305,13 @@ def test_a_limiter_whose_programming_resistor_is_unreadable_fails_loudly():
     """A value with no resistance in it, and a 0 Ω link, are both "no rating"
     on a programming pin -- the ceiling is then unknown, and unknown must not
     become a number."""
-    for value in ("as marked", "0R"):
-        lim = pb.limit_case(D.replace_part("R359", value=value))
-        assert any("U303" in p and "not derivable" in p
-                   for p in lim.problems), (value, lim.problems)
-        assert lim.load_12v_a is None
+    # A value with no resistance in it never reaches the budget: the model
+    # refuses the resistor at construction (M11).
+    with pytest.raises(ValueError, match="R359: value='as marked'"):
+        D.replace_part("R359", value="as marked")
+    lim = pb.limit_case(D.replace_part("R359", value="0R"))
+    assert any("U303" in p and "not derivable" in p for p in lim.problems), lim.problems
+    assert lim.load_12v_a is None
 
 
 # --- the command line -------------------------------------------------------------------

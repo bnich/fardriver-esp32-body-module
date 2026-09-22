@@ -224,9 +224,9 @@ def _good() -> Design:
         _ic("U301", "TPS4H160BQPWPRQ1", "HTSSOP-28", "OUTPUTS", "IC", TPS_PINS,
             {"IN2", "IN3", "IN4", "OUT2", "OUT3", "OUT4", "FAULT", "THER"}, 1.2,
             v_max=40.0),
-        _r("R330", "OUTPUTS", "4.7k"),
-        _r("R319", "OUTPUTS", "1.00k"),
-        _r("R321", "OUTPUTS", "1.00k"),
+        _r("R330", "OUTPUTS", "4k7"),
+        _r("R319", "OUTPUTS", "1k00"),
+        _r("R321", "OUTPUTS", "1k00"),
         _r("R323", "OUTPUTS", "10k"),
         _c("C303", "OUTPUTS", "100n", 25.0),
         _c("C304", "OUTPUTS", "10u", 25.0),
@@ -243,13 +243,13 @@ def _good() -> Design:
         _c("C401", "LOGIC", "1u", 10.0),
         _array("D401", "LOGIC", "PESD5V0S4UD", 5.0),
         _r("R410", "LOGIC", "1k"),
-        _r("R411", "LOGIC", "4.7k"),
+        _r("R411", "LOGIC", "4k7"),
         _c("C410", "LOGIC", "100n", 16.0),
         _r("R412", "LOGIC", "1k"),
-        _r("R413", "LOGIC", "4.7k"),
+        _r("R413", "LOGIC", "4k7"),
         _r("R414", "LOGIC", "10k"),
-        _r("R415", "LOGIC", "4.7k"),
-        _r("R416", "LOGIC", "4.7k"),
+        _r("R415", "LOGIC", "4k7"),
+        _r("R416", "LOGIC", "4k7"),
         _c("C301", "LOGIC", "100n", 16.0),
         _ic("U402", "MCP23017-E/SO", "SOIC-28", "LOGIC", "IC",
             ("VDD", "VSS", "SCL", "SDA", "RESET", "A0", "A1", "A2", "INTA",
@@ -401,7 +401,6 @@ def test_the_good_design_passes_every_rule():
 
 def test_every_error_starts_with_a_stable_rule_id():
     wreck = GOOD.without_part("R307").without_part("D310").without_part("Q105")
-    wreck = wreck.replace_part("U405", height_mm=float("nan"))
     wreck = on_gpio(wreck, "SW_IN", 33)
     errs = rules.check_all(wreck)
     assert len(errs) >= 5
@@ -1065,13 +1064,15 @@ def test_ht_polices_every_board_not_just_one(binding_envelope):
         assert fired(bad, "HT-STACK"), GOOD.part(ref).board
 
 
-def test_ht_fires_on_a_nan_height():
-    """nan > 6.0 is False: an unknown height was an unchecked height."""
-    assert any("U405" in e for e in fired(GOOD.replace_part("U405", height_mm=float("nan")), "HT-NUM"))
-    assert any("J306" in e for e in fired(GOOD.replace_connector("J306", height_mm=float("nan")), "HT-NUM"))
-    assert fired(GOOD.replace_part("U405", height_mm=float("inf")), "HT-NUM")
-    assert fired(GOOD.replace_part("U405", height_mm=-1.0), "HT-NUM")
-    assert fired(GOOD.replace_part("U405", height_mm=None), "HT-NUM")
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, None])
+def test_a_height_that_is_not_a_number_never_reaches_the_rules(bad):
+    """nan > 6.0 is False: an unknown height was an unchecked height. The model
+    refuses one at construction now (tests/test_model.py), so no design that
+    reaches HT can carry one -- on a part or on a connector."""
+    with pytest.raises(ValueError, match="U405: height_mm="):
+        GOOD.replace_part("U405", height_mm=bad)
+    with pytest.raises(ValueError, match="J306: height_mm="):
+        GOOD.replace_connector("J306", height_mm=bad)
 
 
 def test_ht_does_not_exempt_a_bottom_side_part(binding_envelope):

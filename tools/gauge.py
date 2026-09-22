@@ -82,7 +82,11 @@ TOP_Y = -500
 
 
 def resistor(refdes):
-    return Part(refdes, "R-10k", "0805", BOARD, "R", ("1", "2"), 0.6,
+    """A `Part` is what the symbol and device emitters take, and its `board`
+    is a deck of the stack by type. The gauge's own board is `BOARD` above,
+    on the project; nothing here reads the part's, so it borrows the bottom
+    deck to construct."""
+    return Part(refdes, "R-10k", "0805", "POWER", "R", ("1", "2"), 0.6,
                 value="10k")
 
 

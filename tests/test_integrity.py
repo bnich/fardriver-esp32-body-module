@@ -293,9 +293,38 @@ def test_a_crossing_with_no_declared_kind_is_named(monkeypatch):
                for e in problems(OK, "interface"))
 
 
-def test_an_interface_nobody_defined():
-    bad = OK.replace_connector("J306", interface="PWR-SIDEWAYS")
-    assert any("J306 names 'PWR-SIDEWAYS'" in e for e in problems(bad, "interface"))
+def test_an_interface_the_board_table_does_not_know(monkeypatch):
+    """`Interface` is checked at construction (tests/test_model.py), so what is
+    left to guard is the TABLE: an interface added to the literal but not to
+    INTERFACE_BOARDS joins no pair of boards, and every half naming it says so.
+    A test below holds the literal, INTERFACE_BOARDS and CROSSING to one set."""
+    monkeypatch.setattr(integrity, "INTERFACE_BOARDS",
+                        {k: v for k, v in integrity.INTERFACE_BOARDS.items()
+                         if k != "STACK"})
+    errs = problems(OK, "interface")
+    assert any("J406 names 'STACK', which joins no known pair of boards" in e
+               for e in errs), errs
+    assert any("J308 names 'STACK'" in e for e in errs)
+
+
+def test_a_crossing_declared_outside_the_literal_is_named(monkeypatch):
+    """L4: `is_cabled` reads anything that is not exactly "cable" as a pair, so
+    "Cable" makes a loom answer to the mated-pair rules. The VALUE is held to
+    the literal, as the key is held to the table. `integrity.CROSSING` and
+    `model.CROSSING` are one dict, so `setitem` reaches both."""
+    monkeypatch.setitem(CROSSING, "PWR-OUT", "Cable")
+    errs = problems(CABLED, "interface")
+    assert any("model.CROSSING['PWR-OUT'] is 'Cable', not one of ('pair', 'cable')"
+               in e for e in errs), errs
+
+
+def test_the_interface_literal_the_board_table_and_the_crossing_table_agree():
+    """Three homes for the set of interfaces; a name in one and not another is
+    a crossing that would pick its own rules."""
+    from typing import get_args
+
+    from tools.model import Interface
+    assert set(get_args(Interface)) == set(integrity.INTERFACE_BOARDS) == set(CROSSING)
 
 
 def test_cross_board_net_that_names_no_interface():
@@ -330,12 +359,6 @@ def test_duplicate_gpio():
     assert any("GPIO5 is assigned to 2 nets" in e for e in problems(bad, "gpio"))
 
 
-# ── heights must be numbers ──────────────────────────────────────────────────
-def test_nan_height():
-    errs = problems(OK.replace_part("C1", height_mm=float("nan")), "height")
-    assert errs and "C1" in errs[0]
-
-
 # ── each break is reported as what it is, and nothing else ───────────────────
 @pytest.mark.parametrize("category, broken", [
     ("identity", lambda: OK.with_net(Net("LEVER", (), domain="12V"))),
@@ -344,7 +367,6 @@ def test_nan_height():
     ("floating", lambda: OK.without_pin("R2", "2")),
     ("undeclared", lambda: add_pin(OK, "LEVER", "R2", "3")),
     ("gpio", lambda: OK.replace_net("SIG", gpio="GPIO7")),
-    ("height", lambda: OK.replace_part("C1", height_mm=float("nan"))),
 ])
 def test_one_break_gives_one_category(category, broken):
     found = {e.split(":", 1)[0] for e in integrity.check(broken())}

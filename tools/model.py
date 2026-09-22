@@ -16,9 +16,22 @@ Every field here exists because its absence let a real defect through the
   * `height_confirmed` separates a number read off a datasheet from a number
     somebody hoped for. Three "assumed" heights were wrong while the
     datasheets sat on disk.
+  * ⛔ EVERY `Literal` FIELD IS CHECKED AT CONSTRUCTION (`__post_init__`),
+    against `typing.get_args()` of its own literal so the check and the type
+    cannot drift. Three auditors independently found the class this closes
+    (2026-09-21, H8): every `== "top"` / `== "sets"` / `== "cable"` comparison
+    downstream falls through on `"Top"` / `"Sets"` / `"Cable"`, and the part,
+    standoff or interface VANISHES from the model with every gate green -- a
+    15 mm body at `side="Top"` in an 11.04 mm gap passed 1479 tests. Heights
+    are held to the same standard: `nan` printed `⛔ OVER by nan mm` and
+    `✅ PASS` on one run (H11), and `0.0` removed the tallest connector under
+    OUTPUTS from the stack (M13). A resistor whose `value` no rule can parse
+    is refused for the same reason: `"10K"` skipped D14, GATE-VGS and VR-POWER
+    silently (M11). The message names the field, the value and the allowed set.
 """
+import math
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, get_args
 
 Board = Literal["POWER", "OUTPUTS", "LOGIC"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
@@ -84,8 +97,36 @@ def is_cabled(interface: Interface | None) -> bool:
     An interface with no entry in CROSSING is NOT silently treated as a cable:
     it falls to the stricter mated-pair checks, and integrity.py reports the
     missing declaration rather than letting a crossing pick its own rules.
+    ⛔ Nor is a value outside `Crossing`: "Cable" reads as a pair here, so
+    integrity.py holds every value of the table to the literal.
     """
     return CROSSING.get(interface) == "cable"
+
+
+# --- construction-time validation ---------------------------------------------
+def _literal(owner: str, field: str, value, literal, *, optional: bool = False) -> None:
+    """`value` is one of `literal`'s members (or None, when `optional`)."""
+    if optional and value is None:
+        return
+    allowed = get_args(literal)
+    if value not in allowed:
+        raise ValueError(f"{owner}: {field}={value!r} is not one of {allowed}"
+                         + (" or None" if optional else "")
+                         + " -- every comparison downstream would fall through "
+                           "and the thing would vanish from the model")
+
+
+def _height(owner: str, h, *, zero_ok: bool) -> None:
+    """A height is a finite number >= 0, and 0.0 only for a bare land."""
+    if isinstance(h, bool) or not isinstance(h, (int, float)) or not math.isfinite(h) \
+            or h < 0.0:
+        raise ValueError(f"{owner}: height_mm={h!r} must be a finite number >= 0 -- "
+                         f"an unknown height is an UNCHECKED height, and nan passes "
+                         f"every `total > avail` comparison as False")
+    if h == 0.0 and not zero_ok:
+        raise ValueError(f"{owner}: height_mm=0.0 removes the body from the stack "
+                         f"-- only a connector that is copper only (`land` set) "
+                         f"has no height")
 
 
 @dataclass(frozen=True)
@@ -130,6 +171,19 @@ class Part:
     #: choke's). None: long leads, trimmed to board_params.TAIL when soldered.
     lead_mm: float | None = None
 
+    def __post_init__(self):
+        who = f"Part {self.refdes}"
+        _literal(who, "board", self.board, Board)
+        _literal(who, "kind", self.kind, Kind)
+        _literal(who, "side", self.side, Side)
+        _literal(who, "assembly", self.assembly, Assembly)
+        _height(who, self.height_mm, zero_ok=False)
+        if self.kind == "R" and resistance(self.value) is None:
+            raise ValueError(f"{who}: value={self.value!r} states no resistance "
+                             f"`resistance()` can read ('4k7', '100R', '1M', "
+                             f"'0R') -- D14, GATE-VGS and VR-POWER would skip "
+                             f"it silently")
+
 
 @dataclass(frozen=True)
 class Net:
@@ -142,6 +196,11 @@ class Net:
     #: U401 pin name ("IO7") -- integrity.py checks the two agree.
     gpio: str | None = None
     source: str = ""
+
+    def __post_init__(self):
+        who = f"Net {self.name}"
+        _literal(who, "domain", self.domain, Domain)
+        _literal(who, "interface", self.interface, Interface, optional=True)
 
 
 @dataclass(frozen=True)
@@ -208,6 +267,14 @@ class Connector:
     #: 1.65). None: the generic land pattern.
     hole_mm: float | None = None
 
+    def __post_init__(self):
+        who = f"Connector {self.refdes}"
+        _literal(who, "board", self.board, Board)
+        _literal(who, "side", self.side, Side)
+        _literal(who, "assembly", self.assembly, Assembly)
+        _literal(who, "interface", self.interface, Interface, optional=True)
+        _height(who, self.height_mm, zero_ok=bool(self.land))
+
 
 @dataclass(frozen=True)
 class Standoff:
@@ -235,6 +302,11 @@ class Standoff:
     between: tuple[str, ...] = ()
     seating: Seating = "sets"
     source: str = ""
+
+    def __post_init__(self):
+        who = f"Standoff {self.name}"
+        _literal(who, "seating", self.seating, Seating)
+        _height(who, self.height_mm, zero_ok=False)
 
 
 @dataclass(frozen=True)

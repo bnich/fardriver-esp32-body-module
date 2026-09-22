@@ -12,7 +12,7 @@ from tools.model import ConnPin, Connector, Design, Net, Part
 
 
 def _r(ref):
-    return Part(ref, "RC0805", "0805", "LOGIC", "R", ("1", "2"), 0.6)
+    return Part(ref, "RC0805", "0805", "LOGIC", "R", ("1", "2"), 0.6, value="10k")
 
 
 def _c(ref):

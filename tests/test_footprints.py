@@ -39,7 +39,9 @@ def documents(text):
 
 
 def resistor(ref="R1"):
-    return Part(ref, "R-10k", "0805", "GAUGE", "R", ("1", "2"), 0.6, value="10k")
+    """The gauge's resistor: `board` is a stack deck by type and nothing here
+    reads it (see `tools.gauge.resistor`)."""
+    return Part(ref, "R-10k", "0805", "POWER", "R", ("1", "2"), 0.6, value="10k")
 
 
 def page():

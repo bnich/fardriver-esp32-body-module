@@ -17,7 +17,10 @@ from tools.model import ConnPin, Connector, Design, Part, Standoff
 
 def part(ref, board, height, *, side="top", confirmed=True, package="0805",
          mpn="X", dnp=False):
-    return Part(ref, mpn, package, board, "R", ("1", "2"), height, confirmed,
+    """A BODY with a height and a footprint: kind MECH, because the height
+    model reads neither kind nor value, and a resistor with no value is what
+    the model refuses (M11)."""
+    return Part(ref, mpn, package, board, "MECH", ("1", "2"), height, confirmed,
                 (2.0, 1.25), side=side, dnp=dnp)
 
 
@@ -1094,9 +1097,10 @@ def test_every_unconfirmed_height_is_listed_and_the_load_bearing_ones_named():
 
 @pytest.mark.parametrize("bad", [math.nan, -1.0, None])
 def test_an_unknown_height_is_a_failure_not_a_short_part(bad):
-    d = three_boards().replace_part("L101", height_mm=bad)
-    problems = bp.stack_height(d).problems
-    assert any(p.startswith("height: L101") for p in problems)
+    """The model refuses it at construction (tests/test_model.py), so the
+    stack is never derived from a design carrying one."""
+    with pytest.raises(ValueError, match="L101: height_mm="):
+        three_boards().replace_part("L101", height_mm=bad)
 
 
 def test_a_dnp_part_still_needs_its_room():

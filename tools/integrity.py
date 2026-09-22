@@ -16,10 +16,10 @@ None of these needs electrical judgement to find. They need counting.
 Deliberately dumb, deliberately independent of rules.py: nothing here trusts a
 label. Run it first; a design that fails here is not worth rule-checking.
 """
-import math
 from collections import Counter, defaultdict
+from typing import get_args
 
-from .model import CROSSING, Design, is_cabled
+from .model import CROSSING, Crossing, Design, is_cabled
 
 #: Pins a part may legitimately leave unconnected, by MPN prefix, each because
 #: its DATASHEET says so. A must-tie pin dropped into `nc` makes the "every
@@ -199,11 +199,18 @@ def check(d: Design) -> list[str]:
                         f"joins no known pair of boards")
     # Guard the TABLE, not each crossing: an interface with no declared kind
     # would quietly inherit the pair rules, and a cable that inherits them is
-    # reported for a defect it does not have.
+    # reported for a defect it does not have. The VALUE is held to the literal
+    # too: `is_cabled` reads anything that is not exactly "cable" as a pair, so
+    # "Cable" would inherit the pair rules the same way (L4).
     for iface in INTERFACE_BOARDS:
         if iface not in CROSSING:
             errs.append(f"interface: {iface} has no entry in model.CROSSING, so "
                         f"nothing says whether it is a mated pair or a cable")
+    for iface, kind in CROSSING.items():
+        if kind not in get_args(Crossing):
+            errs.append(f"interface: model.CROSSING[{iface!r}] is {kind!r}, not one "
+                        f"of {get_args(Crossing)} -- is_cabled() reads it as a "
+                        f"pair and asks a loom to face and mirror")
     for iface, (lower, upper) in INTERFACE_BOARDS.items():
         halves = [c for c in d.connectors if c.interface == iface]
         lo = [c for c in halves if c.board == lower]
@@ -248,12 +255,6 @@ def check(d: Design) -> list[str]:
                     errs.append(f"interface: {a.refdes}.{pin} carries "
                                 f"{ta.get(pin)!r} but its mate {b.refdes}.{pin} "
                                 f"carries {tb.get(pin)!r}")
-
-    # -- heights must be numbers ------------------------------------------------
-    for p in d.parts:
-        if math.isnan(p.height_mm):
-            errs.append(f"height: {p.refdes} ({p.mpn}) has no height -- an "
-                        f"unknown height is an UNCHECKED height")
     return errs
 
 
