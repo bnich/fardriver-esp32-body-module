@@ -184,18 +184,30 @@ default is 0.2 mm / 0.2 mm — good for logic, fatal for power. These override i
 the fab's stackup differs, `--rules` takes `--copper-oz` and re-derives. The tool writes the class
 membership from the netlist every run, so a renamed or added net is never in the wrong class.
 
-## Step R1 — planes, before any trace
+## Step R1 — planes, before any trace (owner asked 2026-09-22: "we have 4 layers, should we fill one ground and/or power?" — yes, and a different one per board)
 
-- **Layer 2 (inner 1): GND**, whole board, every board. GND is 152 pins on OUTPUTS, 108 on LOGIC,
-  58 on POWER — a plane, never traces. The placement kept the long connectors at an edge so nothing
-  splits it. ⛔ **On POWER the plane stops at the HV region's 3 mm strip**: no GND copper under the
-  84 V parts (a plane there is 84 V-to-GND at one dielectric thickness — the clearance rule exists
-  for a reason). The 84 V section has its own return, `HV_C1_N` / `HV_C2_N` — those are not GND.
-- **Layer 3 (inner 2): the power pour on OUTPUTS** — `V12` under the three drivers and the buck,
-  fed from `J311`'s contact by two vias-in-pad or a 5 mm neck. On LOGIC and POWER layer 3 is a
-  second GND or `V3P3` pour; the tool's `--rules` output says which per board.
-- **Layers 1 and 4 (outer): traces and the parts.** The bottom layer carries the seven bottom
-  parts' pads and the return paths for the face row.
+Decided from the pin counts, not the textbook. **Layer 2 is GND on every board** (152 pins on
+OUTPUTS, 108 on LOGIC, 58 on POWER — never traces; a solid plane under the top-layer parts gives
+every signal its return and every decoupler a short loop). **Layer 3 differs by what each board
+carries:**
+
+| Board | Layer 3 | Because |
+|---|---|---|
+| **OUTPUTS** | **`V12` pour** under the driver line and the buck | 28 pins at **11.39 A** at the limiters. The pour IS the bus: `J311`'s two power contacts onto it by vias-in-pad or a ≥ 5 mm neck; each `TPS4H160B`'s `VS` pins down to it by **four** vias, not two — the pour is also the drivers' heat spreader, and a via is a thermal path only if there are enough |
+| **LOGIC** | **`V3P3` pour** | 48 pins — the S3, two expanders, every pull-up: a pour for **droop**, not current |
+| **POWER** | **second GND** — no power pour (6 `V12` pins earn none) — **and BOTH inner planes cut back 3 mm from the HV region** | the 14 HV nets sit at up to 160 V; a plane under them is 84 V-to-GND across one 0.2 mm prepreg, which is what the 1.25 mm rule forbids. The 84 V section returns on `HV_C1_N` / `HV_C2_N` — **not GND** |
+
+**Layers 1 and 4 (outer): traces and the parts.** The bottom layer carries the seven bottom parts'
+pads and the face rows' returns.
+
+⛔ **What the planes demand of placement** (and why Part 1 checks it): no long THT connector across
+the short axis — `J308`/`J406` at 73.66 mm would split every inner plane, so they run along X at an
+edge; `J311` under the driver line, or the `V12` pour is fed through a bottleneck; the HV region one
+contiguous blob, or the plane cut-back has holes in it.
+
+`tools/place.py --rules` writes the two pour outlines per board (the `V12` pour's rectangle over the
+driver line; the HV cut-back polygon on POWER) as copper regions into the project, so the owner
+fills them rather than draws them.
 
 ## Step R2 — route by class, in this order (owner, by hand, in the editor)
 
