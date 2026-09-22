@@ -216,6 +216,92 @@ def test_m39_an_enable_named_shdn_is_an_enable():
     assert any("U310" in e and "SHDN" in e for e in fired(bad, "D14"))
 
 
+# ── H4: D14 solves the RESTING voltage, not the existence of a pull-down ─────
+def test_h4_a_pull_up_beside_the_horn_gates_pull_down_rests_it_on():
+    """1 kΩ HORN_GATE → V3P3 beside R307's 10 kΩ: the gate rests at 3.0 V, Q301
+    hard ON, the horn sounding whenever AUX12 is live. 0 violations before."""
+    bad = add(D, _r("R901", "OUTPUTS", "1k"), {"1": "HORN_GATE", "2": "V3P3"})
+    errs = fired(bad, "D14")
+    assert len(errs) == 1 and "Q301" in errs[0] and "rests at 3 V" in errs[0]
+    assert "V_GS(th) minimum 0.65 V" in errs[0] and "aos_ao3400a" in errs[0]
+
+
+def test_h4_a_pull_up_beside_a_load_switch_enable_rests_it_on():
+    """1 kΩ AUX5V_1_EN → V3P3 beside R365's 100 kΩ: 5 V aux 1 ON from power-up,
+    with no firmware, and un-sheddable through Q101's decay (IO-16)."""
+    bad = add(D, _r("R902", "OUTPUTS", "1k"), {"1": "AUX5V_1_EN", "2": "V3P3"})
+    errs = fired(bad, "D14")
+    assert len(errs) == 1 and "U306" in errs[0] and "rests at 3.267 V" in errs[0]
+    assert "V_IL 0.66 V" in errs[0] and "IO-16" in errs[0]
+
+
+def test_h4_a_499k_from_the_84_v_gate_to_ground_rests_the_p_fet_on():
+    """499 kΩ D13_GATE → GND against R110's 100 kΩ to B+: the gate rests 14 V
+    below its source with the key OFF -- Q101 hard ON, silently."""
+    bad = add(D, _r("R903", "POWER", "499k", "1206"), {"1": "D13_GATE", "2": "GND"})
+    errs = fired(bad, "D14")
+    assert len(errs) == 1 and "Q101" in errs[0] and "V_GS -14.023 V" in errs[0]
+    assert "V_GS(th) minimum 2 V" in errs[0]
+
+
+def test_m09_a_load_switch_enable_tied_to_a_rail_is_a_channel_nobody_controls():
+    """U306.EN on V5: permanently ON, breaking IO-16. A regulator's enable on
+    a rail (U305 on V12, U405 on V5) is the always-on connection its datasheet
+    gives, and passes."""
+    errs = fired(move(D, "U306", "EN", "V5"), "D14")
+    assert len(errs) == 1 and "U306" in errs[0] and "tied to the rail 'V5'" in errs[0]
+    assert "ALWAYS_ON_ENABLE" in errs[0]
+    for ref in ("U305", "U405"):
+        assert D.part(ref).mpn[:6] in "".join(rules.ALWAYS_ON_ENABLE), ref
+
+
+def test_h4_the_real_gates_and_enables_rest_at_their_off_level():
+    """The control, stated as figures: every N-FET gate and every enable at
+    0 V; Q101's gate at its source's 84 V (V_GS 0); KSW -- a wire, a command --
+    is open at rest, so Q105's gate is not held up by it."""
+    ix = rules._index(D)
+    for q in ix.fets():
+        g, s = ix.nets_of_pin(q.refdes, "G")[0], ix.nets_of_pin(q.refdes, "S")[0]
+        vg, _ = rules._resting(ix, g, reference=s)
+        vs, _ = rules._resting(ix, s, reference=s)
+        assert vg == vs == (84.0 if q.refdes == "Q101" else 0.0), (q.refdes, vg, vs)
+    assert rules._resting(ix, "D13_EN", reference="GND") == (0.0, [])
+    assert ix.divided("D13_EN")[0] > 7        # the key-ON figure the solver knows
+    for ref in ("U306", "U307", "U308", "U309", "U301", "U302", "U303"):
+        for pin in ("EN", "DIAG_EN"):
+            for net in ix.nets_of_pin(ref, pin):
+                assert rules._resting(ix, net)[0] == 0.0, (ref, pin)
+    assert fired(D, "D14") == []
+
+
+def test_h4_an_unlisted_fet_resting_off_its_source_is_refused_not_guessed():
+    bad = add(D, _r("R901", "OUTPUTS", "1k"), {"1": "HORN_GATE", "2": "V3P3"})
+    bad = bad.replace_part("Q301", mpn="SI2302")
+    errs = fired(bad, "D14")
+    assert any("Q301" in e and "DATASHEET_VGS_TH_MIN has no line" in e for e in errs)
+
+
+def test_h4_a_gate_resting_under_its_threshold_is_off():
+    """Near the line, the right way round: 100 kΩ HORN_GATE → V3P3 against
+    the 10 kΩ pull-down rests the gate at 0.30 V, under the AO3400A's 0.65."""
+    ok = add(D, _r("R901", "OUTPUTS", "100k"), {"1": "HORN_GATE", "2": "V3P3"})
+    assert fired(ok, "D14") == []
+    on = add(D, _r("R901", "OUTPUTS", "27k"), {"1": "HORN_GATE", "2": "V3P3"})
+    assert any("Q301" in e and "rests at 0.892 V" in e for e in fired(on, "D14"))
+
+
+def test_m39c_an_enable_named_ce_or_on_is_an_enable():
+    """M9: `CE` and `ON` are the other names a load switch's enable goes by;
+    each floating (no resistor to GND) is the same D14 failure as `EN`."""
+    for pin in ("CE", "ON", "PWR_ON"):
+        part = Part("U310", "TPS22918", "SOT-23-6", "OUTPUTS", "IC",
+                    ("VIN", "VOUT", "GND", pin), 1.2, v_max=6.5)
+        bad = add(D, part, {"VIN": "V5AUX", "VOUT": ("AUX5V_9", "5V"), "GND": "GND",
+                            pin: ("AUX5V_9_EN", "3V3")})
+        errs = fired(bad, "D14")
+        assert any("U310" in e and f" {pin} on 'AUX5V_9_EN'" in e for e in errs), (pin, errs)
+
+
 def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatch):
     """DIAG_EN matches the enable family and has no resistor to ground: what
     makes that correct is TI's own pulldown, typed in INTERNAL_PULLDOWN. Empty

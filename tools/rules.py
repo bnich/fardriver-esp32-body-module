@@ -1028,8 +1028,8 @@ def bus_order(d: Design) -> list[str]:
 #: (`nEN`, `/EN`), and a qualified one (`DIAG_EN`). ⛔ Never just "EN": the
 #: branch below matched that one string, so a part naming its enable anything
 #: else walked straight past the rule that exists for it.
-ENABLE_PIN = re.compile(r"(?i)[/n]?(?:EN|ENABLE|SHDN|SHUTDOWN)\d?"
-                        r"|\w+_(?:EN|ENABLE|SHDN)")
+ENABLE_PIN = re.compile(r"(?i)[/n]?(?:EN|ENABLE|SHDN|SHUTDOWN|CE|ON)\d?"
+                        r"|\w+_(?:EN|ENABLE|SHDN|CE|ON)")
 #: Pins a part holds OFF ITSELF, by MPN prefix. ⛔ An entry here is a DATASHEET
 #: STATEMENT, never a convenience: TI SLVSCV8E Table 5-1 (p.4-5) marks INx,
 #: DIAG_EN, SEL, SEH and THER "internal pulldown", and §6.5 (p.8) gives the
@@ -1044,7 +1044,92 @@ INTERNAL_PULLDOWN = {
 }
 
 
+#: |V_GS(th)| MINIMUM per FET, from its datasheet: the gate-source voltage at
+#: which the most sensitive unit begins to conduct. D14 holds every gate's
+#: RESTING voltage under it. (prefix, volts, source). ⛔ A FET whose gate rests
+#: off its source with no line here is REFUSED, not passed at a guessed figure:
+#: the AO3400A's 0.65 V is under any "safe universal" 1 V.
+DATASHEET_VGS_TH_MIN: tuple[tuple[str, float, str], ...] = (
+    ("AO3400A", 0.65, "AOS AO3400A rev 3 (aos_ao3400a_C20917.pdf) p.2: V_GS(th) 0.65 V min, "
+                      "I_D 250 µA"),
+    ("BSS127", 1.4, "Infineon BSS127 rev 2.01 (infineon_bss127_C152611.pdf) p.2: V_GS(th) "
+                    "1.4 V min, I_D 8 µA"),
+    ("IXTA26P20P", 2.0, "IXYS DS99913D (ixys_ds99913d.pdf) p.1: V_GS(th) -2.0 V min, I_D -250 µA"),
+    ("IXTP26P20P", 2.0, "IXYS DS99913D (ixys_ds99913d.pdf) p.1: V_GS(th) -2.0 V min, I_D -250 µA"),
+)
+#: V_IL -- the most an active-high enable may rest at and still read LOW --
+#: per part, from its datasheet. (prefix, volts, source). A part with no line
+#: is held to V_IL_DEFAULT.
+DATASHEET_V_IL: tuple[tuple[str, float, str], ...] = (
+    ("TPS2553", 0.66, "TI SLVS841F (ti_tps2553.pdf) p.6 §7.3: V_IL 0.66 V max on EN"),
+    ("TPS4H160", 0.8, "TI SLVSCV8E (ti_tps4h160.pdf) p.8: V_IL 0.8 V max"),
+    ("LM73605", 0.3, "TI SNVSAH5A (ti_lm73605.pdf) p.6: V_EN_VCC_L 0.3 V, EN falling"),
+)
+#: The TTL/CMOS convention, for a part with no line above. ⚠️ Not universal:
+#: the TPS2553's own figure is 0.66 V, which is why the table exists.
+V_IL_DEFAULT = 0.8
+#: A gate or enable within this of its OFF level rests OFF; the solver rounds.
+_REST_TOL_V = 0.05
+#: ICs whose ENABLE may sit on a rail: a REGULATOR making a rail the design
+#: needs the moment its input appears. Its being always on is the point; what
+#: the firmware sheds are the loads behind it. Any other IC's enable on a rail
+#: -- a LOAD SWITCH in particular -- is a channel the key-off shed (IO-16)
+#: can never release, and fails D14. mpn prefix -> why, from the netlist's
+#: own source for the part.
+ALWAYS_ON_ENABLE = {
+    "LM73605": "the 5 V aux buck: EN straight to V12 is TI's own connection "
+               "(SNVSAH5A p.4 'Can be tied to PVIN'); the four TPS2553 behind it "
+               "are what the firmware sheds",
+    "TLV767": "the 3.3 V LDO: EN to IN ('can be connected to the input pin', "
+              "SLVSE84D) brings the logic rail up with the 5 V -- the S3 cannot "
+              "enable its own supply",
+}
+
+
+def _resting(ix: _Ix, net: str, reference: str | None = None) -> tuple[float, list[str]]:
+    """The voltage `net` rests at with every command at rest: its fitted
+    resistor network solved with every STIFF net at its declared voltage,
+    `reference` (a FET's own source net, whatever its stiffness) at its
+    declared voltage, and every other source -- a wire from outside the box,
+    the key tap -- HIGH-IMPEDANCE, as an open switch leaves it. Every pin that
+    is not a resistor (an MCU output in reset, a FET channel off) is open.
+    Returns (volts, the fixed nets above 0 V it is solved against)."""
+    held = lambda n: ix.is_stiff(n) or n == reference
+    if held(net):
+        return ix.declared(net) or 0.0, [net]
+    nodes, seen, queue, edges = [], {net}, deque([net]), []
+    while queue:
+        x = queue.popleft()
+        nodes.append(x)
+        for other, ohms, _ref in ix._resistors(x):
+            edges.append((x, other, max(ohms, 1e-3)))
+            if other not in seen:
+                seen.add(other)
+                if not held(other):
+                    queue.append(other)
+    fixed = {n: (ix.declared(n) or 0.0) for n in seen if held(n)}
+    if not fixed:
+        return 0.0, []
+    v = _solve(ix, nodes, edges, fixed)
+    return round(v.get(net, 0.0), 3), sorted(n for n, val in fixed.items() if val > 0)
+
+
+def _datasheet(table, mpn: str):
+    return next(((v, src) for prefix, v, src in table if mpn.upper().startswith(prefix)), None)
+
+
 def d14_gate_bias(d: Design) -> list[str]:
+    """Every FET gate and every IC enable RESTS OFF: not merely "a bias
+    resistor exists", but V_GS solved at rest is under the part's V_GS(th)
+    minimum, and an enable's resting voltage is under its V_IL.
+
+    Until 2026-09-21 this asked only whether a pull-down existed (H4). A 1 kΩ
+    pull-up beside the fitted 10 kΩ pull-down passed, with the horn FET hard
+    ON; a 1 kΩ pull-up on a TPS2553 enable passed, with 5 V aux 1 on from
+    power-up and un-sheddable through Q101's decay (IO-16); a 499 kΩ from
+    Q101's gate to ground passed, with the 84 V P-FET at V_GS = -14 V key-OFF.
+    `_resting` solves what `ix.divided` solves, but against the rails only:
+    a wire from outside the box (KSW) is a command, and at rest it is open."""
     ix = _index(d)
     errs = []
     for q in ix.fets():
@@ -1067,6 +1152,26 @@ def d14_gate_bias(d: Design) -> list[str]:
                 f"from its gate net {gate[0]!r} to its SOURCE net {source[0]!r}. "
                 f"OFF means V_GS = 0; a resistor to any other rail biases it ON "
                 f"or nowhere.")
+            continue
+        if q.dnp:
+            continue
+        vg, held = _resting(ix, gate[0], reference=source[0])
+        vs, _ = _resting(ix, source[0], reference=source[0])
+        toward_on = (vg - vs) if q.kind == "NFET" else (vs - vg)
+        if toward_on <= _REST_TOL_V:
+            continue
+        line = _datasheet(DATASHEET_VGS_TH_MIN, q.mpn)
+        where = (f"rests at {vg:g} V against its source {source[0]!r} at {vs:g} V "
+                 f"(V_GS {'+' if q.kind == 'NFET' else '-'}{toward_on:g} V, held by "
+                 f"{', '.join(held) or 'nothing'})")
+        if line is None:
+            errs.append(f"D14: {q.refdes} ({q.kind} {q.mpn}) gate {gate[0]!r} {where}, "
+                        f"and DATASHEET_VGS_TH_MIN has no line for it: an unstated "
+                        f"threshold is an unchecked gate.")
+        elif toward_on > line[0]:
+            errs.append(f"D14: {q.refdes} ({q.kind} {q.mpn}) gate {gate[0]!r} {where}: "
+                        f"above its V_GS(th) minimum {line[0]:g} V ({line[1]}), so it "
+                        f"rests ON with no firmware running.")
     # An IC's ENABLE is a gate by another name: high-Z on it is a load whose
     # state nobody chose. The rule checked FET gates only until the aux block
     # put four load switches on expander bits that come out of reset as
@@ -1093,17 +1198,37 @@ def d14_gate_bias(d: Design) -> list[str]:
             continue
         internal = next((v for k, v in INTERNAL_PULLDOWN.items()
                          if p.mpn.startswith(k)), frozenset())
+        always_on = next((why for k, why in ALWAYS_ON_ENABLE.items()
+                          if p.mpn.startswith(k)), None)
+        v_il = _datasheet(DATASHEET_V_IL, p.mpn)
+        limit, src = v_il if v_il else (V_IL_DEFAULT, "V_IL_DEFAULT, the TTL/CMOS convention")
         for pin in ix.pins_of(p):
             if not ENABLE_PIN.fullmatch(pin) or pin in internal:
                 continue
             for net in ix.nets_of_pin(p.refdes, pin):
                 if ix.is_stiff(net):
+                    if always_on is None:
+                        errs.append(
+                            f"D14: {p.refdes} ({p.mpn}) {pin} is tied to the rail "
+                            f"{net!r} ({ix.declared(net) or 0:g} V): enabled for as "
+                            f"long as the rail is up, which the key-off shed "
+                            f"(IO-16) can never release. Only a rail REGULATOR's "
+                            f"enable may sit on a rail (ALWAYS_ON_ENABLE); a load "
+                            f"switch's is a channel no firmware controls.")
                     continue
                 if not any(_joins(ix, r, [net], ["GND"]) for r in ix.parts.values()
                            if r.kind == "R" and not r.dnp):
                     errs.append(f"D14: {p.refdes} ({p.mpn}) {pin} on {net!r} "
                                 f"has no fitted resistor to GND. Every enable "
                                 f"biases OFF from reset (D14).")
+                    continue
+                v, held = _resting(ix, net)
+                if v > limit + _REST_TOL_V:
+                    errs.append(
+                        f"D14: {p.refdes} ({p.mpn}) {pin} on {net!r} rests at {v:g} V, "
+                        f"held by {', '.join(held)}: above V_IL {limit:g} V ({src}), "
+                        f"so it is ENABLED from power-up with no firmware, and "
+                        f"nothing the firmware does can shed it (IO-16).")
     return errs
 
 
