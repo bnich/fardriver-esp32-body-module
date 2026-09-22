@@ -957,13 +957,14 @@ def main(argv=None, c: Circuit | None = None) -> int:
           f"     a {risk.pulse_s*1e3:.0f} ms equal-energy pulse. ⛔ FIRMWARE "
           f"CONTRACT: the aux outputs are released on KEY_SENSE going inactive, "
           f"inside the {risk.hold_s*1e3:.0f} ms hold.\n"
-          f"     A RESET is NOT the exposure -- BECAUSE every expander's RESET rides the "
-          f"S3's EN net (IO-22): an S3 reset resets the chip that commands every aux\n"
-          f"     output, every bit returns to an input, the TPS4H160B INx pull-downs and "
-          f"the TPS2553 EN pull-downs take over (D14), and the load sheds within the\n"
-          f"     reset. The exposure is a HANG that holds the outputs ON without tripping "
-          f"the watchdog, through the SHORTEST hold: {risk.hold_s*1e3:.0f} ms is the fast\n"
-          f"     FET at this voltage; a slow FET at the LVC holds ~300 ms.\n"
+          f"     A POWER-UP, PROGRAMMER or BROWN-OUT reset sheds the load: every expander's "
+          f"RESET rides the S3's EN net (IO-22), so a reset that takes EN low resets the\n"
+          f"     chip that commands every aux output and the drivers' own pull-downs take over "
+          f"(D14). ⛔ A WATCHDOG or SOFTWARE reboot does NOT: EN is an input the S3 cannot\n"
+          f"     drive (S3 datasheet pin table), so the expanders keep driving through it. "
+          f"The exposure is a HANG or a REBOOT inside the hold -- {risk.hold_s*1e3:.0f} ms is\n"
+          f"     the fast FET at this voltage; a slow FET at the LVC holds ~300 ms, and the "
+          f"reboot-to-write time is ~0.5 s, unmeasured. ⬜ Owner item 20.\n"
           f"  ✔ M17: scope a deliberate key-off under load.")
     print()
 

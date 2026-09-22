@@ -392,16 +392,25 @@ def test_the_un_shed_case_is_still_over_the_line():
 
 def test_the_report_keeps_the_un_shed_figure_beside_the_gate(capsys):
     """⛔ Do not delete the 162 W. Whoever reads the PASS has to see what the
-    pass depends on, and how narrow the exposure actually is: a reset sheds
-    the load by ITSELF (every driver enable comes out of reset pulled down),
-    so what is left is a hang that holds the outputs on without tripping the
-    watchdog, through the decay. Not a blanket "firmware might fail"."""
+    pass depends on, and EXACTLY which resets shed the load and which do not.
+    IO-22 put every expander's RESET on the S3's EN, so a reset that takes EN
+    low -- power-up, the programmer on J408, a brown-out through U406 -- resets
+    the chip that commands the aux outputs. ⛔ A watchdog or software reboot
+    does NOT: EN is an input the S3 cannot drive (S3 datasheet pin table), so
+    the expanders keep driving through it. The exposure is therefore a hang OR
+    a reboot inside the hold (audit H1; owner item 20). The report must say
+    both halves -- a version that claimed "any restart sheds" was false and
+    stood for a day (2026-09-21)."""
     assert ss.main([], ss.SPEC) == 0
     out = capsys.readouterr().out
     assert "RESIDUAL RISK" in out
     assert "162 W" in out and "138 W" in out and "53 W" in out
     assert "IO-16" in out and "KEY_SENSE" in out
-    assert "RESET is NOT the exposure" in out and "HANG" in out
+    # both halves of the truth, and the false claim absent
+    assert "POWER-UP, PROGRAMMER or BROWN-OUT reset sheds" in out
+    assert "WATCHDOG or SOFTWARE reboot does NOT" in out
+    assert "HANG or a REBOOT" in out
+    assert "any restart sheds" not in out and "RESET is NOT the exposure" not in out
 
 
 # --- solving for the resistor ----------------------------------------------------
