@@ -705,9 +705,9 @@ otherwise, and a 2.0 mm `V5AUX` run cannot leave a 1.5 mm chip pad. The neck is 
 short in the saved file, and copper the tool's own check would then refuse.
 
 A refusal names the pair and what stopped it, and the owner necks it by hand or moves the part with
-`--stack --keep`. **On the placement of 2026-09-22** the tool wrote 21 runs on POWER (the 12 V bus,
-its twin, and ten legs of the 84 V chain), 14 on OUTPUTS, 16 on CTRL and none on LOGIC, and refused
-23 · 32 · 14 · 0. Two things the refusals say, and both are findings rather than noise:
+`--stack --keep`. **On the placement of 2026-09-22** the tool wrote 21 runs on POWER — four
+legs of the 12 V bus, four of its ground twin and thirteen of the 84 V chain — 14 on OUTPUTS, 16 on
+CTRL and none on LOGIC, and refused 23 · 32 · 14 · 0. Two things the refusals say, and both are findings rather than noise:
 
 - ⚠️ **The HV class's 1.25 mm cannot be met between the 84 V gate network's own parts.** Twenty-one
   of POWER's 23 refusals are one 84 V net's run passing within 1.25 mm of another 84 V net's pad —
@@ -781,6 +781,10 @@ inner layers, 84 V end included, with 30 pack-voltage segments inside them and 7
 through them at 0.2 mm. ⭐ **The cause was not the autorouter.** The PCB's RULE records held one
 0.2 mm / 0.2 mm rule and no selector named any other: **R0 had never been done**, because the
 `--rules` option was planned and not built. The autorouter obeyed the only rule it was given.
+
+⚠️ **It did not finish, either**, which the check does not say because completion is the editor's
+own count: 96 of POWER's 100 netted pins have a trace landing on them and the four that do not are
+all `U202`'s — the 5 V brick was left entirely unconnected.
 
 ⛔ **So a route is redone, not patched:** `--strip-routing BOARD` takes that board's LINE, VIA,
 POUR and POURED records off — proven lossless on everything else — and the loop starts again at
