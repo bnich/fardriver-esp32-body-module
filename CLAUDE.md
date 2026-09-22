@@ -66,6 +66,16 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   leg landed passes every rule.
 - ⛔ **Never close a gap on paper only.** A part counts as protection when both its pins are on nets,
   not when a comment says so.
+- ⛔ **A through-hole part occupies BOTH faces of its board.** Its pads are copper on both sides and
+  its pins stand proud of the far face, so a bottom-face terminal or brick takes the same plan area
+  as a top-face one — the two faces are NOT independent. `board_fit` and `place.py` both assumed
+  they were (2026-09-22): the first placement passed 16 checks with `J314`'s pins inside `J303`'s
+  body and `J101`'s inside the brick's case, and only the picture showed it. `board_fit` now measures
+  ONE strip per board edge (`edge_budget`, 228 mm between the M3 corners) and counts an underside
+  through-hole body too deep to sit behind the row; `place.py` check 17 forbids a through-hole pad
+  under any body on the other face. ✅ **Look at `--draw`'s picture after every placement** — a
+  number proves parts do not collide on the axis it measured; a picture proves they are where you
+  think.
 - A height or rating is "confirmed" only if it was read in a manufacturer PDF — say which.
 - The generated folder under `build-eprj3/` is a build artefact: never hand-edit it, never commit it.
   **The `.eprj2` lives in ONE place: `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2`** (owner,
