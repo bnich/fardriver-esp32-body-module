@@ -225,12 +225,26 @@ def _worst_pack(d, width):
     return worst, face
 
 
-def pack_cliff(d, tol=1e-7):
-    """Where the pack steps, found by bisection on the board's WIDTH.
+#: The sweep's resolution in the board's width. Every step the packer takes is
+#: a sum of body widths and courtyards, all stated to 0.01 mm, so the edge it
+#: finds is exact to this grid and the strict clearance test below can hold
+#: BOARD_W - edge to 1.00 without a tolerance.
+SWEEP_MM = 0.01
+#: The narrowest width the downward sweep will visit before declaring there is
+#: no step under the board at all.
+SWEEP_FLOOR_MM = 20.0
 
-    -> (edge_mm, face, below_mm, above_mm): the narrowest width whose pack a
-    board the cavity allows can carry, the face that binds there, and the pack
-    just below that width and at it.
+
+def _carryable(d, width) -> bool:
+    return _worst_pack(d, width)[0] <= 0.90 * _cavity_board_caps()[0]
+
+
+def pack_cliff(d):
+    """The step NEAREST to BOARD_W, found by sweeping the board's WIDTH.
+
+    -> (edge_mm, face, below_mm, above_mm): the narrowest width, on the
+    SWEEP_MM grid, from which every width up to BOARD_W is carryable; the face
+    that binds there; and the pack one step below that width and at it.
 
     A width is CARRYABLE when the binding face packs into 0.90 x the longest
     board the cavity allows -- 0.90 x 246.0 = 221.40 mm. The 0.90 is the same
@@ -238,29 +252,48 @@ def pack_cliff(d, tol=1e-7):
     without it the question is meaningless, because a pack at 99 % of the board
     is not an envelope anybody would choose.
 
-    So the edge is the boundary between "no length the measured cavity allows
-    absorbs this pack" and "one does", and the step across it is the fall that
-    boundary exists for.
+    ⛔ THE PACK IS NOT MONOTONE IN THE WIDTH (`board_params`, at BOARD_W: a
+    0.08 mm carryable window at [39.00, 39.08) under a 24.40 mm fall), so the
+    step is never bisected for. Bisection assumes one crossing; on a set of
+    nine bodies whose pack was carryable on [40.00, 40.50), not on [40.50,
+    41.50) and carryable again from 41.50, it converged on 40.00 and reported
+    1.84 mm of clearance while the nearest step stood 0.34 mm under the board
+    (H12, 2026-09-21). The sweep walks DOWN from BOARD_W one SWEEP_MM at a time
+    and stops at the first width that is not carryable, so the edge it names
+    is the nearest one by construction: nothing between it and the board was
+    skipped.
+
+    When BOARD_W itself is not carryable the step is ABOVE the board, and the
+    sweep walks UP to the widest board the cavity allows for the first width
+    that is; `cliff_problems` then says the boards have to be re-shaped. If no
+    width up to the cap is carryable the design no longer fits the box, which
+    is a different failure, and this says so instead of returning a number.
     """
-    lo, hi = 20.0, _cavity_board_caps()[1]
-    assert _worst_pack(d, lo)[0] > 0.90 * _cavity_board_caps()[0], (
-        f"⛔ THE SEARCH HAS NO BRACKET: a {lo} mm board already packs into a "
-        f"length the cavity carries, so the step this guard exists for is not "
-        f"between {lo} and {hi} mm. Widen the search or re-run the envelope one.")
-    assert _worst_pack(d, hi)[0] <= 0.90 * _cavity_board_caps()[0], (
-        f"⛔ NO BOARD THE MEASURED CAVITY ALLOWS CLOSES THE PACK: at the widest "
-        f"it permits ({hi:.2f} mm) the binding face still packs into "
-        f"{_worst_pack(d, hi)[0]:.2f} mm, which needs more than the "
-        f"{_cavity_board_caps()[0]:.1f} mm of length the cavity permits. This is "
-        f"not a clearance problem -- the design no longer fits the box.")
-    while hi - lo > tol:
-        mid = (lo + hi) / 2
-        if _worst_pack(d, mid)[0] <= 0.90 * _cavity_board_caps()[0]:
-            hi = mid
-        else:
-            lo = mid
-    above, face = _worst_pack(d, hi)
-    return round(hi, 4), face, _worst_pack(d, lo)[0], above
+    thr = 0.90 * _cavity_board_caps()[0]
+    cap = _cavity_board_caps()[1]
+    if _carryable(d, bp.BOARD_W):
+        w = round(bp.BOARD_W, 2)
+        while w > SWEEP_FLOOR_MM and _carryable(d, round(w - SWEEP_MM, 2)):
+            w = round(w - SWEEP_MM, 2)
+        assert w > SWEEP_FLOOR_MM, (
+            f"⛔ NO STEP UNDER THE BOARD: every width from {bp.BOARD_W:.2f} down to "
+            f"{SWEEP_FLOOR_MM} mm packs into a length the cavity carries, so the "
+            f"step this guard exists for is not there to find. Re-run the envelope "
+            f"search.")
+        edge = w
+    else:
+        w = round(bp.BOARD_W, 2)
+        while w < cap and not _carryable(d, round(w + SWEEP_MM, 2)):
+            w = round(w + SWEEP_MM, 2)
+        assert w < cap, (
+            f"⛔ NO BOARD THE MEASURED CAVITY ALLOWS CLOSES THE PACK: from "
+            f"{bp.BOARD_W:.2f} mm up to the widest it permits ({cap:.2f} mm) the "
+            f"binding face still packs into more than the {thr:.2f} mm a "
+            f"{_cavity_board_caps()[0]:.1f} mm board carries at 90 %. This is not "
+            f"a clearance problem -- the design no longer fits the box.")
+        edge = round(w + SWEEP_MM, 2)
+    above, face = _worst_pack(d, edge)
+    return edge, face, _worst_pack(d, round(edge - SWEEP_MM, 2))[0], above
 
 
 def cliff_problems(d) -> list[str]:
@@ -311,11 +344,12 @@ def test_the_pack_cliff_is_derived_from_the_packer():
     width they take a shelf each and POWER top packs into 225.13 mm; at it they
     share one and the same face packs into 218.23 mm, a 6.90 mm step.
 
-    ⛔ Nothing here types a width as the answer. `pack_cliff` bisects on the
-    width and asks the packer, so the guard finds the step wherever the
-    geometry puts it -- which is how it found this one after the two bodies
-    that made the old one stopped being the binding pair. The mutation tests
-    below move it deliberately, from both bodies and from the courtyard."""
+    ⛔ Nothing here types a width as the answer. `pack_cliff` sweeps down the
+    width from BOARD_W and asks the packer at every 0.01 mm, so the guard
+    finds the step wherever the geometry puts it -- which is how it found this
+    one after the two bodies that made the old one stopped being the binding
+    pair. The mutation tests below move it deliberately, from both bodies and
+    from the courtyard."""
     from tools import netlist
     edge, face, below, above = pack_cliff(netlist.current())
     assert face == "POWER top"
@@ -440,6 +474,51 @@ def test_the_courtyard_is_in_the_same_sum_and_moves_the_cliff_too(monkeypatch):
     monkeypatch.setattr(bf, "COURTYARD", 0.70)
     with pytest.raises(AssertionError, match="no longer fits the box"):
         pack_cliff(d)
+
+
+def _nine_bodies():
+    """A5's set (audit 2026-09-21, H12): on OUTPUTS top the worst pack is
+    carryable on [40.00, 40.50), NOT on [40.50, 41.50) and carryable again
+    from 41.50, so the step nearest BOARD_W is at 41.50 -- 0.34 mm under the
+    41.84 board, a 20.00 mm fall -- with a second, carryable window below it.
+    Bisection from (20, 43.35) visits 31.675, 37.5125, 40.43125: the third
+    lands inside the lower window and it converges on 40.00."""
+    def body(ref, fp):
+        return Part(ref, "X", "0805", "OUTPUTS", "MECH", ("1", "2"), 1.0, True, fp)
+    return Design(parts=(
+        body("F1", (38.0, 67.0)),    # 39.0 across, 68 deep: its own shelf
+        body("F2", (38.0, 29.0)),    # 39.0 across, 30 deep: its own shelf
+        body("T1", (55.0, 12.0)),    # lies lengthwise: 13 across, 56 deep
+        body("T2", (55.0, 12.0)),
+        body("X1", (39.5, 8.4)),     # flips at 40.5: 9.4 across, riding the T shelf
+                                     #   -> across, 40.5 on a 9.4 shelf of its own
+        body("B1", (20.5, 20.5)),    # 21.5 across and deep
+        body("A1", (19.0, 19.0)),    # 20.0: A+A pair at 40.0, B+A pair at 41.5
+        body("A2", (19.0, 19.0)),
+        body("A3", (19.0, 19.0)),
+    ))
+
+
+def test_a_carryable_window_below_the_step_does_not_hide_it():
+    """⚠️ THE MUTATION FOR H12: the pack is not monotone, and the guard has to
+    name the step NEAREST the board, not the first one a search happens on.
+    The sweep's own table first, so the fixture is what its comment says."""
+    d = _nine_bodies()
+    thr = 0.90 * _cavity_board_caps()[0]
+    table = {w: _worst_pack(d, w)[0] for w in (39.00, 40.00, 40.49, 40.50, 41.49, 41.50)}
+    assert table[39.00] == pytest.approx(235.50) and table[39.00] > thr
+    assert table[40.00] == pytest.approx(215.50) and table[40.00] <= thr
+    assert table[40.49] == pytest.approx(215.50) and table[40.49] <= thr
+    assert table[40.50] == pytest.approx(224.90) and table[40.50] > thr
+    assert table[41.49] == pytest.approx(224.90) and table[41.49] > thr
+    assert table[41.50] == pytest.approx(204.90) and table[41.50] <= thr
+    edge, face, below, above = pack_cliff(d)
+    assert edge == 41.50 and face == "OUTPUTS top"
+    assert (below, above) == (pytest.approx(224.90), pytest.approx(204.90))
+    (problem,) = cliff_problems(d)
+    assert problem.startswith("cliff clearance:")
+    assert "steps at 41.50 mm" in problem and "0.34 mm above it" in problem
+    assert "falls 20.00 mm" in problem
 
 
 def test_the_cavity_the_envelope_requires_is_stated_against_m18():
