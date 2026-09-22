@@ -65,10 +65,10 @@ TVS_ARRAY_PINS = ("K1", "A2", "K3", "K4", "A5", "K6")
 # ── manufacturer documents cited below (local copies are never committed) ────
 _DS_WROOM = "Espressif ESP32-S3-WROOM-1/1U datasheet v1.8 (esp32s3_wroom1.pdf)"
 _DS_HDG = "Espressif ESP32-S3 Hardware Design Guidelines (esp32s3_hdg.pdf)"
-_DS_TPS = "TI SLVSCV8E (tps4h160.pdf)"
+_DS_TPS = "TI SLVSCV8E (ti_tps4h160.pdf)"
 _DS_MCP = "Microchip DS20001952D (mcp23017.pdf)"
 _DS_HVD = "TI SLOS346O (sn65hvd230.pdf)"
-_DS_TLV = "TI SLVSE84D (mine_tlv767.pdf)"
+_DS_TLV = "TI SLVSE84D (ti_tlv767.pdf)"
 _DS_TDK = "TDK-Lambda CN50/100/150B110 instruction manual (tdk_cn50-150b110_apl.pdf)"
 _DS_TDK_CAT = "TDK-Lambda CN-B110 datasheet (tdk_cn-b_e.pdf)"
 _DS_CINCON = "Cincon EC7BW-110 datasheet V15 (cincon_Datasheet-EC7BW-110-series.pdf)"
@@ -76,16 +76,16 @@ _DS_WE = "Würth 7448022010 datasheet rev 002.000 (we7448022010.pdf)"
 _DS_WE_3A = "Würth 7448023005 datasheet rev 002.000 (we7448023005.pdf)"
 _DS_TDK_OUT = "TDK-Lambda CN50/100/150B110 outline CA952-02-01A (tdk_cn50-150b110_out.pdf)"
 _DS_IXYS = "IXYS DS99913D (01/13), IXTA/IXTP26P20P (ixys_ds99913d.pdf)"
-_DS_BSS127 = "Infineon BSS127 rev 2.1 (bss127.pdf)"
+_DS_BSS127 = "Infineon BSS127 rev 2.01 (infineon_bss127_C152611.pdf)"
 _DS_SMS = "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf)"
-_DS_SMCJ = "Littelfuse SMCJ series datasheet (littelfuse_smcj_series_2025_wayback.pdf)"
+_DS_SMCJ = "Vishay SMCJ series, document 88394 rev 20-Jul-2020 (vishay_smcj_88394_C1976063.pdf)"
 _DS_SMF = "SMF series rev 2.2, Zhuhai Hongjiacheng (smf_series_C19077499.pdf)"
 _DS_LM736 = "TI SNVSAH5A (ti_lm73605.pdf), LM73605/LM73606"
 _DS_TPS2553 = "TI SLVS841F (ti_tps2553.pdf), TPS2552/TPS2553"
 _DS_IHLP = "Vishay IHLP-2525CZ-01, rev. 09-Dec-2019 (vishay_ihlp2525cz01.pdf)"
 _DS_VY2 = "Vishay doc 28535 (vishay_vy2_series_doc28535.pdf)"
 _DS_KXJ = "Chemi-Con KXJ series (kxj.pdf)"
-_DS_SPT = "Schurter SPT 5x20 (spt.pdf)"
+_DS_SPT = "Schurter SPT 5x20 (schurter_spt_5x20.pdf)"
 _DS_KX381 = ("Kangnex WJ15EDGRM-3.81 and WJ15EDGKM-3.81 drawings rev A "
              "(kangnex_15EDGRM-3.81.pdf, kangnex_15EDGKM-3.81.pdf)")
 _DS_KX508 = ("Kangnex WJ2EDGRM-5.08 and WJ2EDGKM-5.08 drawings rev A "
@@ -98,7 +98,7 @@ _DS_VH = "JST VH connector series drawing (jst_vh_C594237.pdf)"
 _DS_DC3 = ("Zhouri DC3-2.54-*PAS drawing ZR20171018-178 rev A/0 "
            "(zhouri_dc3_C5144580.pdf)")
 _DS_HC_PM = ("Hong Cheng HC-PM254-8.5H drawings rev A, 1 of 1 "
-             "(hongcheng_pm254_C22373895.pdf, hongcheng_pm254_C42163143.pdf)")
+             "(hongcheng_pm254_C22373895.pdf, hongcheng_pm254_C41376169.pdf)")
 _DS_HC_PZ = ("Hong Cheng HC-PZ254-11.5L-1x9PZ drawing rev A, 1 of 1 "
              "(hongcheng_pz254_C27985193.pdf)")
 _DS_BOOM = "BOOMELE PZ2.54-2xNA-11.4MM drawing (boomele_pz254_C2333.pdf)"
@@ -323,7 +323,7 @@ _POWER_ENTRY_PARTS = (
          height_confirmed=True, footprint_mm=(8.13, 6.22), v_max=90.0, v_clamp=146.0,
          value="V_R 90 V · V_BR 100-111 V · 146 V @ 10.3 A",
          source=f"B+ to GND at J101. plan §3.2.1, BOM E12 — never SMBJ90A, "
-                f"SMBJ100A or 5KP90A. {_DS_SMCJ} p.5: DO-214AB D max 2.62 mm"),
+                f"SMBJ100A or 5KP90A. {_DS_SMCJ} p.4: DO-214AB D max 2.62 mm"),
     Part("Q101", "IXTA26P20P-TRL", "TO-263AA (D2PAK)", "POWER", "PFET",
          ("G", "D", "S"), 4.83, height_confirmed=True,
          footprint_mm=(10.41, 15.88), v_max=200.0,
@@ -1299,7 +1299,7 @@ _LOGIC_PARTS = (
                 "the TLV767's fast start, and fitted this holds EN low until "
                 "3V3 is over 2.93 V and 200 ms more -- and, since the three "
                 "MCP23017 RESETs ride EN (IO-22), holds every expander in "
-                "reset for the same brown-out. TI SBVS157E (tlv803.pdf) p.4: "
+                "reset for the same brown-out. TI SBVS157E (ti_tlv803.pdf) p.4: "
                 "TLV803 DBZ GND 1 · RESET 2 · VDD 3; RESET open drain, 'Use a 10-kΩ "
                 "to 1-MΩ pullup' = R438. VIT- 2.87-2.99 V (p.6). p.22: DBZ "
                 "1.12 mm max"),
@@ -1502,9 +1502,20 @@ _PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
                   "GND", "V5")
 
 #: CTRL, J105 ↔ J312, POWER to OUTPUTS: the controller row's signals, each one
-#: with a GROUND ON BOTH SIDES OF IT along the ribbon. Nothing here is a rail:
-#: the row's own connectors are on POWER (IO-5), so only commands and sense
-#: nodes cross. The conductors that matter are the ribbon's, so "beside" means
+#: with a GROUND ON BOTH SIDES OF IT along the ribbon. No SUPPLY rail crosses
+#: here: the row's own connectors are on POWER (IO-5), so only commands and
+#: sense nodes cross. ⚠️ The 13 GROUNDS are a RETURN, and a rated one (IO-23):
+#: every 12 V load sits on OUTPUTS and returns to U201 on POWER, and that
+#: 8.47 A divides by conductance between PWR-OUT's one 16 AWG GND contact
+#: (~22 mΩ with its VH contacts) and these 13 contacts in parallel (~5.7 mΩ)
+#: -- the ribbon carries ~79 % of it, ~0.52 A per 28 AWG conductor against the
+#: FC socket's 1.5 A rating, 88 % if the VH contacts age to their 20 mΩ max.
+#: ⭐ The count is the protection, not a flaw: with the loom's GND crimp OPEN
+#: the whole return is here, 0.65 A per conductor, still inside the rating;
+#: with two grounds it would be 4.24 A each. So this order is never thinned
+#: below a ground beside every signal. Cost, recorded: ~0.5 A of pulsed lamp
+#: and fan return rides beside CANH/CANL and the UART for ~150 mm inside a
+#: grounded box. The conductors that matter are the ribbon's, so "beside" means
 #: the next CONTACT NUMBER -- a 2.54 mm IDC header numbers across its two rows,
 #: so conductor n lands on contact n, and 150 mm of parallel ribbon is what
 #: couples, not the 8 mm of header.
@@ -1737,9 +1748,11 @@ _NETS_RAILS = (
     Net("BASEPLATE",
         _p("U201.BASEPLATE C203.2 C204.2 C205.2 C206.2 C209.2 C210.2 R211.1"),
         domain="GND",
-        source="U201's baseplate through its M3 holes, with the thermal "
-               "interface it bolts to. The Y2 caps and TDK's C4/C5 return "
-               "here; R211 ties it to GND at one point"),
+        source="U201's baseplate through its M3 holes, and the box floor it "
+               "is bolted down to (IO-11). The Y2 caps and "
+               "TDK's C4/C5 return here; R211, a copper net-tie, joins it to "
+               "GND on POWER. ⬜ Whether R211 is the SINGLE point is open with "
+               "the enclosure (R211's source): the bonded box is a second path"),
     Net("V12",
         _p("U201.+V U201.+S C207.+ C208.1 C209.1") + _pwrout("V12")
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
@@ -2986,7 +2999,7 @@ _CONNECTORS = (
         pitch_mm=1.27, dnp=True, land="TC2030-NL",
         source="Bare copper, nothing fitted: the cable's spring pins press on "
                "the pads while it is held there. Tag-Connect 'Footprint for "
-               "TC2030 (No-Legs)' rev B (NL-TC2030-Footprint.pdf p.1, note 4: "
+               "TC2030 (No-Legs)' rev B (tagconnect_TC2030-IDC-NL-Datasheet-Rev-B.pdf p.1, note 4: "
                "DNL in the BOM; drawn_footprints.tag_connect_tc2030_nl). "
                "Pads numbered as the ESP-Prog's 2 × 3 PROG header (Espressif "
                "SCH_ESP32-PROG_V2.1: 1 ESP_EN · 2 VDD · 3 ESP_TXD0 · 4 GND · "
@@ -3079,7 +3092,9 @@ _FAB_BY_MPN = {
 #: `_MATE_BY_REFDES`). mpn -> (LCSC, maker part, per refdes, why).
 _LOOSE_BY_MPN = {
     "EKXJ221ELL221MM25S": ("C1600234", "Chemi-Con EKXJ221ELL221MM25S", 1,
-                           "bent over and bonded LYING on POWER's underside"),
+                           "bent over and bonded LYING on POWER's TOP face, "
+                           "beside the chokes (IO-11: the underside is the "
+                           "two converters')"),
     "VY2472M49Y5US6": ("C2251831", "Vishay VY2472M49Y5US6TV7", 1,
                        "X1/Y2, kinked 7.5 mm leads on reel: bent FLAT"),
     "PA35V680M10x15": ("C46550429", "JIERR PA35V680M10x15", 1,
