@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""PCB placement for the three-board stack -- the process in `layout/PROCESS.md`.
+"""PCB placement for the four-board stack -- the process in `layout/PROCESS.md`.
 
     python3 -m tools.place --stack [--anchor centre] [--keep REF ...] [--file PATH] [--out PATH]
     python3 -m tools.place --check [--file PATH]
     python3 -m tools.place --draw DIR [--file PATH]        # and with either mode
 
 `--stack` reads the owner's saved `.eprj2`, places every part of OUTPUTS, then
-LOGIC, then POWER that is not in `--keep`, runs every check below, and writes
+LOGIC, then CTRL, then POWER that is not in `--keep`, runs every check below, and writes
 the file back through the same round trip the build uses (`eprj2.read` ->
 edit records -> `eprj2.join` -> `eprj2.write` -> `eprj2.read`, refused if the
 re-read differs).  `--check` re-reads a saved file and reports; it never writes.
@@ -99,7 +99,10 @@ HV_EDGE = 3.0
 HV_CLEARANCE = layout_rules.HV_CLEARANCE_MM
 #: The engine's target gap between the HV group and every LV part -- wider than
 #: the check's floor so routing has the 1.25 mm class clearance to spend.
-#: Also the adjacency under which the HV parts must form ONE group.
+#: Also the adjacency under which the HV parts must form ONE group, and
+#: (IO-26 4a) the width of the STRIP that divides POWER along its length:
+#: 84 V end | HV_STRIP | low-voltage end.  The strip's u is not typed -- it
+#: starts where the 84 V parts' own lengths end (`hv_partition`).
 HV_STRIP = 3.0
 HV_GAP = 2 * COURTYARD + HV_STRIP
 #: The S3's antenna end within this of the back edge (the U.FL pigtail leaves
@@ -109,6 +112,18 @@ ANTENNA_ZONE_W, ANTENNA_ZONE_D = 18.0, 8.0
 #: The V12 bus on OUTPUTS: the centroid of the V12-fed ICs within this of the
 #: contact that feeds them (J311), so 8.47 A is one short wide bus, not a tree.
 BUS_REACH = 15.0
+#: (IO-26 3a) The driver line leaves a SLOT for the 12 V loom's four pins: the
+#: feed's own through-hole pad row plus this much at each end, and a driver may
+#: then stand right up to it.  The slot is `pad row + 2 x DRIVER_SLOT_MARGIN`,
+#: derived from the footprint's pads and never typed.
+#: What it protects: an **11.39 A** feed entering the layer-3 `V12` pour WHERE
+#: THE LOAD IS.  Fed from the END of the line instead, the whole bus current
+#: runs the length of every driver before it reaches the last one -- and the
+#: pins may not simply come up under a driver, because a through-hole pad is
+#: copper on both faces and the pin stands proud of the far one (check 17).
+#: `CLEAR`, because that is exactly the room one 0.2 mm trace with its
+#: clearances needs to pass between the pin and the driver beside it.
+DRIVER_SLOT_MARGIN = CLEAR
 #: A through-hole connector longer than this, laid across the board's short
 #: axis, cuts the ground plane in two.
 PLANE_CUT = 40.0
@@ -368,19 +383,26 @@ def _conflicts(box, other, gu, gv):
 
 
 def _room_beside(box, reserve, length, width):
-    """Is there a free `w x d` rectangle against `box` -- left, right, in
-    front or behind, `CLEAR` away and on the board -- for the satellite that
-    must follow this part?"""
-    w, d, obs = reserve
-    spots = (Box(box.u0 - CLEAR - w, box.cv - d / 2, box.u0 - CLEAR, box.cv + d / 2),
-             Box(box.u1 + CLEAR, box.cv - d / 2, box.u1 + CLEAR + w, box.cv + d / 2),
-             Box(box.cu - w / 2, box.v0 - CLEAR - d, box.cu + w / 2, box.v0 - CLEAR),
-             Box(box.cu - w / 2, box.v1 + CLEAR, box.cu + w / 2, box.v1 + CLEAR + d))
-    for s in spots:
-        if s.u0 < -1e-9 or s.v0 < -1e-9 or s.u1 > length + 1e-9 or s.v1 > width + 1e-9:
-            continue
-        if not any(_conflicts(s, o, gu, gv) for o, gu, gv in obs):
-            return True
+    """Is there room against `box` -- left, right, in front or behind, `CLEAR`
+    away and on the board -- for the satellite that must follow this part?
+
+    ⚠️ `reserve` carries the satellite's REAL plan at each quarter turn, one
+    `(w, d)` per shape, and ANY of them fitting is room.  It used to carry
+    `min(w)` and `min(d)` taken across the turns INDEPENDENTLY, which is a
+    rectangle the part never has: a 2.0 x 1.25 chip reserved 1.25 x 1.25, so a
+    pocket 1 mm too narrow for it in every orientation read as free and the
+    host paid nothing (`C436` beside `U406`, found 2026-09-22)."""
+    shapes, obs = reserve
+    for w, d in shapes:
+        spots = (Box(box.u0 - CLEAR - w, box.cv - d / 2, box.u0 - CLEAR, box.cv + d / 2),
+                 Box(box.u1 + CLEAR, box.cv - d / 2, box.u1 + CLEAR + w, box.cv + d / 2),
+                 Box(box.cu - w / 2, box.v0 - CLEAR - d, box.cu + w / 2, box.v0 - CLEAR),
+                 Box(box.cu - w / 2, box.v1 + CLEAR, box.cu + w / 2, box.v1 + CLEAR + d))
+        for s in spots:
+            if s.u0 < -1e-9 or s.v0 < -1e-9 or s.u1 > length + 1e-9 or s.v1 > width + 1e-9:
+                continue
+            if not any(_conflicts(s, o, gu, gv) for o, gu, gv in obs):
+                return True
     return False
 
 
@@ -577,6 +599,12 @@ class Index:
         self.hv = {b: set(layout_rules.hv_nets(d, b)) for b in bp.STACK_ORDER}
         self.classes = power_classes(d)
         self.gaps = {(g.below, g.above): g for g in bp.layer_gaps(d)}
+        #: Every MATED pair in the stack, (lower half, upper half), DERIVED
+        #: from the gap each one sets -- never a typed table, so a pair added
+        #: to the netlist (CTRL-STACK at IO-27) is seated, checked and drawn
+        #: without a second edit here.
+        self.pairs = tuple((p.lower, p.upper) for g in bp.layer_gaps(d) for p in g.pairs
+                           if p.lower in self.items and p.upper in self.items)
 
     def on(self, board, side=None):
         return [i for i in self.items.values()
@@ -782,6 +810,84 @@ def ics_on(ix, board, net):
             if it.kind in ("IC", "MODULE", "CONVERTER") and net in it.nets]
 
 
+def v12_bus(ix, board):
+    """(the ICs the 12 V bus feeds on `board`, the contact that feeds them),
+    both from the COPPER: PWR12 is the net `U201`'s `+V` is on
+    (`power_classes`), never a name.
+
+    ⚠️ Several interface connectors carry `V12` since IO-26 -- `PWR-LOGIC`
+    takes it up to LOGIC and on to CTRL's buck -- so the FEED is the one whose
+    other half stands on the board the 12 V comes FROM.  The rest carry it
+    away, and pulling the bus toward one of those would measure the wrong
+    thing."""
+    pwr12 = ix.classes["PWR12"]
+    ics = sorted((it.refdes for it in ix.on(board, "top")
+                  if it.kind == "IC" and any(n in pwr12 for n in it.nets)), key=_ref_key)
+    source = ix.items[bp.FLOOR_SEAT].board if bp.FLOOR_SEAT in ix.items else None
+    feeds = [it for it in ix.on(board)
+             if it.kind == "CONN" and it.interface and any(n in pwr12 for n in it.nets)]
+    incoming = [it.refdes for it in feeds
+                if any(o.interface == it.interface and o.board == source
+                       for o in ix.items.values() if o.refdes != it.refdes)]
+    chosen = sorted(incoming or [it.refdes for it in feeds], key=_ref_key)
+    return ics, (chosen[0] if chosen else None)
+
+
+def driver_slot(pads):
+    """(u0, u1) of the gap a driver line leaves for a feed whose through-hole
+    pad boxes are `pads`: the pad row plus `DRIVER_SLOT_MARGIN` at each end
+    (IO-26 3a).  Derived from the footprint, never typed."""
+    return (min(b.u0 for b in pads) - DRIVER_SLOT_MARGIN,
+            max(b.u1 for b in pads) + DRIVER_SLOT_MARGIN)
+
+
+def hv_partition(pl, ix, board="POWER"):
+    """POWER's partition (IO-26 4a): `(the 84 V end is the low-u end, its far
+    edge, where the low-voltage end starts)`, or None on a board that carries
+    no pack voltage.
+
+    ⭐ The line is DERIVED and nothing here is typed but `HV_STRIP`: the 84 V
+    end reaches exactly as far as the 84 V parts' OWN LENGTHS take it -- the
+    far edge of every part that carries pack voltage and nothing else, and the
+    far edge of the pack-voltage PADS of a part that straddles, since a brick's
+    output end is 12 or 5 V and belongs on the other side.  `HV_STRIP` beyond
+    that, the low-voltage end begins.
+
+    Which end is the 84 V end is read from the placement too: it is the end
+    the pack-voltage harness terminal stands at (`J101` sits at the face of the
+    HV end)."""
+    hv = [p for p in pl.placed(board).values() if ix.is_hv(p.refdes)]
+    if not hv:
+        return None
+    frame = pl.frame(board)
+    term = next((p for p in sorted(hv, key=lambda q: _ref_key(q.refdes))
+                 if ix.items[p.refdes].harness), None)
+    here = term.box.cu if term is not None else sum(p.box.cu for p in hv) / len(hv)
+    low = here < frame.length / 2
+    edges = []
+    for p in hv:
+        if straddles(ix, p.refdes):
+            edges += [(z.u1 if low else z.u0) for z in p.hv_zones(ix, frame)]
+        else:
+            edges.append(p.box.u1 if low else p.box.u0)
+    far = max(edges) if low else min(edges)
+    return low, far, (far + HV_STRIP if low else far - HV_STRIP)
+
+
+def lv_end_needs(ix, board, width):
+    """How much of the board's LENGTH the low-voltage end needs: the shelf
+    pack of the low-voltage bodies (the measure `board_fit` budgets a face
+    with) plus the M3 washer square at the far corner, which no body may
+    stand on.  ⚠️ `C207` is a 10.5 x 19.1 mm polymer bulk cap, so the end
+    cannot be narrower than 10.5 mm however few parts are in it."""
+    rects = [(it.refdes, *it.body) for it in ix.on(board)
+             if not ix.is_hv(it.refdes) and all(it.body)]
+    if not rects:
+        return 0.0
+    span, _ = board_fit.shelf_pack(rects, width)
+    return (span or 0.0) + 2 * M3_KEEPOUT
+
+
 # --- a placement ------------------------------------------------------------------
 @dataclass
 class Placed:
@@ -842,6 +948,42 @@ def hv_zones(ix, ref, pad_boxes, body):
     if not zones and any(n in hv for n in it.nets):
         zones = [body]
     return zones
+
+
+def hv_pins(ix, ref):
+    """(the pins of `ref` that carry pack voltage, the pins that carry low
+    voltage).  A pin on the GROUND PLANE is in neither list -- ground is on
+    both sides of the partition by definition, and counting it would make a
+    choke with a shield pin "straddle" -- and neither is a pin with no net at
+    all, which is how `J101`'s empty positions arrive."""
+    it = ix.items[ref]
+    hv = ix.hv.get(it.board, ())
+    high = sorted(pin for pin, n in it.pin_net.items() if n in hv)
+    low = sorted(pin for pin, n in it.pin_net.items()
+                 if n and n not in hv and n not in ix.gnd)
+    return high, low
+
+
+def straddler_satellite(ix, board, ref):
+    """Is `ref` a low-voltage part that has to sit against a STRADDLER -- a
+    brick's own 100 nF?  It belongs on that straddler's low-voltage side, which
+    is the one place inside the 84 V end where low voltage has business being,
+    and the partition lets it stand there (check 13 still asks that it not be
+    walled in).  ⚠️ `U202` is 50.8 mm long and `U201` 58.3, and at 25.4 and
+    37.2 mm deep they cannot share u on a 41.84 mm board -- so they stand end
+    to end and at most one of them can reach the strip.  The other's decoupler
+    has to follow it inward, or there is no decoupler."""
+    host = decoupler_hosts(ix, board).get(ref)
+    return host is not None and straddles(ix, host)
+
+
+def straddles(ix, ref):
+    """Does `ref` cross POWER's partition?  A part with pack-voltage pins AND
+    low-voltage pins is the thing that converts one into the other -- both
+    bricks, the key-sense divider's upper leg, the gate network's pull-down --
+    and it is placed with its 84 V pins toward the 84 V end (IO-26 4a)."""
+    high, low = hv_pins(ix, ref)
+    return bool(high and low)
 
 
 class Placement:
@@ -924,7 +1066,11 @@ class Placer:
         self.extra = {}             # refdes -> [Box] keep-outs that bind it alone
         self.target_u = {}          # refdes -> (u, why) the engine must aim at
         self.target_v = {}          # refdes -> (box front v, why)
+        self.floor_v = {}           # refdes -> (v, why): a FLOOR, not a target
         self._tht_cache = {}        # refdes -> [Box] of its through-hole pads
+        #: Which end of this board is the 84 V end (IO-26 4a), set once the
+        #: face row is down -- None on every board but POWER.
+        self.hv_low = None
 
     # -- helpers ------------------------------------------------------------------
     def item(self, ref):
@@ -1008,21 +1154,20 @@ class Placer:
                        and r not in self.pl.boards[self.board]), key=_ref_key)
 
     def _reserve(self, ref, band):
-        """`(w, d, obstacles)` for the satellite that will follow `ref`, or
-        None when nothing must sit against it.  The satellite is measured at
-        board angle 0 and 90 -- the smaller of the two, since it may turn --
-        and it must clear what IT must clear, not what its host must."""
+        """`([(w, d), ...], obstacles)` for the satellite that will follow
+        `ref`, or None when nothing must sit against it: one plan per quarter
+        turn it may take, since any of them fitting is room.  It must clear
+        what IT must clear, not what its host must."""
         sats = self.satellites_of(ref)
         if not sats:
             return None
         sat = sats[0]
         layer = self.layer_of(sat)
-        boxes = [placed_box(self.env(sat), self.frame, 0.0, 0.0, ang, layer == 2)
-                 for ang in (0, 90)]
-        w = min(b.w for b in boxes)
-        d = min(b.d for b in boxes)
+        shapes = {(round(b.w, 6), round(b.d, 6)) for b in
+                  (placed_box(self.env(sat), self.frame, 0.0, 0.0, ang, layer == 2)
+                   for ang in (0, 90))}
         obs, _, _ = self._obstacles(sat, self.band.get(sat, band), layer)
-        return (w, d, obs)
+        return (sorted(shapes), obs)
 
     def _margins(self, ref, off, zones):
         """How close each body edge may come to the board edge: an HV part's
@@ -1038,14 +1183,20 @@ class Placer:
                 max(0.0, HV_EDGE - z1u), max(0.0, HV_EDGE - z1v))
 
     def _slot(self, ref, band, angle, target_u, v_front, back_flush=False, near=None,
-              reserve=None):
+              reserve=None, v_min=None, require_room=False, touch=None):
         """The cheapest free origin for `ref` at `angle`: nearest `target_u`,
         then nearest `v_front` (ahead of it costs more).  With `near`, a Box,
         the cost is the body's distance from that box instead: a satellite
         sits against its host whichever side is free.  With `reserve`, a
-        `(w, d, obstacles)` from `_reserve`, a position with no room beside it
-        for the satellite that must follow costs `SATELLITE_ROOM` more.  None
-        if it fits nowhere on its face."""
+        `(shapes, obstacles)` from `_reserve`, a position with no room beside
+        it for the satellite that must follow costs `SATELLITE_ROOM` more --
+        or is refused outright with `require_room`.  `v_min` is a FLOOR on the
+        body's front, not a preference: a rule that binds where a part stands
+        (the S3's antenna end at the back edge, check 8) is not something the
+        adjacency may outbid.  `touch`, a list of boxes, requires the body to
+        come within `HV_STRIP` of at least one of them -- how the 84 V parts
+        are kept ONE group by construction (check 13).  None if it fits
+        nowhere on its face."""
         env = self.env(ref)
         layer = self.layer_of(ref)
         bottom = layer == 2
@@ -1075,7 +1226,7 @@ class Placer:
                             for z in placed_tht_boxes(env, self.frame, 0.0, 0.0, angle, bottom)],
                            cross_obs))
         best = None
-        v0 = mv0
+        v0 = mv0 if v_min is None else max(mv0, v_min)
         while v0 + b <= W - mv1 + 1e-9:
             forbidden = []
             for box, gu, gv in body_obs:
@@ -1110,8 +1261,14 @@ class Placer:
                                              (AHEAD_COST if back_flush else BEHIND_COST) * dv)
                 if best is not None and cost >= best[0]:
                     continue        # the room penalty only adds, so this cannot win
+                if touch is not None and not any(
+                        t.separation(Box(u0, v0, u0 + a, v0 + b)) <= HV_STRIP + 1e-9
+                        for t in touch):
+                    continue
                 if reserve is not None and not _room_beside(Box(u0, v0, u0 + a, v0 + b),
                                                             reserve, L, W):
+                    if require_room:
+                        continue
                     cost += SATELLITE_ROOM
                 if best is None or cost < best[0]:
                     best = (cost, u0 - off.u0, v0 - off.v0)
@@ -1180,7 +1337,14 @@ class Placer:
         L = self.frame.length
         corner = 2 * M3_KEEPOUT if self.frame.holes else 2 * M3_INSET_MM
         strip = L - 2 * corner
-        start = {"left": corner, "right": L - corner - total}.get(self.anchor, (L - total) / 2)
+        anchor = self.anchor
+        if self.hv_board and any(self.is_hv(r) for r in headers) and anchor == "centre":
+            # (IO-26 4a) POWER is partitioned along its length and `J101` sits
+            # at the FACE OF THE HV END, so the pack-voltage row is anchored to
+            # one end rather than centred; `--anchor right` puts the 84 V end
+            # at the far end instead.
+            anchor = "left"
+        start = {"left": corner, "right": L - corner - total}.get(anchor, (L - total) / 2)
         start = max(corner, min(start, L - corner - total))
         u = start
         over = False
@@ -1226,10 +1390,16 @@ class Placer:
         return self.host_of.get(ref) or self.near.get(ref)
 
     def place_with_satellites(self, ref, band, only=None):
-        """Place `ref`, then at once everything that must sit against it."""
+        """Place `ref`, then at once everything that must sit against it.
+        ⚠️ A satellite outside `only` waits for its own pass: POWER places its
+        84 V parts first and then partitions the board (4a), and a low-voltage
+        decoupler dragged along behind an 84 V host would be seated in the 84 V
+        end before the partition that forbids it exists."""
         self.place_one(ref, band)
         # a satellite follows its host whatever pass the host is placed in
         for sat in self.satellites_of(ref):
+            if only is not None and sat not in only:
+                continue
             self.place_one(sat, self.band.get(sat, band))
 
     def place_one(self, ref, band):
@@ -1260,7 +1430,14 @@ class Placer:
             hv_row = [p for p in self.pl.face(self.board, 1) if p.band == 1 and self.ix.is_hv(p.refdes)]
             end = 0.0 if not hv_row or hv_row[0].box.cu < self.frame.length / 2 else self.frame.length
             target, why = end, f"HV bulk, packed toward the {'left' if end == 0 else 'right'} end"
-            v_front = row_depth + CHANNEL
+            # ⚠️ The bulk's front is the board's own edge, NOT the row's depth.
+            # The 84 V bulk is a REGION, not a band: it fills one end of the
+            # board to both edges, and the row it stands behind is only 56 mm
+            # of the 242.  Charging it for standing in front of the row's depth
+            # left the whole strip beside `J101` empty and pushed the region
+            # 15 mm further along the board (measured on the owner's
+            # footprints, 2026-09-22) -- length the low-voltage end needs.
+            v_front = 0.0
         near = None
         if ref in self.target_pt:
             target, v_front, why = self.target_pt[ref]
@@ -1273,7 +1450,10 @@ class Placer:
             host = self.pl.boards[self.board][self.near[ref]]
             near, target, v_front = host.box, host.box.cu, host.box.v0
             why = f"beside {host.refdes}: {self.near_why.get(ref, '')}"
-        env = self.env(ref)
+        v_min = None
+        if ref in self.floor_v:
+            v_min, why_floor = self.floor_v[ref]
+            why = f"{why_floor}; {why}"
         angles = (0, 90, 180, 270)
         if self.item(ref).kind == "MODULE":
             angles = (0,)                 # local +Y (the antenna end) toward the back edge
@@ -1286,25 +1466,73 @@ class Placer:
                 angles = (first.angle,)
                 v_front, back_flush = first.box.v0, True
                 why += f"; in line with {first.refdes}"
+        if self.hv_low is not None and straddles(self.ix, ref):
+            # (IO-26 4a) a part that converts pack voltage into low voltage is
+            # turned with its low-voltage pins toward the low-voltage end --
+            # which is what fixes both bricks' orientation
+            turned = tuple(a for a in angles if self.lv_pins_outward(ref, a))
+            if turned:
+                angles = turned
+                why += "; low-voltage pins toward the low-voltage end (4a)"
         # a host stands where its satellite can follow it (check 14, check 15)
         reserve = self._reserve(ref, band)
+        # the 84 V parts are ONE group (check 13): each one lands within
+        # HV_STRIP of one already down, so the region is contiguous by
+        # construction rather than by luck in the packing order
+        touch = None
+        if self.hv_board and self.is_hv(ref):
+            group = [p.box for p in self.pl.boards[self.board].values()
+                     if not p.unplaced and self.ix.is_hv(p.refdes)]
+            touch = group or None
         best = None
-        for ang in angles:
-            got = self._slot(ref, band, ang, target, v_front, back_flush=back_flush, near=near,
-                             reserve=reserve)
-            if got is None:
+        # Each rule in turn, strongest first: the group, the satellite's room
+        # and the floor are dropped only when nothing on the board satisfies
+        # them, so the engine never trades one away for a shorter trace while
+        # a legal position exists.  What is dropped, the checks then report.
+        room = reserve is not None
+        ladder = [(v_min, room, touch), (v_min, room, None), (v_min, False, None),
+                  (None, False, None)]
+        seen = set()
+        for floor, require, group in ladder:
+            key = (floor, require, group is not None)
+            if key in seen:
                 continue
-            u, v, cost = got
-            cost += 0.5 if ang else 0.0
-            cost += self.misalignment(ref, u, v, ang)
-            if best is None or cost < best[0]:
-                best = (cost, u, v, ang)
+            seen.add(key)
+            for ang in angles:
+                got = self._slot(ref, band, ang, target, v_front, back_flush=back_flush,
+                                 near=near, reserve=reserve, v_min=floor,
+                                 require_room=require, touch=group)
+                if got is None:
+                    continue
+                u, v, cost = got
+                cost += 0.5 if ang else 0.0
+                cost += self.misalignment(ref, u, v, ang)
+                if best is None or cost < best[0]:
+                    best = (cost, u, v, ang)
+            if best is not None:
+                break
         if best is None:
             self.pl.notes.append(f"{self.board}: {ref} fits nowhere on its face; left as saved")
             self.keep_one(ref, band, "UNPLACED: no free slot")
             return
         _, u, v, ang = best
         self.pl.add(self.make(ref, u, v, ang, band, why))
+
+    def lv_pins_outward(self, ref, angle):
+        """At `angle`, do this part's low-voltage pins face the low-voltage end
+        of POWER?  Measured at each group's CENTROID, so a part whose pins
+        interleave is still judged by which way it faces.  True when it has
+        only one kind of pin -- the rule is about turning a straddler round,
+        not about where a part sits."""
+        high, low = hv_pins(self.ix, ref)
+        pads = placed_pads(self.env(ref), self.frame, 0.0, 0.0, angle,
+                           self.layer_of(ref) == 2)
+        hu = [u for num, u, _ in pads if num in high]
+        lu = [u for num, u, _ in pads if num in low]
+        if not hu or not lu:
+            return True
+        return (sum(hu) / len(hu) < sum(lu) / len(lu)) if self.hv_low else \
+               (sum(hu) / len(hu) > sum(lu) / len(lu))
 
     def terminal_u(self, ref):
         """(u, refdes) of the placed harness terminal `ref` reaches through one
@@ -1413,11 +1641,30 @@ def _mismatched(pads_a, net_a, pads_b, net_b):
     return wrong
 
 
+#: The order the boards are placed in, which is NOT the stack order: a board
+#: goes after every board whose positions it inherits.  OUTPUTS holds both
+#: lower halves of the OUTPUTS↔LOGIC junction and both hanging connectors, so
+#: it fixes the most; LOGIC then inherits those two positions and chooses the
+#: CTRL-STACK pair's; CTRL inherits that one; POWER inherits the loom's u and
+#: the two cross-board keep-outs.  Every board of `STACK_ORDER` is placed --
+#: this only says in which order -- and a board missing from here would never
+#: be placed at all, so it is derived from the stack and then reordered.
+PLACE_ORDER = ("OUTPUTS", "LOGIC", "CTRL", "POWER")
+
+
+def _place_order():
+    """`PLACE_ORDER`, with any board of the stack it does not name appended:
+    a fifth board added to `STACK_ORDER` is still placed, after the rest."""
+    return tuple(b for b in PLACE_ORDER if b in bp.STACK_ORDER) + \
+        tuple(b for b in bp.STACK_ORDER if b not in PLACE_ORDER)
+
+
 def stack(project, ix, anchor="centre", keep=()):
-    """Place OUTPUTS, then LOGIC, then POWER.  Returns the `Placement`."""
+    """Place every board of the stack, in `PLACE_ORDER`.  Returns the
+    `Placement`."""
     pl = Placement(project, ix)
     keep = set(keep)
-    for board in ("OUTPUTS", "LOGIC", "POWER"):
+    for board in _place_order():
         if board not in project.pcbs:
             pl.notes.append(f"{board}: no PCB document in the file")
             continue
@@ -1425,35 +1672,161 @@ def stack(project, ix, anchor="centre", keep=()):
     return pl
 
 
-def _place_board(pl, board, anchor, keep, relaxed=False):
+def _seat_pairs(pl, pr, board, keep):
+    """The mated pairs' halves, before anything else on this board.
+
+    An UPPER half is fixed at its mate's X, Y -- the pair mates straight down
+    (check 4) -- and a LOWER half goes flush to the back edge, where a long
+    through-hole row cuts an inner plane least (check 12).  ⚠️ Uppers first,
+    then lowers: a lower half chooses its own u, and it has to choose one that
+    clears the halves this board already inherited.  ⚠️ And the whole group
+    before the bands, because what follows is placed AGAINST it -- the CAN
+    transceiver stands over the contacts that carry its bus (check 14), and it
+    can only look for a connector that is already down.
+    """
+    ix, W = pl.ix, pr.frame.width
+    for lower, upper in ix.pairs:
+        if ix.items[upper].board != board or upper not in pr.doc.components or upper in keep:
+            continue
+        lo = pl.get(lower)
+        if lo is None or lo.unplaced:
+            continue
+        ang = _mate_angle(pl, lower, upper)
+        if ang is None:
+            ang = lo.angle
+            pl.notes.append(f"{board}: {upper} lands pin for pin on {lower} at no quarter "
+                            f"turn; placed at {lower}'s angle")
+        pr.place_fixed(upper, lo.u, lo.v, ang, 4, f"fixed: mate of {lower}")
+    for lower, _ in ix.pairs:
+        if ix.items[lower].board != board or lower not in pr.doc.components or lower in keep:
+            continue
+        box = placed_box(pr.env(lower), pr.frame, 0, 0, 0, pr.layer_of(lower) == 2)
+        pr.target_v[lower] = (W - box.d - COURTYARD, "flush to the back edge")
+        if lower in pr.pending():
+            pr.place_with_satellites(lower, pr.band.get(lower, 4))
+
+
+def _signal_centroid(pr, ref):
+    """Where the parts `ref` SIGNALS to already stand: the mean u over its
+    signal nets alone, one vote per pin.  The rails are left out on purpose --
+    a driver's 12 V pins would pull every driver onto whichever contact happens
+    to be down and say nothing about which terminals that driver serves."""
+    num = den = 0.0
+    for net in pr.item(ref).nets:
+        if not pr.ix.signal(net):
+            continue
+        for r, pin in pr.ix.members[net]:
+            if r == ref:
+                continue
+            p = pr.pl.boards[pr.board].get(r)
+            if p is None or p.unplaced:
+                continue
+            num += p.pin_point(pr.frame, pin)[0]
+            den += 1
+    return num / den if den else None
+
+
+def _reserve_driver_slot(pl, pr, keep):
+    """(IO-26 3a) The 12 V loom's contact is seated in the MIDDLE of the driver
+    line, before the drivers themselves, so the line closes round it and its
+    four pins come up in the slot rather than under a driver.
+
+    The slot is the feed's own pad row plus `DRIVER_SLOT_MARGIN` each side, and
+    the drivers keep off it through the ordinary rule that a through-hole pad is
+    copper on BOTH faces (check 17): nothing else has to be told about it.  The
+    u is the mean of the u's the drivers' own signals ask for -- the middle of
+    the terminals they serve -- so the 11.39 A feed enters the layer-3 pour
+    where the load is, instead of at one end of the line (check 11)."""
+    ix = pr.ix
+    ics, feed = v12_bus(ix, pr.board)
+    ics = [r for r in ics if r in pr.doc.components]
+    if feed is None or feed not in pr.doc.components or feed in keep or len(ics) < 2:
+        return
+    wants = [u for u in (_signal_centroid(pr, r) for r in ics) if u is not None]
+    if not wants:
+        return
+    u = sum(wants) / len(wants)
+    env = pr.env(feed)
+    pads = placed_tht_boxes(env, pr.frame, 0.0, 0.0, 0, pr.layer_of(feed) == 2)
+    width = (driver_slot(pads)[1] - driver_slot(pads)[0]) if pads else 0.0
+    pr.target_u[feed] = (u, f"the middle of the {' '.join(ics)} line (u {u:.1f}): its pin row "
+                            f"and {DRIVER_SLOT_MARGIN:g} mm each side, {width:.1f} mm, is the slot "
+                            f"the line leaves for it (3a)")
+    pr.target_v[feed] = (BAND_FRONT[3], "in the driver line, not behind it")
+
+
+def _apply_partition(pl, pr, partition):
+    """(IO-26 4a) Divide POWER along its length -- 84 V end, `HV_STRIP`,
+    low-voltage end -- BEFORE anything of it is placed.
+
+    Every low-voltage part is barred from the 84 V end, and every part that
+    carries pack voltage and nothing else from the low-voltage end.  A
+    low-voltage part therefore cannot be enclosed by 84 V copper, because it
+    is never among it, which is what 4a is for; the only thing that crosses is
+    a straddler's body, the part that converts one into the other.
+
+    ⭐ Barring the 84 V parts is also what makes the line STABLE: `far` is what
+    a first pass of this board measured (capped by what the low-voltage parts
+    need), and because nothing that is 84 V and nothing else may now reach past
+    it, `hv_partition` measuring the finished board can only come out the same
+    or shorter -- so every low-voltage part barred from `[0, line]` is still
+    clear of the line the checks derive.
+
+    The one part exempt from the low-voltage bar is a straddler's own
+    satellite: a brick's 100 nF belongs against the brick's low-voltage pads
+    (`straddler_satellite`), and check 13 still asks that it not be walled
+    in."""
+    low, far, line = partition
+    fr = pr.frame
+    pr.hv_low = low
+    lv_end = (Box(far, -1.0, fr.length + 1.0, fr.width + 1.0) if low
+              else Box(-1.0, -1.0, far, fr.width + 1.0))
+    bar = (Box(-1.0, -1.0, line, fr.width + 1.0) if low
+           else Box(line, -1.0, fr.length + 1.0, fr.width + 1.0))
+    for ref in pr.doc.components:
+        if ref in pr.keep:
+            continue
+        if pr.is_hv(ref):
+            if not straddles(pr.ix, ref):
+                pr.extra.setdefault(ref, []).append(lv_end)
+        elif not straddler_satellite(pr.ix, pr.board, ref):
+            pr.extra.setdefault(ref, []).append(bar)
+    pl.notes.append(f"{pr.board}: the 84 V end runs to u {far:.1f} and the low-voltage end starts "
+                    f"at u {line:.1f}, a {HV_STRIP:g} mm strip apart (4a)")
+
+
+#: How many times the 84 V end may be grown when it cannot seat its own
+#: parts.  Every millimetre it takes is one the low-voltage end does not have,
+#: so the revision moves in small steps -- the shelf pack of what it could not
+#: seat -- and stops: a board that still cannot place everything after three is
+#: a board to look at, not one to keep stretching.
+PARTITION_GROWTHS = 3
+
+
+def _place_board(pl, board, anchor, keep, relaxed=False, partition=None, grown=0):
     ix = pl.ix
     W = pl.frame(board).width
     if True:
         pr = Placer(pl, board, anchor, keep, relaxed=relaxed)
+        if pr.hv_board:
+            pr.hv_low = anchor != "right"
         pr.keep_saved()
         pr.row()
+        _seat_pairs(pl, pr, board, keep)
         if board == "OUTPUTS":
-            # the pairs' lower halves flush to the back edge: a long through-
-            # hole row cuts a plane least at its edge (check 12)
-            for ref in ("J307", "J308"):
-                if ref in pr.doc.components and ref not in keep:
-                    box = placed_box(pr.env(ref), pr.frame, 0, 0, 0, False)
-                    pr.target_v[ref] = (W - box.d - COURTYARD, "flush to the back edge")
+            _reserve_driver_slot(pl, pr, keep)
         if board == "LOGIC":
-            for lower, upper in (("J307", "J407"), ("J308", "J406")):
-                lo = pl.get(lower)
-                if lo is None or upper not in pr.doc.components or upper in keep:
-                    continue
-                ang = _mate_angle(pl, lower, upper)
-                if ang is None:
-                    ang = lo.angle
-                    pl.notes.append(f"LOGIC: {upper} lands pin for pin on {lower} at no quarter "
-                                    f"turn; placed at {lower}'s angle")
-                pr.place_fixed(upper, lo.u, lo.v, ang, 4, f"fixed: mate of {lower}")
             if "U401" in pr.doc.components and "U401" not in keep:
                 box = placed_box(pr.env("U401"), pr.frame, 0, 0, 0, False)
                 pr.target_v["U401"] = (W - ANTENNA_EDGE / 2 - box.d,
                                        "antenna end (local +Y, the padless end) at the back edge")
+                # check 8 is a RULE, not a preference: the module may only be
+                # offered positions that keep its antenna end at the back edge,
+                # so a 56 mm socket on the same edge is something it stands
+                # BESIDE rather than something that outbids it.
+                pr.floor_v["U401"] = (W - ANTENNA_EDGE - box.d,
+                                      "the antenna end within "
+                                      f"{ANTENNA_EDGE:g} mm of the back edge")
             s3 = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
             if s3 is not None:
                 # an ADC input's RC filter sits against the S3 (check 14)
@@ -1464,7 +1837,7 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
                         it = ix.items.get(r)
                         if it and it.board == board and it.kind in ("R", "C") and r in pr.doc.components:
                             pr.near[r], pr.near_why[r] = s3.refdes, f"RC filter on {n}, an ADC1 input"
-                # the CAN transceiver over the STACK contacts that carry its bus
+                # the CAN transceiver over the pair contacts that carry its bus
                 for it in ix.on(board):
                     if it.kind != "IC" or not any(n.startswith("CAN") for n in it.nets):
                         continue
@@ -1481,12 +1854,20 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
                             pr.target_pt[it.refdes] = (cu, cv - depth / 2,
                                                        f"over {conn.refdes}'s CANH/CANL contacts")
         if board == "POWER":
-            for lower, upper in (("J202", "J311"), ("J105", "J312")):
+            # the loom's two halves near each other, so it runs straight, and
+            # nothing tall under what hangs into the gap.  Both lists are the
+            # netlist's: the CTRL ribbon's `J105`/`J312` were the second pair
+            # of each until IO-27 deleted it.
+            hanging = sorted((it.refdes for it in ix.on("OUTPUTS", "bottom") if it.kind == "CONN"),
+                             key=_ref_key)
+            for upper in hanging:
+                lower = next((it.refdes for it in ix.on(board)
+                              if it.interface and it.interface == ix.items[upper].interface), None)
                 up = pl.get(upper)
-                if up is not None and lower in pr.doc.components:
+                if lower and up is not None and lower in pr.doc.components:
                     pr.target_u[lower] = (up.box.cu, f"under {upper}'s loom (u {up.box.cu:.1f})")
             gap = ix.gaps[("POWER", "OUTPUTS")].gap_mm
-            for hang in ("J311", "J312"):
+            for hang in hanging:
                 up = pl.get(hang)
                 if up is None:
                     continue
@@ -1494,10 +1875,39 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
                 for it in ix.on("POWER", "top"):
                     if it.height > limit:
                         pr.extra.setdefault(it.refdes, []).append(up.box.grow(COURTYARD))
-        if board == "POWER":
             # the 84 V parts go down first, as one group behind J101, so the
             # low-voltage parts then keep the strip from copper that exists
             hv_refs = {r for r in pr.doc.components if pr.is_hv(r)}
+            if partition is None:
+                # ⭐ THE FIRST PASS MEASURES THE PARTITION (IO-26 4a).  Where
+                # the 84 V end ends is the 84 V parts' own lengths, and the
+                # only honest way to have that number before placing is to
+                # place them once and read it off.  The board is then thrown
+                # away and placed again with the line known -- the same
+                # revision the HV strip already does below.
+                for band in (3, 4, 2):
+                    pr.place_band(band, only=hv_refs)
+                part = hv_partition(pl, ix, board)
+                if part is not None:
+                    # ...and it may not take more than it leaves: the
+                    # low-voltage end has to be at least as long as the
+                    # low-voltage parts' own shelf pack, or they are the ones
+                    # with nowhere to go.  Whichever of the two is shorter.
+                    low, far, _ = part
+                    L, W = pl.frame(board).length, pl.frame(board).width
+                    room = lv_end_needs(ix, board, W) + HV_STRIP
+                    cap = L - room if low else room
+                    far = min(far, cap) if low else max(far, cap)
+                    part = (low, far, far + HV_STRIP if low else far - HV_STRIP)
+                    pl.boards[board] = {}
+                    pl.notes = [n for n in pl.notes if not n.startswith(f"{board}:")]
+                    return _place_board(pl, board, anchor, keep, relaxed, partition=part)
+            else:
+                _apply_partition(pl, pr, partition)
+            # the bricks are the biggest bodies on the board and go down first
+            # of all within band 3: placed after the bulk, a through-hole part
+            # 58.3 x 37.2 mm has nowhere on the far face to bring its pins up
+            # that is not inside a body
             for band in (3, 4, 2):           # the bulk first, its passives into the gaps
                 pr.place_band(band, only=hv_refs)
         # what has a fixed target goes before the bands, so the bands gather round it
@@ -1517,16 +1927,36 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
             pr.place_band(band)
         for ref in pr.pending():
             pr.place_one(ref, pr.band.get(ref, 4))
-        if any(p.unplaced for p in pl.boards[board].values()) and not pr.relaxed:
+        left = [p for p in pl.boards[board].values() if p.unplaced]
+        stuck = [p for p in left if ix.is_hv(p.refdes)]
+        if stuck and partition is not None and grown < PARTITION_GROWTHS:
+            # a revision: the 84 V end was measured on a pass with no partition
+            # in it, and holding the low-voltage parts out has cost the 84 V
+            # parts room they used to borrow.  Grow it by the length those
+            # parts need -- their own shelf pack, the measure `board_fit`
+            # budgets a face with -- and place the board again.
+            low, far, _ = partition
+            need, _ = board_fit.shelf_pack(
+                [(p.refdes, *ix.items[p.refdes].body) for p in stuck], pl.frame(board).width)
+            if need:
+                far = far + need if low else far - need
+                line = far + HV_STRIP if low else far - HV_STRIP
+                pl.notes = [n for n in pl.notes if not n.startswith(f"{board}:")]
+                pl.notes.append(
+                    f"{board}: {' '.join(sorted((p.refdes for p in stuck), key=_ref_key))} found no "
+                    f"room in an 84 V end measured on a pass with no partition in it; the end is "
+                    f"grown by the {need:.1f} mm those parts pack into, to u {far:.1f}")
+                pl.boards[board] = {}
+                return _place_board(pl, board, anchor, keep, relaxed, (low, far, line), grown + 1)
+        if left and not pr.relaxed:
             # a revision: the same board again with the HV strip at the check's
             # floor, so the parts the strip crowded out have room
-            left = [p.refdes for p in pl.boards[board].values() if p.unplaced]
             pl.notes = [n for n in pl.notes if not n.startswith(f"{board}:")]
-            pl.notes.append(f"{board}: {' '.join(sorted(left, key=_ref_key))} found no room at the "
-                            f"{HV_STRIP:g} mm HV strip; re-placed with the strip at the check's "
-                            f"{HV_CLEARANCE:g} mm floor")
+            pl.notes.append(f"{board}: {' '.join(sorted((p.refdes for p in left), key=_ref_key))} "
+                            f"found no room at the {HV_STRIP:g} mm HV strip; re-placed with the "
+                            f"strip at the check's {HV_CLEARANCE:g} mm floor")
             pl.boards[board] = {}
-            return _place_board(pl, board, anchor, keep, relaxed=True)
+            return _place_board(pl, board, anchor, keep, True, partition, grown)
     return pl
 
 
@@ -1649,6 +2079,7 @@ def check(pl, ix=None, boards=None):
     out += _check_hv(pl, ix, boards)
     out += _check_antenna(pl, ix, boards)
     out += _check_bus(pl, ix, boards)
+    out += _check_partition(pl, ix, boards)
     out += _check_sensitive(pl, ix, boards)
     return out
 
@@ -1707,9 +2138,10 @@ def _pad_gap(boxes, body):
 
 def _check_pairs(pl, ix, boards=None):
     """4 -- the mated pairs coincide, in X, Y and pin for pin by net.  A
-    pair spans two boards, so it is checked when EITHER end is selected."""
+    pair spans two boards, so it is checked when EITHER end is selected.
+    The list is `ix.pairs`, derived from the gap each pair sets."""
     out = []
-    for lower, upper in (("J307", "J407"), ("J308", "J406")):
+    for lower, upper in ix.pairs:
         lo, up = pl.get(lower), pl.get(upper)
         if lo is None or up is None or lo.unplaced or up.unplaced:
             continue
@@ -1728,14 +2160,17 @@ def _check_pairs(pl, ix, boards=None):
 
 
 def _check_keepouts(pl, ix, boards=None):
-    """5 -- nothing tall on POWER's top under J311 / J312 as placed on
-    OUTPUTS.  It names POWER's parts, so it is POWER's check."""
+    """5 -- nothing tall on POWER's top under what hangs beneath OUTPUTS as
+    placed there.  It names POWER's parts, so it is POWER's check.  `J312`
+    was the second one until IO-27 deleted the CTRL ribbon; the list is read
+    from the netlist's own `side` so a third would be found."""
     out = []
     gap = ix.gaps.get(("POWER", "OUTPUTS"))
     if gap is None or "POWER" not in pl.boards or (boards is not None
                                                    and "POWER" not in boards):
         return out
-    for hang in ("J311", "J312"):
+    for hang in sorted((it.refdes for it in ix.on("OUTPUTS", "bottom") if it.kind == "CONN"),
+                       key=_ref_key):
         up = pl.get(hang)
         if up is None or up.unplaced:
             continue
@@ -1845,18 +2280,17 @@ def _check_antenna(pl, ix, boards=None):
 
 
 def _check_bus(pl, ix, boards=None):
-    """11 -- the V12 bus on OUTPUTS: its ICs one way, J311 under their middle."""
+    """11 -- the V12 bus on OUTPUTS: its ICs one way, the loom's contact under
+    their middle, and (IO-26 3a) the feed INSIDE the line rather than off its
+    end -- a driver each side of the slot its pin row stands in."""
     out = []
     board = "OUTPUTS"
     if not pl.boards.get(board) or (boards is not None and board not in boards):
         return out
     items = pl.placed(board)
-    pwr12 = ix.classes["PWR12"]
-    ics = [items[it.refdes] for it in ix.on(board, "top")
-           if it.kind == "IC" and any(n in pwr12 for n in it.nets) and it.refdes in items]
-    feed = next((items[it.refdes] for it in ix.on(board)
-                 if it.kind == "CONN" and it.interface and any(n in pwr12 for n in it.nets)
-                 and it.refdes in items), None)
+    names, feed_ref = v12_bus(ix, board)
+    ics = [items[r] for r in names if r in items]
+    feed = items.get(feed_ref)
     if not ics or feed is None:
         return out
     cu = sum(p.box.cu for p in ics) / len(ics)
@@ -1867,6 +2301,61 @@ def _check_bus(pl, ix, boards=None):
     if len({p.angle for p in ics}) > 1:
         out.append(f"11 V12 bus: OUTPUTS the V12 ICs face {len({p.angle for p in ics})} ways "
                    f"({', '.join(f'{p.refdes}@{p.angle}' for p in ics)}); one bus wants one way")
+    pads = feed.tht_boxes(pl.frame(board))
+    if pads and len(ics) > 1:
+        s0, s1 = driver_slot(pads)
+        before = [p.refdes for p in ics if p.box.u1 <= s0 + TOL]
+        after = [p.refdes for p in ics if p.box.u0 >= s1 - TOL]
+        if not (before and after):
+            out.append(f"11 V12 bus: OUTPUTS {feed.refdes}'s pin row stands at u {s0:.1f}..{s1:.1f} "
+                       f"with {' '.join(sorted(before + after)) or 'no driver'} beside it, all on "
+                       f"{'one side' if before or after else 'neither side'}; the line leaves a "
+                       f"{s1 - s0:.1f} mm slot for those pins and the feed enters the pour from "
+                       f"INSIDE it, not off the end (3a)")
+    return out
+
+
+def _check_partition(pl, ix, boards=None):
+    """18 -- POWER's HV/LV partition (IO-26 4a): the board is 84 V end,
+    `HV_STRIP`, low-voltage end along its length.  No low-voltage part stands
+    in the 84 V end, and a part that straddles is turned with its low-voltage
+    pins toward the low-voltage end -- which is what fixes both bricks'
+    orientation.  ⚠️ Check 13 is still the backstop and says something else:
+    18 is about the CONSTRUCTION, 13 about whether any part ended up walled in
+    by pack voltage whatever the construction believed."""
+    out = []
+    board = "POWER"
+    if not pl.boards.get(board) or (boards is not None and board not in boards):
+        return out
+    part = hv_partition(pl, ix, board)
+    if part is None:
+        return out
+    low, far, line = part
+    frame = pl.frame(board)
+    end = "low-u" if low else "high-u"
+    for q in sorted(pl.placed(board).values(), key=lambda p: _ref_key(p.refdes)):
+        if ix.is_hv(q.refdes) or straddler_satellite(ix, board, q.refdes):
+            continue
+        near = q.box.u0 if low else q.box.u1
+        if (near < line - TOL) if low else (near > line + TOL):
+            out.append(f"18 partition: POWER {q.refdes} (low voltage) reaches u {near:.1f}, inside "
+                       f"the 84 V end: that end is the {end} end and runs to u {far:.1f}, and the "
+                       f"low-voltage end starts at u {line:.1f} across a {HV_STRIP:g} mm strip")
+    for p in sorted(pl.placed(board).values(), key=lambda q: _ref_key(q.refdes)):
+        if not straddles(ix, p.refdes):
+            continue
+        high, lows = hv_pins(ix, p.refdes)
+        pads = p.pads(frame)
+        hu = [u for num, u, _ in pads if num in high]
+        lu = [u for num, u, _ in pads if num in lows]
+        if not hu or not lu:
+            continue
+        hm, lm = sum(hu) / len(hu), sum(lu) / len(lu)
+        if (lm < hm) if low else (lm > hm):
+            out.append(f"18 partition: POWER {p.refdes} is turned with its low-voltage pins "
+                       f"({' '.join(lows)}, centred on u {lm:.1f}) toward the 84 V end and its "
+                       f"pack-voltage pins ({' '.join(high)}, u {hm:.1f}) toward the low-voltage "
+                       f"end; a straddling part faces the other way")
     return out
 
 
@@ -2096,7 +2585,7 @@ def placement_table(pl, board):
 
 def summary(pl):
     lines = []
-    for board in ("OUTPUTS", "LOGIC", "POWER"):
+    for board in _place_order():
         items = pl.boards.get(board, {})
         if not items:
             continue

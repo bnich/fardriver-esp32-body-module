@@ -23,56 +23,13 @@ from tools import board_params as bp, build_project, eprj2, netlist, place  # no
 from tools.model import Net, is_cabled  # noqa: E402
 
 MIL = place.MIL_PER_MM
-#: The boards `place.stack` actually walks.
-#: ⬜ THREE OF THE FOUR. CTRL joined the stack at IO-26/IO-27 and the placer
-#: does not know it yet (plan task 5), so a project WITH a CTRL PCB comes back
-#: with nothing seated on it. ⛔ Read this rather than leaving `bp.STACK_ORDER`
-#: in the loops below: a loop over the order fails on the empty board and says
-#: nothing about why, and when task 5 teaches the placer the fourth board this
-#: constant is the one place that changes.
-PLACED_BOARDS = ("POWER", "OUTPUTS", "LOGIC")
-#: `--board` for exactly those, in the CLI tests. ⬜ It goes with PLACED_BOARDS.
+#: The boards `place.stack` walks: ALL FOUR since IO-26/IO-27 (plan task 5).
+#: CTRL joined the stack with the controller row, the 5 V block and the upper
+#: half of the CTRL-STACK pair, and the placer seats it between LOGIC and
+#: POWER (`place.PLACE_ORDER`).
+PLACED_BOARDS = bp.STACK_ORDER
+#: `--board` for exactly those, in the CLI tests.
 PLACED_ARGS = ["--board", *PLACED_BOARDS]
-
-#: What `place.check` still reports on a placement with nothing left unplaced,
-#: and why. ⛔ BOTH ARE PLACER GAPS, not netlist ones: each check is RIGHT to
-#: fire, and plan task 5 owns both. This tuple is what goes when it does.
-#:
-#:   8 antenna    `J411` grew from 2 x 11 to 2 x 22 at IO-26 2a -- 28.34 mm of
-#:                body to 56.28 -- because the 5 V block's eight enable and
-#:                fault lines cross LOGIC → CTRL. The packer seats that socket
-#:                on LOGIC's top face and no longer honours `U401`'s target of
-#:                the back edge, leaving the antenna 7.3 mm from it against a
-#:                2 mm rule. ⚠️ It is a PACKING failure and not a capacity
-#:                one: LOGIC's pack is 128 mm of 242 and its density 31 %,
-#:                so the room exists (tools/board_fit.py). Proven by probe
-#:                2026-09-22: shrink `J411` back and it fires anyway at 2 x 13,
-#:                so it is the socket's size, not the six parts expander #3
-#:                brought with it.
-#:   14 CAN       IO-27 took CANH/CANL off STACK and put them on the
-#:                CTRL-STACK pair, whose LOGIC half `J411` stands on the TOP
-#:                face and is seated by the PACKER -- after `_place_board` has
-#:                already looked round for a connector to stand `U404` over.
-#:                `J406` was fixed as `J308`'s mate before that look, so the
-#:                transceiver used to land on its CAN contacts.
-#:
-#: ⭐ `11 V12 bus` LEFT THIS TUPLE AT IO-26 2a and was not fixed by the placer:
-#: the 5 V buck was one of the V12 loads whose centroid `J311` was measured
-#: against, and it went to CTRL with the rest of the block, so the loom now
-#: sits inside the line it feeds. ⛔ That does NOT retire decision 3a -- the
-#: reserved slot in the driver line is still what task 5 owes check 11 -- it
-#: means this fixture no longer demonstrates the gap.
-KNOWN_OPEN = ("8 antenna: LOGIC U401", "14 CAN: LOGIC U404 is")
-
-
-def but_known_open(problems):
-    """`problems` less the ones task 5 owns -- and it FAILS if one of them has
-    stopped happening, so a fixed check cannot sit here unnoticed."""
-    out = [s for s in problems if not s.startswith(KNOWN_OPEN)]
-    for known in KNOWN_OPEN:
-        assert any(s.startswith(known) for s in problems), \
-            f"{known!r} no longer fires -- take it out of KNOWN_OPEN"
-    return out
 #: The synthetic hole, mm: smaller than the smallest pad the fixture draws
 #: (0.6 mm), so marking a footprint through-hole moves no pad box and only the
 #: `hole` flag changes.
@@ -264,8 +221,11 @@ def placed(synthetic_project, ix):
 #:   J314  the 5 V row left OUTPUTS for CTRL (2a). OUTPUTS' one strip of
 #:     connector edge was 259.7 mm of a 228 mm edge with both rows on it, and
 #:     is 220.3 with the 12 V row alone.
-#: ⛔ Empty does not mean the placer is finished: `KNOWN_OPEN` above is what it
-#: still owes. It means every part of this design now has somewhere to stand.
+#: ⭐ And the placer now seats them on all FOUR boards with every check green
+#: (plan task 5): the two rules IO-26 decided -- the gap the driver line leaves
+#: for the loom's pins (3a) and POWER's HV/LV partition (4a) -- are in the
+#: engine, and the three gaps this file used to carry (the S3's antenna end,
+#: the CAN transceiver's contacts, `C436` on `U406`) are closed.
 NO_ROOM: dict[str, str] = {}
 
 
@@ -467,7 +427,7 @@ def test_the_engine_places_every_part_and_the_checks_pass(placeable_placed, ix):
     for board in PLACED_BOARDS:
         assert set(pl.boards[board]) == set(project.pcbs[board].components)
         assert not any(p.unplaced for p in pl.boards[board].values())
-    assert but_known_open(place.check(pl, ix)) == []
+    assert place.check(pl, ix) == []
 
 
 def test_the_engine_seats_every_part_of_the_real_design(placed, ix):
@@ -478,14 +438,17 @@ def test_the_engine_seats_every_part_of_the_real_design(placed, ix):
     connector edge was 259.7 mm of 228 with the 5 V row under the 12 V one
     (2a moved it to CTRL). Nothing in the placer changed for either.
 
-    What is left is `KNOWN_OPEN`, which is about WHERE parts sit and not about
-    whether they fit."""
+    ⭐ And every check passes on all four boards since task 5: the antenna end
+    is a FLOOR the adjacency cannot outbid, the CAN transceiver looks for its
+    contacts after the pair halves are seated rather than before, and `C436`
+    follows `U406` because the room a satellite is reserved is now a shape the
+    satellite actually has."""
     project, pl = placed
     assert NO_ROOM == {}
     for board in PLACED_BOARDS:
         assert set(pl.boards[board]) == set(project.pcbs[board].components)
         assert not any(p.unplaced for p in pl.boards[board].values()), board
-    assert but_known_open(place.check(pl, ix)) == []
+    assert place.check(pl, ix) == []
 
 
 def test_an_unplaced_part_is_reported_not_measured(crowded_placed, crowded_ix):
@@ -513,14 +476,13 @@ def test_bottom_parts_come_from_the_netlists_side(placed, ix):
         under = {it.refdes for it in ix.on(board) if it.side == "bottom"}
         assert {r for r, p in pl.boards[board].items() if p.layer == 2} == under
     assert {r for b in pl.boards.values() for r, p in b.items() if p.layer == 2} == \
-        {"U201", "U202", "J311", "J406", "J407"}
+        {"U201", "U202", "J311", "J406", "J407", "J501"}
     # ⬜ J314 is NOT in that set any more: it stands on CTRL's TOP face since
     # IO-26 2a, so nothing harness-side hangs under a board at all.
-    # ⬜ ...and J501, CTRL-STACK's upper half, is NOT in that set: the project
-    # HAS a CTRL PCB and the placer seats nothing on it, because it does not
-    # know the fourth board yet (PLACED_BOARDS, plan task 5).
+    # ⭐ ...and J501 IS: the CTRL-STACK pair's upper half hangs under CTRL over
+    # LOGIC's `J411`, the same way `J406`/`J407` hang under LOGIC (IO-27).
     assert netlist.current().connector("J501").side == "bottom"
-    assert pl.boards["CTRL"] == {} and "J501" in project.pcbs["CTRL"].components
+    assert pl.boards["CTRL"] and not pl.get("J501").unplaced
 
 
 def test_the_row_is_at_the_face_in_edge_budget_order(placed):
@@ -686,7 +648,8 @@ def test_11_v12_bus_line_and_feed(placed, ix):
     bus until IO-26 2a took the 5 V buck to CTRL, and a mutation aimed at a
     part that is not on the board moves nothing and "passes"."""
     _, pl = placed
-    assert pl.get("U305") is None, "the buck is on CTRL; this bus is OUTPUTS'"
+    assert "U305" not in pl.boards["OUTPUTS"], "the buck is on CTRL; this bus is OUTPUTS'"
+    assert pl.get("U305").board == "CTRL"
     j311 = pl.get("J311")
     far = pl
     for r in ("U301", "U302", "U303"):
@@ -694,6 +657,39 @@ def test_11_v12_bus_line_and_feed(placed, ix):
     assert any(s.startswith("11 V12 bus") and "over 15" in s for s in place.check(far, ix))
     turned = moved(pl, "U302", angle=(pl.get("U302").angle + 90) % 360)
     assert any(s.startswith("11 V12 bus") and "2 ways" in s for s in place.check(turned, ix))
+
+
+def test_11_the_feed_is_inside_the_driver_line_not_off_its_end(placed, ix):
+    """(IO-26 3a) The driver line leaves a SLOT for `J311`'s four pins and the
+    11.39 A feed enters the pour from inside the line. The mutation is the
+    arrangement 3a rejected: the loom off the END of the line, so the whole bus
+    current runs the length of the drivers before it reaches the last one.
+
+    ⚠️ On THIS design the new clause cannot be made to fire on its own: three
+    9.8 mm drivers with a 20 mm slot between two of them make a line 46 mm
+    long, and every position past its end is more than `BUS_REACH` from the
+    centroid, so the 15 mm clause fires too. The clause is still what states
+    3a -- a line twice as tight would pass the centroid test with every driver
+    on one side -- and what is proven here is that it FIRES on the defect and
+    is SILENT on the placement the engine leaves."""
+    _, pl = placed
+    names, feed = place.v12_bus(ix, "OUTPUTS")
+    assert feed == "J311" and len(names) == 3
+    line = pl.get(feed)
+    frame = pl.frame("OUTPUTS")
+    pads = line.tht_boxes(frame)
+    s0, s1 = place.driver_slot(pads)
+    before = [r for r in names if pl.get(r).box.u1 <= s0 + place.TOL]
+    after = [r for r in names if pl.get(r).box.u0 >= s1 - place.TOL]
+    assert before and after, (before, after)            # a driver each side of the slot
+    assert s1 - s0 > max(b.u1 for b in pads) - min(b.u0 for b in pads)
+    assert not any("INSIDE it" in s for s in place.check(pl, ix))   # silent as placed
+    # the loom off the END of the line, every driver on one side of its pins
+    end = max(pl.get(r).box.u1 for r in names)
+    off = moved(pl, feed, du=(end + (s1 - s0) / 2 + place.CLEAR) - line.box.cu)
+    got = [s for s in place.check(off, ix) if s.startswith("11 ")]
+    assert any("INSIDE it" in s and "not off the end (3a)" in s for s in got), got
+    assert any("no driver" not in s and "all on one side" in s for s in got), got
 
 
 def test_12_a_long_through_hole_row_across_the_board_cuts_the_plane(placed, ix):
@@ -704,12 +700,15 @@ def test_12_a_long_through_hole_row_across_the_board_cuts_the_plane(placed, ix):
 
 def test_13_hv_region_one_group_no_lv_enclosed(placed, ix):
     _, pl = placed
-    # ⚠️ A SMALL HV part into the empty front corner, not a big one to the far
-    # END: POWER's 84 V block spreads over most of the board's length since the
-    # controller row left (IO-26), so a body pushed along u lands ON another
-    # one and the group never splits -- a mutation that moves nothing.
+    # ⚠️ A SMALL HV part into the LOW-VOLTAGE END, not a big one pushed a few
+    # millimetres along: POWER's 84 V block is one dense end of the board since
+    # IO-26 4a partitioned it, so a body shifted inside that end lands ON
+    # another one and the group never splits -- a mutation that moves nothing.
+    # ⚠️ And not into a board corner either: an M3 washer square is a keep-out,
+    # so check 1 fires there and check 13 never gets a chance to.
+    _, far, line = place.hv_partition(pl, ix, "POWER")
     d102 = pl.get("D102")
-    apart = moved(pl, "D102", du=5.0 - d102.box.cu, dv=3.0 - d102.box.cv)
+    apart = moved(pl, "D102", du=(line + 20.0) - d102.box.cu, dv=20.0 - d102.box.cv)
     got = place.check(apart, ix)
     assert any(s.startswith("13 HV region: POWER's 84 V parts form 2 groups")
                and "D102" in s for s in got), got
@@ -727,6 +726,123 @@ def test_13_hv_region_one_group_no_lv_enclosed(placed, ix):
     got = place.check(boxed, ix)
     assert any(s.startswith(f"13 HV region: POWER {LV_ON_POWER}") and "inside" in s
                for s in got), got
+
+
+def test_18_the_hv_lv_partition_is_kept(placed, ix):
+    """(IO-26 4a) POWER is 84 V end, `HV_STRIP`, low-voltage end along its
+    length, and the line is DERIVED from the 84 V parts' own lengths.  Two
+    mutations, one per half of the rule."""
+    _, pl = placed
+    low, far, line = place.hv_partition(pl, ix, "POWER")
+    assert low, "J101 stands at the low-u end, so that is the 84 V end"
+    assert line == pytest.approx(far + place.HV_STRIP)
+    assert 0 < far < pl.frame("POWER").length
+    assert not any(s.startswith("18 ") for s in place.check(pl, ix))
+    # (a) a low-voltage part in the 84 V end
+    lv = pl.get(LV_ON_POWER)
+    inside = moved(pl, LV_ON_POWER, du=(far / 2) - lv.box.cu)
+    got = place.check(inside, ix)
+    assert any(s.startswith(f"18 partition: POWER {LV_ON_POWER} (low voltage)")
+               and "inside the 84 V end" in s for s in got), got
+    # (b) a brick turned with its low-voltage pins toward the 84 V end.  Both
+    # bricks straddle, and both have their 84 V input at one end and their
+    # output at the other, so a half turn is the whole defect.
+    for brick in ("U201", "U202"):
+        assert place.straddles(ix, brick)
+        turned = moved(pl, brick, angle=(pl.get(brick).angle + 180) % 360)
+        got = [s for s in place.check(turned, ix) if s.startswith("18 partition: POWER " + brick)]
+        assert any("low-voltage pins" in s and "toward the 84 V end" in s for s in got), got
+
+
+def test_the_84v_end_is_grown_when_the_partition_squeezes_it(synthetic_project, ix):
+    """The revision: an 84 V end measured on a pass with no partition in it can
+    be short once the low-voltage parts are held out, and the engine grows it
+    by the length the parts it could not seat pack into rather than reporting
+    them. Driven here from an end DELIBERATELY too short, so the path is
+    exercised and its note is the one the owner reads."""
+    project = place.load(synthetic_project)
+    pl = place.Placement(project, ix)
+    L = pl.frame("POWER").length
+    tight = (True, L / 6, L / 6 + place.HV_STRIP)
+    place._place_board(pl, "POWER", "centre", set(), partition=tight)
+    notes = [n for n in pl.notes if n.startswith("POWER:")]
+    assert any("grown by the" in n and "pack into" in n for n in notes), notes
+    # the end it ends up with is longer than the one it was given, and the
+    # growth is bounded -- it never runs away
+    _, far, _ = place.hv_partition(pl, ix, "POWER")
+    assert far > tight[1]
+    assert sum("grown by the" in n for n in notes) <= place.PARTITION_GROWTHS
+
+
+def test_18_the_engine_turns_every_straddler_the_right_way(placed, ix):
+    """The rule in the ENGINE, not only in the check: every part with both
+    84 V and low-voltage pins is placed facing the low-voltage end, and the
+    quarter turns that would face it the other way are refused rather than
+    outbid."""
+    project, pl = placed
+    pr = place.Placer(place.Placement(project, ix), "POWER")
+    pr.hv_low = place.hv_partition(pl, ix, "POWER")[0]
+    crossers = sorted((it.refdes for it in ix.on("POWER") if place.straddles(ix, it.refdes)),
+                      key=place._ref_key)
+    assert {"U201", "U202"} <= set(crossers)
+    for ref in crossers:
+        p = pl.get(ref)
+        assert pr.lv_pins_outward(ref, p.angle), ref
+        # ...and the rule discriminates: a half turn is not outward
+        assert not pr.lv_pins_outward(ref, (p.angle + 180) % 360), ref
+
+
+def test_the_ctrl_board_carries_its_row_its_block_and_the_pair(placed, ix):
+    """CTRL, the fourth board (IO-26 1d / 2a / IO-27): the controller row and
+    the 5 V terminal at the face in `edge_budget` order, the buck and the four
+    switches behind them, and the `CTRL-STACK` pair's upper half hanging under
+    it over LOGIC's half."""
+    _, pl = placed
+    row = [pl.boards["CTRL"][r] for r in ("J309", "J404", "J310", "J405", "J314")]
+    assert all(abs(p.box.v0) < 0.05 for p in row)
+    assert all(a.box.u1 + place.board_fit.HEADER_GAP == pytest.approx(b.box.u0, abs=0.01)
+               for a, b in zip(row, row[1:]))
+    # the 5 V block is on CTRL and behind the row
+    for ref in ("U305", "U306", "U307", "U308", "U309"):
+        p = pl.boards["CTRL"][ref]
+        assert p.layer == 1 and p.box.v0 > max(q.box.v1 for q in row) - 0.01, ref
+    # the pair mates straight down, and its halves are on the two boards
+    up, lo = pl.get("J501"), pl.get("J411")
+    assert (up.board, up.layer) == ("CTRL", 2) and (lo.board, lo.layer) == ("LOGIC", 1)
+    assert (up.u, up.v) == pytest.approx((lo.u, lo.v), abs=1e-9)
+    assert not any(s.startswith("4 mate") for s in place.check(pl, ix))
+
+
+def test_4_the_ctrl_stack_pair_must_sit_over_its_mate(placed, ix):
+    """Check 4 on the pair IO-27 added: `J501` under CTRL over `J411` on
+    LOGIC.  The pair list is derived from the gap each pair sets, so this one
+    is checked without naming it anywhere in the tool."""
+    _, pl = placed
+    assert ("J411", "J501") in ix.pairs
+    shifted = moved(pl, "J501", du=1.0)
+    assert any(s.startswith("4 mate: J501") and "not over J411" in s
+               for s in place.check(shifted, ix))
+    turned = moved(pl, "J501", angle=(pl.get("J501").angle + 90) % 360)
+    assert any(s.startswith("4 mate: J501 over J411") and "different net" in s
+               for s in place.check(turned, ix))
+
+
+def test_17_a_driver_over_the_slot_the_line_leaves_for_the_loom(placed, ix):
+    """(IO-26 3a) The slot exists because the loom's pins come UP through the
+    top face: a driver moved onto the pad row is a pin inside its body, and
+    check 17 says so."""
+    _, pl = placed
+    frame = pl.frame("OUTPUTS")
+    j311 = pl.get("J311")
+    pads = j311.tht_boxes(frame)
+    s0, s1 = place.driver_slot(pads)
+    mid = (s0 + s1) / 2
+    for driver in ("U301", "U302", "U303"):
+        d = pl.get(driver)
+        onto = moved(pl, driver, du=mid - d.box.cu, dv=j311.box.cv - d.box.cv)
+        got = lines(place.check(onto, ix), 17)
+        assert any(f"J311's pins (layer 2, through-hole)" in s and f"{driver}'s body (layer 1)" in s
+                   for s in got), (driver, got)
 
 
 def test_14_can_brake_and_adc_adjacency(placed, ix):
@@ -852,15 +968,18 @@ def test_the_engine_never_lands_a_pin_in_a_body_on_the_other_face(placed, placea
 
 
 # --- a host stands where its satellite can follow ------------------------------------
-#: The one decoupler the packer no longer reaches to its IC, and why. ⛔ Like
-#: `KNOWN_OPEN` this is a PLACER gap that plan task 5 owns, and it is asserted
-#: to still be out of reach below so it cannot sit here once it is fixed.
-#: IO-26 2a put expander #3 and its 100 nF `C308` on LOGIC, and LOGIC's top
-#: face is fuller by six parts; `C436` decouples `U406`, the unfitted
-#: supervisor, and the packer now leaves it 4.8 mm away against a 3.0 mm
-#: reach. Probed 2026-09-22: put `C308` back on OUTPUTS and this pair is
-#: within reach again, so it is the FILL and not a rule that changed.
-DECOUPLE_OPEN = {("LOGIC", "C436", "U406")}
+#: Decouplers the packer cannot reach to their IC. ⭐ EMPTY since task 5, and
+#: `C436` on `U406` was the one that was in it: IO-26 2a put expander #3 and
+#: its 100 nF on LOGIC, and with LOGIC's top face fuller by six parts the
+#: packer left `C436` 4.8 mm from `U406` against a 3.0 mm reach while
+#: `SATELLITE_ROOM` charged `U406` nothing for it. The steering was there; what
+#: was wrong was the SHAPE it reserved -- `min(w)` and `min(d)` taken across
+#: the quarter turns independently, which for a 2.0 x 1.25 mm chip is a
+#: 1.25 x 1.25 mm rectangle it never has -- so a pocket 1 mm too narrow in
+#: every orientation read as free. `_room_beside` now tries the real plan at
+#: each turn, and a host that still has no room for its satellite is refused
+#: the position outright while any position on the board has room.
+DECOUPLE_OPEN: set[tuple[str, str, str]] = set()
 
 
 def test_every_decoupler_sits_on_the_ic_it_decouples(placed, ix):
@@ -882,23 +1001,63 @@ def test_every_decoupler_sits_on_the_ic_it_decouples(placed, ix):
 
 
 def test_room_beside_finds_a_free_side_and_refuses_a_pocket():
-    """The mechanism: a satellite needs a `w x d` rectangle against its host,
+    """The mechanism: a satellite needs one of its own plans against its host,
     CLEAR away and on the board."""
     host = place.Box(100.0, 20.0, 103.0, 23.0)
-    sat = (3.9, 1.8, [])
+    sat = ([(3.9, 1.8)], [])
     assert place._room_beside(host, sat, 242.0, 41.84)
     c = place.CLEAR
     walls = [(place.Box(90.0, 10.0, 100.0 - c, 33.0), 0.0, 0.0),
              (place.Box(103.0 + c, 10.0, 113.0, 33.0), 0.0, 0.0),
              (place.Box(90.0, 10.0, 113.0, 20.0 - c), 0.0, 0.0),
              (place.Box(90.0, 23.0 + c, 113.0, 33.0), 0.0, 0.0)]
-    assert not place._room_beside(host, (3.9, 1.8, walls), 242.0, 41.84)
+    assert not place._room_beside(host, ([(3.9, 1.8)], walls), 242.0, 41.84)
     # the same pocket with the left wall pulled back leaves room on that side
     walls[0] = (place.Box(90.0, 10.0, 100.0 - c - 3.9, 33.0), 0.0, 0.0)
-    assert place._room_beside(host, (3.9, 1.8, walls), 242.0, 41.84)
+    assert place._room_beside(host, ([(3.9, 1.8)], walls), 242.0, 41.84)
     # and a side that runs off the board is not room
     edge = place.Box(0.0, 0.0, 3.0, 3.0)
-    assert not place._room_beside(edge, (3.9, 1.8, []), 3.0, 3.0)
+    assert not place._room_beside(edge, ([(3.9, 1.8)], []), 3.0, 3.0)
+
+
+def test_the_reserved_room_is_a_shape_the_satellite_really_has(placed, ix):
+    """⛔ THE DEFECT THAT LET `C436` GET AWAY (2026-09-22): the room reserved
+    for a satellite used to be `min(w)` and `min(d)` taken across the quarter
+    turns INDEPENDENTLY. For a 2.0 x 1.25 mm chip that is a 1.25 x 1.25 mm
+    rectangle the part has at no angle, so a pocket too narrow for it in every
+    orientation read as free and its host paid nothing.
+
+    The reserve is now one `(w, d)` per turn, and ANY of them fitting is room:
+    a slot big enough for one of the real plans takes it, and one too small
+    for either does not -- while the old figure fits in that same slot."""
+    project, _ = placed
+    pr = place.Placer(place.Placement(project, ix), "LOGIC")
+    shapes, _ = pr._reserve("U406", 4)
+    assert len(shapes) == 2, shapes
+    wide, narrow = max(shapes), min(shapes)
+    assert wide[0] > narrow[0] and wide[1] < narrow[1]      # the same body, turned
+    # the old figure -- the two minima together -- is no bigger than either
+    # plan on either axis, and is neither of them
+    old = (min(w for w, _ in shapes), min(d for _, d in shapes))
+    assert old not in shapes
+    assert all(old[i] <= s[i] for s in shapes for i in (0, 1))
+    # A SQUARE slot beside the host, open on the right only.  Both real plans
+    # are longer than the old figure on one axis, so a slot between the two
+    # sizes takes the old figure and neither real one.
+    host = place.Box(100.0, 21.0, 103.0, 22.0)
+    c = place.CLEAR
+
+    def slot(size):
+        half = size / 2
+        return [(place.Box(103.0 + c + size, 0.0, 200.0, 41.84), 0.0, 0.0),
+                (place.Box(0.0, 0.0, 100.0 - c, 41.84), 0.0, 0.0),
+                (place.Box(0.0, 0.0, 200.0, 21.5 - half), 0.0, 0.0),
+                (place.Box(0.0, 21.5 + half, 200.0, 41.84), 0.0, 0.0)]
+    big = max(max(sh) for sh in shapes)
+    assert max(old) < big
+    assert place._room_beside(host, (shapes, slot(big + 0.01)), 242.0, 41.84)
+    assert not place._room_beside(host, (shapes, slot(big - 0.01)), 242.0, 41.84)
+    assert place._room_beside(host, ([old], slot(big - 0.01)), 242.0, 41.84)
 
 
 def test_a_host_is_steered_to_a_position_its_satellite_can_follow(placed, ix):
@@ -926,10 +1085,10 @@ def test_a_host_is_steered_to_a_position_its_satellite_can_follow(placed, ix):
     pr.extra[host] = walls
     pr.extra[sat] = walls
     reserve = pr._reserve(host, 4)
-    assert reserve is not None and reserve[0] > 0 and reserve[1] > 0
+    assert reserve is not None and all(w > 0 and d > 0 for w, d in reserve[0])
     # ... because a satellite needs CLEAR plus its own size beyond the host,
     # and the pocket gives at most twice the slack on any side
-    assert min(reserve[0], reserve[1]) + place.CLEAR > 2 * slack
+    assert min(min(s) for s in reserve[0]) + place.CLEAR > 2 * slack
 
     def body(got):
         return place.placed_box(pr.env(host), pr.frame, got[0], got[1], 0, False)
@@ -983,8 +1142,7 @@ def test_write_round_trips_every_placed_coordinate_and_keeps_prev(placeable_proj
     assert len(a) == len(b)
     changed = {h["type"] for (h, p), (h2, p2) in zip(a, b) if (h, p) != (h2, p2)}
     assert changed == {"COMPONENT", "ATTR"}
-    assert but_known_open(place.check(place.Placement.from_file(back, ix), ix,
-                                      boards=PLACED_BOARDS)) == []
+    assert place.check(place.Placement.from_file(back, ix), ix, boards=PLACED_BOARDS) == []
 
 
 def test_write_refuses_while_the_editor_is_open(placed, synthetic_project, tmp_path, monkeypatch):
@@ -1009,15 +1167,12 @@ def test_cli_check_reports_and_stack_writes(placeable_project, tmp_path, capsys,
     out = tmp_path / "stack.eprj2"
     docs = tmp_path / "docs"
     pics = tmp_path / "pics"
-    # ⬜ EXIT_PROBLEMS, not 0, and for KNOWN_OPEN's two checks alone (task 5).
-    # `--stack` still writes the tables and the pictures and refuses the
-    # project, which is the behaviour this test is about.
     assert place.main(["--stack", *PLACED_ARGS, "--file", str(placeable_project),
                        "--out", str(out), "--docs", str(docs),
-                       "--draw", str(pics)]) == place.EXIT_PROBLEMS
+                       "--draw", str(pics)]) == 0
     text = capsys.readouterr().out
-    assert f"{len(KNOWN_OPEN)} problem(s)" in text and "drawn:" in text
-    assert all(k in text for k in KNOWN_OPEN)
+    assert "0 problem(s) -- the placement passes every check" in text and "drawn:" in text
+    assert out.is_file()
     for board in PLACED_BOARDS:
         table = (docs / f"{board}-placement.md").read_text()
         assert "| Refdes |" in table and "reason" in table
@@ -1046,7 +1201,6 @@ def test_cli_stack_refuses_and_names_what_had_nowhere_to_go(crowded_project, cro
                        "--draw", str(pics)]) == place.EXIT_PROBLEMS
     text = capsys.readouterr().out
     assert "OUTPUTS J314: UNPLACED" in text
-    assert all(k in text for k in KNOWN_OPEN)
     assert not out.exists()
     assert (pics / "stack-OUTPUTS.png").is_file()
     # the table gives an unplaced part no coordinates: where the file happens
@@ -1070,25 +1224,20 @@ def _doc_span(records, title):
 
 
 def test_board_writes_only_that_boards_records(synthetic_project, tmp_path, monkeypatch, capsys):
-    """`--board POWER`: POWER is the board that places clean today -- it seats
-    everything, brick included, since the controller row left it -- so it is
-    written on its own and every other record in the file is left exactly as
-    it was saved. ⬜ It was LOGIC until IO-27, and LOGIC is shown refusing
-    first, because a board with an open check must not touch the file at all.
-    """
+    """`--board POWER` writes POWER's PCB document and leaves every other
+    record in the file exactly as it was saved -- while all four boards are
+    still placed in memory, because the stack is one problem."""
     monkeypatch.setattr(place, "editor_running", lambda: False)
     out = tmp_path / "one.eprj2"
     docs = tmp_path / "docs"
-    # ⬜ LOGIC carries KNOWN_OPEN's CAN check (task 5), so `--board LOGIC`
-    # REFUSES -- and refusing is exactly when it must not touch the file.
+    # LOGIC first, so the run that writes POWER has a table from another board
+    # beside it: a table is the record of a PROPOSAL, per board.
     assert place.main(["--stack", "--board", "LOGIC", "--file", str(synthetic_project),
-                       "--out", str(out), "--docs", str(docs)]) == place.EXIT_PROBLEMS
+                       "--out", str(out), "--docs", str(docs)]) == 0
     text = capsys.readouterr().out
-    assert f"writing LOGIC only: {len(KNOWN_OPEN)} failed check(s) and 0 " \
-           f"unplaced part(s)" in text
-    assert not out.exists()
-    # ...so POWER is the board that writes: it seats everything since the
-    # controller row left it, and carries no open check of its own.
+    assert "writing LOGIC only: 0 failed check(s) and 0 unplaced part(s)" in text
+    out.unlink()
+    (out.with_name(out.name + place.PREV_SUFFIX)).unlink(missing_ok=True)
     assert place.main(["--stack", "--board", "POWER", "--file", str(synthetic_project),
                        "--out", str(out), "--docs", str(docs)]) == 0
     text = capsys.readouterr().out
