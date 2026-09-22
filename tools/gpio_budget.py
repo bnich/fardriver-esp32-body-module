@@ -200,7 +200,11 @@ def report(d: Design | None = None) -> list[str]:
 def main(argv=None, d: Design | None = None) -> int:
     if d is None:
         from . import netlist
-        d = netlist.current()
+        try:
+            d = netlist.checked()
+        except netlist.NotACircuit as e:
+            print(f"⛔ REFUSED -- {e}")
+            return 1
     signals = demand(d)
     print(f"POOL {len(POOL)}   (45 GPIOs - 7 flash - 2 with no WROOM-1 pad "
           f"- 4 strapping)\n")

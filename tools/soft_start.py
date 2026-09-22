@@ -846,9 +846,10 @@ def assess(c: Circuit = SPEC, en=SPEC_ENABLE) -> list[str]:
 
 
 def _netlisted() -> tuple[Circuit | None, str]:
-    """(the netlist's gate network, "") or (None, why it could not be read)."""
+    """(the netlist's gate network, "") or (None, why it could not be read --
+    `netlist.checked()` refusing a design that is not a circuit included)."""
     try:
-        d = netlist.current()
+        d = netlist.checked()
         return (circuit_from(d), enable_from(d)), ""
     except Exception as exc:              # any failure is reported, never hidden
         return None, f"{type(exc).__name__}: {exc}"

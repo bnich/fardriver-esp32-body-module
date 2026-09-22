@@ -3347,10 +3347,45 @@ def class_a_problems(d: Design) -> list[str]:
 
 def current() -> Design:
     """The design as it stands. The ONE API: `.parts`, `.nets`, `.connectors`
-    and the lookups on `Design`. Nothing else builds a Design."""
+    and the lookups on `Design`. Nothing else builds a Design.
+
+    ⚠️ UNGATED: this is the design as typed, whether or not it is a circuit.
+    A tool's `main()` reads it through `checked()` below. `current()` is for
+    the tests and fixtures that must construct a broken design on purpose."""
     design = Design(parts=_with_fab(_PARTS), nets=_NETS,
                     connectors=_with_fab_conn(_CONNECTORS), standoffs=STANDOFFS)
     problems = class_a_problems(design)
     if problems:
         raise ValueError("; ".join(problems))
+    return design
+
+
+class NotACircuit(ValueError):
+    """`checked()` refused the design: `integrity.check` found problems. The
+    message lists every one, so a tool that lets it through prints them."""
+
+
+def checked() -> Design:
+    """`current()`, gated on `tools.integrity`: the design only if it is a
+    circuit, else `NotACircuit` listing every problem.
+
+    ⛔ Every tool's `main()` reads the design through this and nothing else.
+    Until 2026-09-21 only `build_project.py` ran integrity first, so a design
+    integrity REJECTED -- a TVS with one leg in the air and a STACK pair that
+    could not mate -- got `✅ PASS` from board_fit, gpio_budget, power_budget,
+    soft_start, a full BOM from jlc_bom, a net class from layout_rules and
+    "identical" from tel_check (H10). The documented run order was the only
+    thing holding that together.
+
+    `integrity` is imported here, not at module level: it imports `model`
+    only today, and a lazy import keeps that graph acyclic if it ever needs
+    the netlist."""
+    from . import integrity
+    design = current()
+    problems = integrity.check(design)
+    if problems:
+        raise NotACircuit(
+            f"{len(problems)} integrity problem(s) -- nothing is computed on a "
+            f"design that is not a circuit. Run `python3 -m tools.integrity`.\n"
+            + "\n".join(f"  {p}" for p in problems))
     return design

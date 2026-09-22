@@ -140,7 +140,12 @@ def compare(design, board, tel, fixture=None):
 def main(argv=None):
     from . import netlist
     board, path = (argv or sys.argv[1:])[:2]
-    r = compare(netlist.current(), board, parse(Path(path).read_text(encoding="utf-8")))
+    try:
+        design = netlist.checked()
+    except netlist.NotACircuit as e:
+        print(f"⛔ REFUSED -- {e}")
+        return 1
+    r = compare(design, board, parse(Path(path).read_text(encoding="utf-8")))
     print(f"{board}: {r.nets} nets, {r.pins} pins in the export"
           + (f"; left off the PCB as intended: {' '.join(r.left_off)}" if r.left_off else ""))
     for p in r.problems:

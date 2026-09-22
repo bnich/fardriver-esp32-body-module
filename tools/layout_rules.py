@@ -74,6 +74,15 @@ def text(d=None) -> str:
     return "\n".join(out)
 
 
+def main(argv=None) -> int:
+    try:
+        design = netlist.checked()
+    except netlist.NotACircuit as e:
+        print(f"⛔ REFUSED -- {e}", file=sys.stderr)
+        return 1
+    print(text(design))
+    return 0
+
+
 if __name__ == "__main__":
-    print(text())
-    sys.exit(0)
+    sys.exit(main())

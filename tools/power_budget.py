@@ -502,7 +502,12 @@ def report(d: Design | None = None) -> str:
 
 
 def main() -> int:
-    r = budget()
+    try:
+        d = netlist.checked()
+    except netlist.NotACircuit as e:
+        print(f"⛔ REFUSED -- {e}")
+        return 1
+    r = budget(d)
     print(_render(r))
     return 1 if r.problems else 0
 

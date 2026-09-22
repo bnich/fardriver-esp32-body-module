@@ -148,7 +148,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", help="write the BOM CSV here")
     a = ap.parse_args(argv)
-    d = netlist.current()
+    try:
+        d = netlist.checked()
+    except netlist.NotACircuit as e:
+        print(f"⛔ REFUSED -- {e}", file=sys.stderr)
+        return 1
     text = bom_csv(d)
     if a.out:
         with open(a.out, "w", encoding="utf-8", newline="") as f:

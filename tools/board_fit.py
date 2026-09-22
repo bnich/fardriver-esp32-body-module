@@ -390,7 +390,11 @@ def report(d: Design) -> str:
 def main(argv=None, d: Design | None = None) -> int:
     if d is None:
         from . import netlist
-        d = netlist.current()
+        try:
+            d = netlist.checked()
+        except netlist.NotACircuit as e:
+            print(f"⛔ REFUSED -- {e}")
+            return 1
     print(report(d))
     if problems(d):
         return 1
