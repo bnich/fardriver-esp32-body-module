@@ -62,8 +62,6 @@ EXIT_REFUSED = place.EXIT_REFUSED
 STACK_LAYER = {1: 1, 2: 15, 3: 16, 4: 2}
 #: The two outer layers, where the parts and the hand routing are.
 OUTER = (1, 2)
-#: The two inner layers, which R1 gives to planes and pours.
-INNER = (STACK_LAYER[2], STACK_LAYER[3])
 
 # --- R0: the class table ----------------------------------------------------------
 #: The class a net is in is derived from the COPPER (`place.power_classes`,
@@ -1182,8 +1180,9 @@ def write_pours(project, pl, ix, boards=None):
             name = f"POUR{order + 1}"
             payload = _pour_record(frame, net, layer, box, name, order)
             doc.append("POUR", _rid(board, "POUR", net, layer, name), payload)
-            lines.append(f"layer {stack} (layerId {layer}): {net} over u {box.u0:.1f}..{box.u1:.1f},"
-                         f" v {box.v0:.1f}..{box.v1:.1f} mm -- {why}")
+            lines.append(f"layer {stack} (layerId {layer}): {net} over "
+                         f"u {box.u0:.1f}..{box.u1:.1f}, v {box.v0:.1f}..{box.v1:.1f} mm "
+                         f"-- {why}")
         written[board] = lines
     return written
 
@@ -1806,8 +1805,8 @@ def main(argv=None):
                     print(f"  REFUSED {r}")
         else:
             for board, counts in sorted(strip_routing(project, list(a.strip_routing)).items()):
-                print(f"{board}: removed " + (", ".join(f"{n} {t}" for t, n in sorted(counts.items()))
-                                              or "nothing"))
+                what = ", ".join(f"{n} {t}" for t, n in sorted(counts.items())) or "nothing"
+                print(f"{board}: removed {what}")
         try:
             path = _write(project, pl, src, out)
         except RuntimeError as e:

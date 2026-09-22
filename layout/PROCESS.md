@@ -565,7 +565,7 @@ never in the wrong class.
 | **CH12** | a net on a `TPS4H160B` `OUTx` | 1.0 mm | 0.25 mm | 1.55 A per channel at its limiter (`R359` = 1k5) |
 | **CH5** | a net on a `TPS2553` `OUT` | 0.8 mm | 0.25 mm | 1.39 A |
 | **DIFF** | the nets on a transceiver's own `CANH`/`CANL` **pins** | 0.25 mm | 0.4 mm | the run is electrically short (< 150 mm), so pairing and skew are the constraint and 120 Ω is not |
-| **SENSE** | a `TPS4H160B` `CS` net, or an S3 ADC1 net a capacitor filters | 0.25 mm | 0.3 mm | an ADC input beside an 11 A pour reads the pour. R3 adds the rule that bites: never within **1.0 mm** of a PWR or CH12 segment on its own layer |
+| **SENSE** | a `TPS4H160B` `CS` net, or an S3 ADC1 net a capacitor filters | 0.25 mm | 0.3 mm | an ADC input beside an 11 A pour reads the pour. R3 adds the rule that bites: never within **1.0 mm** of a PWR or CH12 segment on its own layer. ⚠️ `BL_SENSE` is NOT in this class: it lands on `U402.GPB5`, an expander GPIO, with no filter — it is a logic-level readback, and the copper says so |
 | **RAIL** | `V5`, `V3P3` — and `V12` where it is only passing through | 0.6 mm | 0.25 mm | the logic supplies: width for **droop**, not for heat |
 | **default** | everything else | 0.2 mm | 0.2 mm | signals; the JLC template is right for these |
 
@@ -709,8 +709,8 @@ A refusal names the pair and what stopped it, and the owner necks it by hand or 
 its twin, and ten legs of the 84 V chain), 14 on OUTPUTS, 16 on CTRL and none on LOGIC, and refused
 23 · 32 · 14 · 0. Two things the refusals say, and both are findings rather than noise:
 
-- ⚠️ **The HV class's 1.25 mm cannot be met between the 84 V gate network's own parts.** Fourteen
-  of POWER's refusals are one 84 V net's run passing within 1.25 mm of another 84 V net's pad —
+- ⚠️ **The HV class's 1.25 mm cannot be met between the 84 V gate network's own parts.** Twenty-one
+  of POWER's 23 refusals are one 84 V net's run passing within 1.25 mm of another 84 V net's pad —
   `D13_GATE` beside `HV_SW`, `D13_PD_MID` beside `HV_BPLUS` — on 0603s whose pads are 0.6 mm apart.
   Check 7 only holds pack-voltage copper 1.25 mm from **low-voltage** parts, and IPC-2221B asks for
   clearance by the voltage *between* two conductors, which for a gate node and its source is about

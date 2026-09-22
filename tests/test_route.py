@@ -14,7 +14,6 @@ breaks exactly one thing.
 """
 import json
 import os
-from dataclasses import replace
 
 import pytest
 
@@ -419,16 +418,17 @@ def test_rules_leaves_the_jlc_template_and_the_all_nets_default_alone(placed_pro
     added beside them."""
     before, pl = _load(placed_project, ix)
     doc0 = _doc(before, "POWER")
-    keep = [(h["type"], h.get("id"), p) for h, p in doc0.recs
-            if h["type"] in ("RULE", "RULE_TEMPLATE") and json.loads(p).get("ruleState") != "NORMAL"]
+    def defaults(doc):
+        return [(h["type"], h.get("id"), p) for h, p in doc.recs
+                if h["type"] in ("RULE", "RULE_TEMPLATE")
+                and json.loads(p).get("ruleState") != "NORMAL"]
+    keep = defaults(doc0)
     template_rec = next(p for h, p in doc0.recs if h["type"] == "RULE_TEMPLATE")
     assert "JLCPCB" in template_rec or json.loads(template_rec).get("name") is not None
     project, pl2 = _load(placed_project, ix)
     route.write_rules(project, pl2, ix)
     doc1 = _doc(project, "POWER")
-    after = [(h["type"], h.get("id"), p) for h, p in doc1.recs
-             if h["type"] in ("RULE", "RULE_TEMPLATE") and json.loads(p).get("ruleState") != "NORMAL"]
-    assert after == keep
+    assert defaults(doc1) == keep
 
 
 def test_rules_is_idempotent(placed_project, ix):
@@ -672,8 +672,8 @@ def test_the_untouched_documents_come_through_byte_for_byte(placed_project, ix, 
         assert (t0, u0) == (t1, u1)
         if r0 != r1:
             changed.append(u0)
-    power = next(u for t, u, r in docs0 if t == "PCB"
-                 and any(json.loads(p).get("title") == "POWER" for h, p in r if h["type"] == "META"))
+    power = next(u for t, u, r in docs0 if t == "PCB" and any(
+        json.loads(p).get("title") == "POWER" for h, p in r if h["type"] == "META"))
     assert changed == [power]
 
 
