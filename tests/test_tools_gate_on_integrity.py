@@ -15,8 +15,8 @@ integrity problems in what was printed, and no PASS.
 """
 import pytest
 
-from tools import (board_fit, gpio_budget, jlc_bom, layout_rules, netlist,
-                   power_budget, soft_start, tel_check)
+from tools import (board_fit, gpio_budget, jlc_bom, layout_rules, lcsc_fixture,
+                   netlist, power_budget, rules, soft_start, tel_check)
 
 REAL = netlist.current()
 #: The 2026-09-18 defect, verbatim.
@@ -93,6 +93,24 @@ def test_layout_rules_refuses(broken_netlist, capsys):
     assert "Net class" not in captured.out
 
 
+def test_rules_refuses_rather_than_grading_a_non_circuit(broken_netlist, capsys):
+    """Green rules on a netlist that fails integrity mean nothing (CLAUDE.md):
+    a TVS with one leg landed passes every rule."""
+    assert rules.main([]) == 1
+    captured = capsys.readouterr()
+    _refused(captured.out)
+    assert "rule violation(s)" not in captured.out
+
+
+def test_lcsc_fixture_refuses_before_touching_the_library(broken_netlist, capsys, monkeypatch,
+                                                            tmp_path):
+    monkeypatch.setattr(lcsc_fixture, "service", lambda: pytest.fail("the library was reached"))
+    monkeypatch.setattr(lcsc_fixture, "FIXTURE", tmp_path / "lcsc.json")
+    assert lcsc_fixture.main([]) == 1
+    _refused(capsys.readouterr().out)
+    assert not (tmp_path / "lcsc.json").exists()
+
+
 def test_tel_check_refuses_before_reading_the_export(broken_netlist, capsys, tmp_path):
     tel = tmp_path / "Netlist_LOGIC.tel"
     tel.write_text("", encoding="utf-8")            # never parsed: the refusal comes first
@@ -107,5 +125,6 @@ def test_the_real_design_still_reaches_every_report(capsys):
     assert power_budget.main() == 0
     assert soft_start.main([]) == 0
     assert layout_rules.main([]) == 0
+    assert rules.main([]) == 0
     out = capsys.readouterr().out
-    assert "PASS" in out and "Net class HV" in out
+    assert "PASS" in out and "Net class HV" in out and "0 rule violation(s)" in out

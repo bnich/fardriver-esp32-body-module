@@ -467,3 +467,40 @@ def test_an_overrun_past_the_raw_cavity_says_no_enclosure_can_absorb_it(
     taller = good().replace_part("L101", height_mm=64.0)    # 102.0 mm > the 100 mm cavity
     out = run(capsys, taller)[1]
     assert "exceeds even the RAW cavity estimate" in out
+
+
+# --- M18: the verdict TEXT agrees with the exit code, both ways -----------------------
+def test_over_in_the_text_means_exit_1_and_exit_1_means_over_in_the_text(capsys):
+    """`⛔ OVER` is the stack verdict word; `✅ PASS` / `⛔ FAIL` the tool's. The
+    good design prints neither OVER nor FAIL and exits 0; a stack 4 mm over
+    prints both and exits 1. Force either line and this fails."""
+    code, out = run(capsys, good())
+    assert ("⛔ OVER" in out) == (code == 1) == False
+    assert "✅ PASS" in out and "⛔ FAIL" not in out
+    code, out = run(capsys, good().replace_part("L101", height_mm=60.0))
+    assert ("⛔ OVER" in out) == (code == 1) == True
+    assert "⛔ FAIL" in out and "✅ PASS" not in out
+    assert "OVER by 4.0 mm" in out
+
+
+def _area_line(out: str, board: str, side: str) -> str:
+    """The AREA table's row for one face: `board side bodies raw density verdict pack`."""
+    table = out[out.index("AREA   density"):]
+    return next(l for l in table.splitlines() if l.split()[:2] == [board, side])
+
+
+def test_the_density_verdict_word_on_the_area_line_agrees_with_the_exit(capsys):
+    """The other verdict word the same report prints, per face: `ok` under
+    DENSITY_LIMIT, `⛔ FAIL` over it -- and only the second goes with exit 1.
+    Force the word either way and this fails; the tool's own `⛔ FAIL -- N
+    problem(s)` line is not what is read here."""
+    code, out = run(capsys, good())
+    assert code == 0
+    assert _area_line(out, "OUTPUTS", "top").split()[5] == "ok"
+    d = good()
+    for i in range(40):
+        d = d.with_part(part(f"R{i}", "OUTPUTS", 1.0, (20.0, 20.0)))
+    code, out = run(capsys, d)
+    line = _area_line(out, "OUTPUTS", "top")
+    assert code == 1 and "⛔ FAIL" in line and "✅ PASS" not in out
+    assert float(line.split()[4].rstrip("%")) > bf.DENSITY_LIMIT * 100

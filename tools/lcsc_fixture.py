@@ -72,14 +72,39 @@ CUT_TO_LENGTH = {
 }
 
 
-def service():
-    """~/tools/lcsc-search's Service, or None when it is not on this machine."""
+def unreachable() -> tuple[type, ...]:
+    """What a live fetch raises when the library cannot be reached: the
+    service's own FetchError (every connection fault and 5xx ends as one) and
+    the OS-level faults under it. A test skips on these with the reason; it
+    never fails on the network."""
+    try:
+        sys.path.insert(0, str(Path.home() / "tools/lcsc-search"))
+        from lcsc_search.http import FetchError
+    except ImportError:
+        return (OSError, TimeoutError)
+    return (FetchError, OSError, TimeoutError)
+
+
+def service(*, timeout: float | None = None, retries: int | None = None):
+    """~/tools/lcsc-search's Service, or None when it is not on this machine.
+    `timeout` (seconds per request) and `retries` bound a caller that must
+    finish -- the default Http waits 20 s × 4 attempts per request, which
+    over 99 codes × 3 requests is how the test suite once took 183 s and
+    failed on a stall."""
     try:
         sys.path.insert(0, str(Path.home() / "tools/lcsc-search"))
         from lcsc_search import Service
+        from lcsc_search.http import Http
     except ImportError:
         return None
-    return Service()
+    if timeout is None and retries is None:
+        return Service()
+    kw = {}
+    if timeout is not None:
+        kw["timeout"] = timeout
+    if retries is not None:
+        kw["retries"] = retries
+    return Service(http=Http(**kw))
 
 
 def codes() -> list[str]:
@@ -259,12 +284,17 @@ def load() -> dict:
     return json.loads(FIXTURE.read_text())
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    try:
+        wanted = codes()                    # the design first: a refresh of a
+    except netlist.NotACircuit as e:        # non-circuit records nothing
+        print(f"⛔ REFUSED -- {e}")
+        return 1
     svc = service()
     if svc is None:
         print("~/tools/lcsc-search is not on this machine: nothing refreshed")
         return 1
-    data = {code: record(svc, code) for code in codes()}
+    data = {code: record(svc, code) for code in wanted}
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
     print(f"wrote {FIXTURE.relative_to(Path.cwd()) if FIXTURE.is_relative_to(Path.cwd()) else FIXTURE}: "
@@ -273,8 +303,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except netlist.NotACircuit as e:
-        print(e)
-        sys.exit(1)
+    sys.exit(main())

@@ -199,6 +199,81 @@ def test_the_converters_gate_is_a_named_constant_that_can_be_tightened():
                    for p in pb.budget(D).problems)
 
 
+def test_the_choke_and_fuse_derates_are_pinned_by_value():
+    """M3: set to 0.93 / 0.90 the real design still passed. CHOKE_DERATE is
+    0.80 for the sealed box the 70 °C rating does not describe; FUSE_DERATE is
+    0.75, Littelfuse's 25 °C continuous-duty convention -- each stated in its
+    own comment, and each a gate the real design sits under with margin."""
+    assert pb.CHOKE_DERATE == 0.80
+    assert pb.FUSE_DERATE == 0.75
+    r = pb.budget(D)
+    assert r.conv_in_a < r.choke_rated_a * pb.CHOKE_DERATE
+    assert r.tap_a < pb.TAP_FUSE_A * pb.FUSE_DERATE
+    with pytest.MonkeyPatch.context() as mp:                # each is a gate:
+        mp.setattr(pb, "CHOKE_DERATE", r.conv_in_a / r.choke_rated_a * 0.99)
+        assert any("L101" in p and "of its 3 A rating" in p for p in pb.budget(D).problems)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pb, "FUSE_DERATE", r.tap_a / pb.TAP_FUSE_A * 0.99)
+        assert any("tap fuse" in p and "of its rating" in p for p in pb.budget(D).problems)
+
+
+# --- M1: what bounds a sustained 12 V-side overload is the brick's OCP, not the fuse -----
+def test_the_ocp_ceiling_is_derived_from_the_bricks_band():
+    """TDK CN-B p.3: OCP 102-150 % of rating, constant current. At 12.5 A that
+    is 12.75-18.75 A out; through CONV_EFF at the LVC, 2.83-4.17 A at the
+    choke (94-139 % of 3 A) and 2.88-4.22 A on the tap (96-141 % of the fuse)."""
+    lim = pb.limit_case(D)
+    assert lim.problems == []
+    assert lim.ocp_out_a == pytest.approx((12.75, 18.75))
+    assert lim.ocp_conv_in_a == pytest.approx((2.833, 4.167), abs=0.001)
+    assert lim.ocp_tap_a == pytest.approx((2.883, 4.217), abs=0.001)
+    assert (pb.CONV_OCP_MIN, pb.CONV_OCP_MAX) == (1.02, 1.50)
+    out = pb.report(D)
+    assert "OCP CEILING 12.75-18.75 A at 12 V" in out
+    assert "Choke 2.83-4.17 A = 94%-139% of its 3 A at 70 °C" in out
+    assert "tap 2.88-4.22 A = 96%-141% of the fuse" in out
+
+
+def test_the_fuse_never_opens_on_the_limited_case_and_the_report_says_so():
+    """KLKD003 at 86 %: the agency table (littelfuse_klkd.pdf p.4) holds 100 %
+    to temperature stabilisation and opens 135 % within 60 min. 'A fast-blow
+    fuse opening on it is the fuse doing its job' was false (M1)."""
+    lim = pb.limit_case(D)
+    share = lim.tap_a / pb.TAP_FUSE_A
+    assert 0.85 < share < 0.87
+    assert pb.fuse_time_at(share).startswith("indefinitely")
+    out = pb.report(D)
+    assert "The fuse carries 86% indefinitely" in out
+    assert "doing its job" not in out and "doing its job" not in pb.__doc__
+    assert "short-circuit device for the 84 V side" in out
+
+
+@pytest.mark.parametrize("share, starts", [
+    (0.86, "indefinitely"), (1.00, "indefinitely"),
+    (1.01, "for more than 60 min"), (1.13, "for more than 60 min"),
+    (1.20, "for up to and beyond 60 min"), (1.34, "for up to and beyond 60 min"),
+    (1.35, "for up to 60 min"), (1.41, "for up to 60 min"), (2.0, "for up to 60 min"),
+])
+def test_time_at_current_follows_the_agency_table(share, starts):
+    assert pb.fuse_time_at(share).startswith(starts), share
+    assert (pb.FUSE_HOLDS_PCT, pb.FUSE_HOLDS_60MIN_PCT, pb.FUSE_OPENS_60MIN_PCT) == (1.00, 1.13, 1.35)
+
+
+def test_the_choke_is_graded_against_the_ocp_ceiling_with_a_time():
+    out = pb.report(D)
+    line = next(l for l in out.splitlines() if l.startswith("OCP CEILING"))
+    assert "the choke sits at 94% until the brick's over-temperature protection" in line
+    assert "the choke carries 139% for that long" in line and "opens within an hour at 135%" in line
+
+
+def test_the_ocp_ceiling_moves_with_the_bricks_rating():
+    """Derived, not typed: a 200 W brick (16.7 A) lifts the whole band."""
+    d = D.replace_part("U201", value=D.part("U201").value.replace("12.5 A", "16.7 A"))
+    assert "16.7 A" in d.part("U201").value
+    lim = pb.limit_case(d)
+    assert lim.ocp_out_a == pytest.approx((16.7 * 1.02, 16.7 * 1.50))
+
+
 # --- the parts are found through the copper, not by refdes ------------------------------
 def test_the_converter_and_its_choke_are_found_through_the_copper():
     r = pb.budget(D)

@@ -576,3 +576,29 @@ def test_a_weak_level_shifter_divider_fails():
 def test_a_zener_at_the_gate_rating_fails():
     from dataclasses import replace as _replace
     assert any("D102" in f for f in ss.assess(_replace(ss.SPEC, v_zener=20.0)))
+
+
+# --- M18: the verdict TEXT agrees with the exit code, both ways -----------------------
+def test_over_in_the_text_means_exit_1_and_exit_1_means_over_in_the_text(monkeypatch, capsys):
+    """The 2026-09-20 defect: the key-off line printed `⛔ OVER` while the tool
+    exited 0 with `✅ PASS`. `assess()` was fixed; this holds the TEXT to it.
+    On the good circuit no line reads OVER and the exit is 0; with the shed
+    tap pushed over the DC line the key-off lines read OVER and the exit is 1
+    -- and the two agree because the same numbers feed both."""
+    rc = ss.main([], ss.SPEC)
+    out = capsys.readouterr().out
+    assert ("⛔ OVER" in out) == (rc == 1) == False
+    assert "✅ PASS" in out and "⛔ FAIL" not in out
+
+    from tools import power_budget as pb
+    monkeypatch.setattr(pb, "BASE_12V_A", 7.6)                # shed tap ~1.74 A
+    heavier = ss.shed_tap_current_a()
+    monkeypatch.setattr(ss, "I_LOAD_SHED", heavier)
+    monkeypatch.setattr(ss, "P_LOAD_SHED", heavier * ss.V_LVC)
+    rc = ss.main([], ss.SPEC)
+    out = capsys.readouterr().out
+    assert ("⛔ OVER" in out) == (rc == 1) == True
+    assert "✅ PASS" not in out and "⛔ FAIL" in out
+    over = [l for l in out.splitlines() if "⛔ OVER" in l]
+    assert over and all("the derated DC line" in l or "allowed there" in l for l in over)
+    assert any(f.startswith("key off, 84 V") for f in ss.assess())

@@ -160,7 +160,10 @@ def _good() -> Design:
         _conn("J308", "OUTPUTS", "STACK", stack, leaves_box=False, interface="STACK"),
         _conn("J301", "OUTPUTS", "Headlight", ("HL_LOW", "GND")),
         _conn("J302", "OUTPUTS", "High-side lamp", ("STOP_OUT", "GND")),
-        _conn("J303", "OUTPUTS", "Horn", ("V12", "HORN_OUT")),
+        # The horn's + rides U301's OUT1 -- a current-limited channel, as the
+        # real AUX12 does -- never raw V12: RAIL-INSIDE forbids a rail on a
+        # harness terminal (M21).
+        _conn("J303", "OUTPUTS", "Horn", ("HL_LOW", "HORN_OUT")),
         _conn("J306", "OUTPUTS", "12 V contact", ("CONTACT_12V", "GND")),
         _conn("J305", "OUTPUTS", "Display (parked, D19)", ("DISP_LINE", "GND"), parked=True,
               dnp=True),
@@ -378,7 +381,7 @@ RULE_IDS = {
     "BD-2", "BD-4", "GPIO-TAG", "GPIO-DUP", "GPIO-PAD", "GPIO-43",
     "GPIO-ADC1", "GPIO-STRAP", "D14", "TURN-ON", "VR-RATED", "VR-DOMAIN",
     "VR-UNDER", "VR-STANDOFF", "VR-DATASHEET", "LV-LOGIC", "PROT",
-    "GND-ISLAND", "MCP-OUT7", "POL", "HT-NUM", "HT-STACK", "HT-GEOM",
+    "GND-ISLAND", "RAIL-INSIDE", "MCP-OUT7", "POL", "HT-STACK", "HT-GEOM", "HT-CAVITY",
     "D10", "SUPPLY", "GND-PIN", "BUS-ORDER", "VR-CLAMP", "VR-POWER",
     "PULL-DIR", "GATE-VGS",
 }
@@ -1011,7 +1014,14 @@ def test_prot_is_not_satisfied_by_a_part_that_is_not_a_tvs():
 
 
 def test_prot_needs_a_rail_clamp_where_the_rail_leaves_the_box():
-    assert any("'V12'" in e and "J303" in e for e in fired(GOOD.without_part("D315"), "PROT"))
+    """V12 put on the horn terminal (which RAIL-INSIDE forbids, M21) and its
+    rail clamp D315 removed: PROT still wants a clamp where the rail meets the
+    wire, independently of the other rule."""
+    j = GOOD.connector("J303")
+    raw = GOOD.replace_connector("J303", pins=(replace(j.pins[0], net="V12"), j.pins[1]))
+    assert any("'V12'" in e and "J303" in e for e in fired(raw, "RAIL-INSIDE"))
+    assert not [e for e in fired(raw, "PROT") if "'V12'" in e]
+    assert any("'V12'" in e and "J303" in e for e in fired(raw.without_part("D315"), "PROT"))
 
 
 def test_prot_lets_a_parked_connector_keep_its_tvs_dnp_but_not_unwired():
@@ -1079,7 +1089,7 @@ def _tallest_on_top_of(d, board):
 
 
 def test_ht_good_design_fits():
-    assert not fired(GOOD, "HT-NUM") and not fired(GOOD, "HT-STACK")
+    assert not fired(GOOD, "HT-STACK") and not fired(GOOD, "HT-CAVITY")
 
 
 def test_ht_fires_on_a_connector_too_tall_for_the_stack(binding_envelope):

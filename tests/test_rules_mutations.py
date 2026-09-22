@@ -100,10 +100,39 @@ def test_m29_parking_the_brake_kill_terminal_does_not_excuse_its_tvs():
 
 
 def test_m19_a_clamp_returned_through_10k_is_not_grounded():
+    """Both rules fire, each for its own reason: GND-ISLAND names the resistor
+    as the thing that does NOT make a return (M20 -- the message once said a
+    resistor would have satisfied it), and PROT loses the clamp."""
     bad = D.without_pin("D101", "A")
     bad = bad.with_net(Net("TVS_RTN", (("D101", "A"),), "GND"))
     bad = add(bad, _r("R199", "POWER", "10k", "1206"), {"1": "TVS_RTN", "2": "GND"})
-    assert fired(bad, "PROT") or fired(bad, "GND-ISLAND")
+    assert fired(bad, "GND-ISLAND") == [
+        "GND-ISLAND: net 'TVS_RTN' is typed GND but no 0 Ω link, inductor, fuse or "
+        "choke winding joins it to the ground net -- R199 (10000 Ω) to ground is a "
+        "RESISTOR, which is a sense node, not a return. Every return landed on it "
+        "goes nowhere."]
+    prot = fired(bad, "PROT")
+    assert len(prot) == 1 and "HV_BPLUS" in prot[0] and "D101 has no other terminal on ground" in prot[0]
+
+
+def test_m21_the_horn_terminal_moved_onto_raw_12_v_is_named():
+    """J304.1 (horn +) from AUX12 to V12: 0 violations before -- PROT was
+    satisfied by the rail's own TVS, and nothing said a rail may not leave the
+    box (M21)."""
+    j = D.connector("J304")
+    assert [cp.net for cp in j.pins] == ["AUX12", "HORN_N"]
+    bad = move(D, "J304", "1", "V12").replace_connector(
+        "J304", pins=tuple(replace(cp, net="V12") if cp.pin == "1" else cp for cp in j.pins))
+    errs = fired(bad, "RAIL-INSIDE")
+    assert len(errs) == 1 and errs[0].startswith("RAIL-INSIDE: rail 'V12' lands on J304.1 (")
+    assert "leaves the box" in errs[0]
+    assert fired(D, "RAIL-INSIDE") == []
+    # ...and the 3.3 V rail on a spare input, the same way:
+    j = D.connector("J409")
+    pin = j.pins[0].pin
+    bad = move(D, "J409", pin, "V3P3").replace_connector(
+        "J409", pins=tuple(replace(cp, net="V3P3") if cp.pin == pin else cp for cp in j.pins))
+    assert any(f"rail 'V3P3' lands on J409.{pin}" in e for e in fired(bad, "RAIL-INSIDE"))
 
 
 # ── CK-8: resistor power ─────────────────────────────────────────────────────
@@ -310,6 +339,38 @@ def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatc
     assert fired(D, "D14") == []
     monkeypatch.setattr(rules, "INTERNAL_PULLDOWN", {})
     assert any("DIAG_EN" in e for e in fired(D, "D14"))
+
+
+# ── M19: near-threshold mutations -- each gate shown to bite JUST over its line
+def test_m19_lv_logic_bites_just_over_3_6_v_and_not_just_under():
+    """V12_SENSE is R337 47k over R338 10k (2.11 V on IO2). R338 = 20k puts it
+    at 3.58 V, under LOGIC_PIN_V_MAX 3.6; 22k puts it at 3.83 V, over."""
+    assert rules.LOGIC_PIN_V_MAX == 3.6
+    assert fired(D.replace_part("R338", value="20k"), "LV-LOGIC") == []
+    errs = fired(D.replace_part("R338", value="22k"), "LV-LOGIC")
+    assert any("U401.IO2" in e and "'V12_SENSE' at 3.826 V" in e for e in errs), errs
+
+
+def test_m19_vr_clamp_bites_just_under_the_clamp_and_not_just_over():
+    """D315 (SMBJ18A) clamps V12 at 29.2 V. U301 rated 29.4 V survives it;
+    rated 29.0 V it does not -- 0.7 % either side of the line."""
+    assert fired(D.replace_part("U301", v_max=29.4), "VR-CLAMP") == []
+    errs = fired(D.replace_part("U301", v_max=29.0), "VR-CLAMP")
+    assert errs == ["VR-CLAMP: D315 (SMBJ18A) clamps 'V12' at 29.2 V; U301 "
+                    "(TPS4H160BQPWPRQ1) is rated 29 V at its supply pin. Choose a "
+                    "clamp under the part, or a part over the clamp."]
+
+
+def test_m19_the_expander_clamp_current_bites_just_over_20_ma():
+    """IN01_TURN_L: the 9.8 V array clamp through R413 into U402.GPA0, whose
+    diodes take 20 mA (I_IK). 1 kΩ passes 5.9 mA; 300 Ω passes 19.7 mA and
+    is under; 270 Ω passes 21.9 mA and is over. Any MCP_CLAMP_MA from 25.6 mA
+    up passed the one gross test this had (M19)."""
+    assert rules.MCP_CLAMP_MA == 20.0
+    assert fired(D.replace_part("R413", value="300R"), "VR-CLAMP") == []
+    errs = fired(D.replace_part("R413", value="270R"), "VR-CLAMP")
+    assert any("R413 (270 Ω)" in e and "21.9 mA into U402.GPA0" in e
+               and "take 20 mA (I_IK)" in e for e in errs), errs
 
 
 # ── H15: a net's label is held to the voltage its copper solves to ───────────

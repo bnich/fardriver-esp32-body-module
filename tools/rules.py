@@ -28,8 +28,8 @@ Every error string starts with a stable rule ID, then a colon:
   GPIO-RESET-PULL
   D14  TURN-ON  GATE-VGS
   VR-RATED  VR-DOMAIN  VR-UNDER  VR-STANDOFF  VR-DATASHEET
-  LV-LOGIC  PROT  GND-ISLAND  MCP-OUT7  POL
-  HT-NUM  HT-STACK  HT-GEOM  D10  SUPPLY  GND-PIN  BUS-ORDER  VR-CLAMP
+  LV-LOGIC  PROT  GND-ISLAND  RAIL-INSIDE  MCP-OUT7  POL
+  HT-STACK  HT-GEOM  D10  SUPPLY  GND-PIN  BUS-ORDER  VR-CLAMP
   VR-POWER  PULL-DIR
 
 `check_all(design)` returns the errors; `warnings(design)` returns what a human
@@ -1705,12 +1705,47 @@ def _resistive_input(ix: _Ix, net) -> bool:
 
 # ── GND-ISLAND: a ground that is not joined to ground ────────────────────────
 def ground_islands(d: Design) -> list[str]:
+    """A GND-typed net is a return only if a 0 Ω LINK, an inductor, a fuse or
+    a choke winding (`_GROUND_JOIN`) joins it to the ground net. ⛔ A resistor
+    does NOT: 10 kΩ to ground is a sense node, and a clamp returned through it
+    clamps nothing -- so the message names any resistor that is there, as the
+    thing that does not count (M20)."""
     ix = _index(d)
-    return [
-        f"GND-ISLAND: net {n.name!r} is typed GND but no fitted resistor, "
-        f"inductor, fuse or choke winding joins it to the ground net. Every "
-        f"return landed on it goes nowhere."
-        for n in d.nets if n.domain == "GND" and n.name not in ix.grounded]
+    errs = []
+    for n in d.nets:
+        if n.domain != "GND" or n.name in ix.grounded:
+            continue
+        via_r = sorted(f"{ref} ({ohms:g} Ω)" for other, ohms, ref in ix._resistors(n.name)
+                       if other in ix.grounded and ohms > 0)
+        errs.append(
+            f"GND-ISLAND: net {n.name!r} is typed GND but no 0 Ω link, inductor, "
+            f"fuse or choke winding joins it to the ground net"
+            + (f" -- {', '.join(via_r)} to ground is a RESISTOR, which is a sense "
+               f"node, not a return" if via_r else "")
+            + ". Every return landed on it goes nowhere.")
+    return errs
+
+
+# ── RAIL-INSIDE: no supply rail lands on a wire that leaves the box ──────────
+def rails_stay_inside(d: Design) -> list[str]:
+    """No net in `rails()` lands on a `leaves_box` connector. "No raw 12 V
+    leaves the box" (CLAUDE.md): horn, fan and buzzer ride AUX12, a
+    current-limited driver output, and every 5 V output is a TPS2553 channel.
+    A rail on a harness wire has no limit but the fuse, and a channel moved
+    onto it passes PROT on the rail's own TVS (M21)."""
+    ix = _index(d)
+    errs = []
+    for name in sorted(rails(d)):
+        for c in d.connectors:
+            if not c.leaves_box:
+                continue
+            for cp in c.pins:
+                if cp.net == name or name in ix.nets_of_pin(c.refdes, cp.pin):
+                    errs.append(f"RAIL-INSIDE: rail {name!r} lands on {c.refdes}.{cp.pin} "
+                                f"({c.name}), which leaves the box. No raw rail leaves "
+                                f"the box: a load rides a current-limited channel "
+                                f"(AUX12, a TPS2553 output), never the rail itself.")
+    return errs
 
 
 # ── MCP-OUT7: GPA7 / GPB7 are output-only ────────────────────────────────────
@@ -2054,24 +2089,19 @@ def _bodies(d: Design):
                c.interface is not None and not is_cabled(c.interface))
 
 
-def _is_height(h) -> bool:
-    return isinstance(h, (int, float)) and not isinstance(h, bool) \
-        and math.isfinite(h) and h >= 0
-
-
 def heights(d: Design) -> list[str]:
     """Parts AND connectors, top side and bottom. board_params derives each
     gap from the tallest thing standing in it, the deepest thing hanging into
     it, solder tails, the brick's floor seat and the mated inter-board pairs -- so a
-    tall connector, a 40 mm `side="bottom"` part and a NaN all land here.
+    tall connector and a 40 mm `side="bottom"` part both land here. A height
+    that is not a finite number >= 0 never reaches a rule: `model._height`
+    refuses it at construction.
 
     The cavity the envelope REQUIRES is relayed too, on the plan axes: while
     M18 is an estimate `cavity_problems` is empty, and once the cavity is
     measured and the enclosure chosen a design that will not go in the box
     fails this gate exactly as an over-tall stack does."""
-    errs = [f"HT-NUM: {ref} ({what}) has height {h!r}. An unknown height is an "
-            f"unchecked height."
-            for ref, what, _b, _s, h, _c, _i in _bodies(d) if not _is_height(h)]
+    errs: list[str] = []
     if _stack_problems is None:
         errs.append("HT-GEOM: tools/board_params.py offers no stack_problems(design), "
                     "so no height in this design has been checked against the "
@@ -2098,6 +2128,7 @@ ALL_RULES = (
     logic_pin_levels,
     protection,
     ground_islands,
+    rails_stay_inside,
     mcp23017_bit7,
     polarity,
     heights,
@@ -2129,11 +2160,11 @@ def _near_limit(d: Design) -> dict[str, str]:
     unconfirmed height for it is just as load-bearing either way."""
     tallest: dict[tuple[str, str], tuple[float, str]] = {}
     for ref, _w, board, side, h, _c, paired in _bodies(d):
-        if not paired and _is_height(h) and h > tallest.get((board, side), (-1.0, ""))[0]:
+        if not paired and h > tallest.get((board, side), (-1.0, ""))[0]:
             tallest[(board, side)] = (h, ref)
     out = {}
     for ref, _w, board, side, h, confirmed, paired in _bodies(d):
-        if confirmed or not _is_height(h):
+        if confirmed:
             continue
         if paired:
             out[ref] = "its mated height sets the spacing between two boards"
@@ -2179,10 +2210,13 @@ def warnings(design: Design) -> list[str]:
     return out
 
 
-if __name__ == "__main__":
-    import sys
+def main(argv=None) -> int:
     from . import netlist
-    design = netlist.current()
+    try:
+        design = netlist.checked()
+    except netlist.NotACircuit as e:
+        print(f"⛔ REFUSED -- {e}")
+        return 1
     problems = check_all(design)
     for e in problems:
         print(e)
@@ -2190,4 +2224,9 @@ if __name__ == "__main__":
     for w in notes:
         print("warning:", w)
     print(f"\n{len(problems)} rule violation(s), {len(notes)} warning(s)")
-    sys.exit(1 if problems else 0)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

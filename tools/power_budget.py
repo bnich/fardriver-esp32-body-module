@@ -18,10 +18,22 @@ case", because it is not the ceiling:
     current limit, about 11.4 A at 12 V. That is 91 % of the brick's 12.5 A,
     so the converter still carries it -- but it puts ~2.53 A into the choke
     (84 % of 3 A) and ~2.58 A through the tap fuse (86 % of 3 A), over the
-    derates below. That is EIGHT SIMULTANEOUS OUTPUT FAULTS, and a fast-blow fuse
-    opening on it is the fuse doing its job. It is derived here so nobody
-    meets it as a surprise, and it is not what this check sizes the input path
-    against.
+    derates below. That is EIGHT SIMULTANEOUS OUTPUT FAULTS. ⛔ The fuse does
+    NOT open on it: a KLKD holds 100 % of its rating to temperature
+    stabilisation and is only required to open at 135 % within 60 minutes
+    (littelfuse_klkd.pdf p.4, agency table), so 86 % is carried indefinitely.
+    It is derived here so nobody meets it as a surprise, and it is not what
+    this check sizes the input path against.
+  * What BOUNDS a sustained 12 V-side overload is the brick's own
+    over-current protection, not the fuse: `limit_case()` derives that
+    ceiling too (`Limit.ocp_*`), from TDK's 102-150 % constant-current OCP
+    band, and the report grades the choke against it with the time each end
+    of the band lasts. What the tap fuse is FOR is an 84 V-SIDE SHORT -- a
+    Y capacitor failed, copper to the baseplate -- where the pack's
+    prospective ~200 A melts it in ~200 µs (7.8 A²s, littelfuse_klkd.pdf
+    p.2; `R211`'s source in netlist.py). It is a short-circuit device on
+    the pack side, and the derate below is about carrying the load, not
+    about clearing an overload.
     ⚠️ The base in that sum is still `BASE_12V_A`, the NOMINAL 2.62 A of
     lamps, fan and display: `U301` and `U302` have limits of their own
     (2.0 A and 1.0 A per channel), and the LIMITED figure does not include
@@ -74,6 +86,19 @@ LOGIC_IN_W = 3.0         # the Cincon's input for the logic rail (plan §3.2.3)
 #: 3 A fast-blow, 600 V DC / 50 kA DC (Littelfuse POWR-GARD rev 111618 p.1-2).
 TAP_FUSE_A = 3.0
 TAP_FUSE_MPN = "KLKD003"
+#: littelfuse_klkd.pdf p.4, "Electrical Specification -- Agency Requirements",
+#: 1/10-30 A: the share of rating a KLKD holds to temperature stabilisation,
+#: the share it must NOT open at within 60 minutes (UL), and the share it MUST
+#: open at within 60 minutes (UL / IEC). Between the first two it never opens.
+FUSE_HOLDS_PCT = 1.00
+FUSE_HOLDS_60MIN_PCT = 1.13
+FUSE_OPENS_60MIN_PCT = 1.35
+#: The 12 V brick's over-current protection, as a share of its rated output:
+#: TDK-Lambda CN-B (tdk_cn-b_e.pdf) p.3, "Overcurrent Protection": CN100B-300B
+#: 102-150 %, constant-current mode. A sustained 12 V-side overload is bounded
+#: here, not at the fuse (M1). p.3 also gives the over-temperature protection,
+#: 105-120 °C baseplate, which is what ends the low end of the band.
+CONV_OCP_MIN, CONV_OCP_MAX = 1.02, 1.50
 #: A fast-blow fuse carries at most this share of its rating continuously.
 #: ⚠️ This is Littelfuse's 25 °C continuous-duty CONVENTION, not a line in the
 #: KLKD datasheet: littelfuse_klkd.pdf p.4 gives only a temperature-derating
@@ -165,8 +190,12 @@ def _tap_a(conv_in_a: float) -> float:
 
 @dataclass
 class Limit:
-    """What the limiters let through, as opposed to what the design asks for."""
+    """What the limiters let through, as opposed to what the design asks for;
+    and what the brick's OCP lets through, as (low, high) of its band."""
     load_12v_a: float | None = None
+    ocp_out_a: tuple[float, float] | None = None
+    ocp_conv_in_a: tuple[float, float] | None = None
+    ocp_tap_a: tuple[float, float] | None = None
     conv_in_a: float | None = None
     tap_a: float | None = None
     per_12v_a: float | None = None
@@ -340,8 +369,13 @@ def limit_case(d: Design | None = None) -> Limit:
     limits are not in this sum. And the 5 V branch is not capped at U305's
     5 A output rating either, which would hold it a little below four times a
     channel's limit -- both omissions make this figure conservative in the
-    direction of asking MORE of the input path, which is the safe direction
-    for sizing a fuse.
+    direction of asking MORE of the input path.
+
+    The OCP ceiling (`ocp_*`) is the other bound, and the higher one: with
+    the limiters summing past the brick's rating (U301/U302's own limits
+    would take twelve channels to 22.7 A), what the input path actually
+    carries in a sustained fault is what the brick's constant-current OCP
+    lets it -- 102 to 150 % of its rated output (M1).
     """
     d = d if d is not None else netlist.current()
     lim = Limit()
@@ -369,7 +403,32 @@ def limit_case(d: Design | None = None) -> Limit:
                       + (BUCK_STANDING_A if lim.n5 else 0.0))
     lim.conv_in_a = _conv_in_a(lim.load_12v_a)
     lim.tap_a = _tap_a(lim.conv_in_a)
+    convs = _converters_12v(d)
+    rated = _rated_a(convs[0].value) if len(convs) == 1 else None
+    if rated is None:
+        lim.problems.append("the OCP ceiling is not derivable: no single 12 V "
+                            "converter with a current rating in its value")
+        return lim
+    lim.ocp_out_a = (rated * CONV_OCP_MIN, rated * CONV_OCP_MAX)
+    lim.ocp_conv_in_a = tuple(_conv_in_a(a) for a in lim.ocp_out_a)
+    lim.ocp_tap_a = tuple(_tap_a(a) for a in lim.ocp_conv_in_a)
     return lim
+
+
+def fuse_time_at(share: float) -> str:
+    """How long the KLKD carries `share` of its rating, from the agency table
+    (littelfuse_klkd.pdf p.4): the bound on how long anything upstream of it
+    carries the same current."""
+    if share <= FUSE_HOLDS_PCT:
+        return "indefinitely -- the fuse holds 100 % to temperature stabilisation"
+    if share <= FUSE_HOLDS_60MIN_PCT:
+        return (f"for more than 60 min -- the fuse must NOT open within an hour "
+                f"below {FUSE_HOLDS_60MIN_PCT:.0%}")
+    if share < FUSE_OPENS_60MIN_PCT:
+        return (f"for up to and beyond 60 min -- between {FUSE_HOLDS_60MIN_PCT:.0%} "
+                f"(holds an hour) and {FUSE_OPENS_60MIN_PCT:.0%} (opens within one) "
+                f"the table gives no opening time")
+    return f"for up to 60 min -- the fuse opens within an hour at {FUSE_OPENS_60MIN_PCT:.0%}+"
 
 
 def budget(d: Design | None = None) -> Result:
@@ -483,7 +542,26 @@ def _render(r: Result) -> str:
             f"{lim.tap_a:.2f} A ({lim.tap_a / TAP_FUSE_A:.0%} of the fuse). "
             f"{lim.n12 + lim.n5} simultaneous output faults: over the derates "
             f"by design, and NOT what the gates above size the input path "
-            f"against")
+            f"against. The fuse carries {lim.tap_a / TAP_FUSE_A:.0%} "
+            f"{fuse_time_at(lim.tap_a / TAP_FUSE_A)}")
+    if lim.ocp_out_a is not None and r.choke_rated_a:
+        lo, hi = lim.ocp_conv_in_a
+        tlo, thi = lim.ocp_tap_a
+        lines.append(
+            f"OCP CEILING {lim.ocp_out_a[0]:.2f}-{lim.ocp_out_a[1]:.2f} A at 12 V -- "
+            f"the brick's constant-current limit, {CONV_OCP_MIN:.0%}-{CONV_OCP_MAX:.0%} "
+            f"of its rating (tdk_cn-b_e.pdf p.3): what a sustained 12 V-side "
+            f"overload is actually bounded by. Choke {lo:.2f}-{hi:.2f} A = "
+            f"{lo / r.choke_rated_a:.0%}-{hi / r.choke_rated_a:.0%} of its "
+            f"{r.choke_rated_a:g} A at 70 °C; tap {tlo:.2f}-{thi:.2f} A = "
+            f"{tlo / TAP_FUSE_A:.0%}-{thi / TAP_FUSE_A:.0%} of the fuse. Time at "
+            f"current: at the low end {fuse_time_at(tlo / TAP_FUSE_A)}, so the "
+            f"choke sits at {lo / r.choke_rated_a:.0%} until the brick's "
+            f"over-temperature protection (105-120 °C baseplate) acts; at the "
+            f"high end {fuse_time_at(thi / TAP_FUSE_A)}, so the choke carries "
+            f"{hi / r.choke_rated_a:.0%} for that long. The tap fuse is a "
+            f"short-circuit device for the 84 V side (~200 A prospective, "
+            f"7.8 A²s, R211's source), not the bound on this case")
     lines.append(
         f"SHED {r.shed_load_12v_a:.2f} A at 12 V -- every aux channel "
         f"RELEASED, which the firmware does on key-off (IO-16) · converter "

@@ -210,15 +210,33 @@ def test_an_unrecorded_code_is_not_waved_through(fixture):
     assert any("C99999999: no record" in e for e in lcsc_fixture.check(bad, fixture))
 
 
+#: The live check's bounds: one request may wait this long, once; the whole
+#: test may run this long. Past either it SKIPS with the reason -- the network
+#: is not the design, and the offline check above holds the design regardless.
+LIVE_REQUEST_TIMEOUT_S = 10
+LIVE_BUDGET_S = 90
+
+
 def test_the_fixture_is_what_the_library_says_today(fixture):
-    """A fixture nobody refreshes would pin a stale answer."""
+    """A fixture nobody refreshes would pin a stale answer. Bounded: the
+    default client waited 20 s × 4 attempts per request, and one stall once
+    took the suite to 183 s and failed this test on the network."""
+    import time
     if os.environ.get("PADMAP_OFFLINE"):
         pytest.skip("PADMAP_OFFLINE set")
-    svc = lcsc_fixture.service()
+    svc = lcsc_fixture.service(timeout=LIVE_REQUEST_TIMEOUT_S, retries=0)
     if svc is None:
         pytest.skip("~/tools/lcsc-search is not on this machine")
-    for code, rec in fixture.items():
-        live = lcsc_fixture.record(svc, code)
+    start = time.monotonic()
+    for i, (code, rec) in enumerate(sorted(fixture.items())):
+        if time.monotonic() - start > LIVE_BUDGET_S:
+            pytest.skip(f"the library check ran out of its {LIVE_BUDGET_S} s budget after "
+                        f"{i} of {len(fixture)} codes agreed; the offline check holds the design")
+        try:
+            live = lcsc_fixture.record(svc, code)
+        except lcsc_fixture.unreachable() as exc:
+            pytest.skip(f"the library is unreachable ({type(exc).__name__}: {exc}); "
+                        f"{i} of {len(fixture)} codes agreed before it")
         assert (live["mpn"], live["symbol_pins"]) == (rec["mpn"], rec["symbol_pins"]), code
 
 
@@ -240,3 +258,33 @@ def test_a_placed_part_with_no_footprint_on_record_fails_the_fixture_check(fixtu
     placed = {padmap.footprint_source(x) for x in (*d.parts, *d.connectors) if x.assembly == "jlc"}
     assert not nulls & placed
     assert lcsc_fixture.check(d, fixture) == []
+
+
+def test_an_unreachable_library_skips_the_live_check_with_a_reason(fixture, monkeypatch):
+    """Not a failure: the network is not the design. The client is built with
+    an opener that refuses every connection, so no packet leaves the box."""
+    import urllib.error
+    from pathlib import Path
+    import sys
+    sys.path.insert(0, str(Path.home() / "tools/lcsc-search"))
+    try:
+        from lcsc_search import Service
+        from lcsc_search.cache import Cache
+        from lcsc_search.http import Http
+    except ImportError:
+        pytest.skip("~/tools/lcsc-search is not on this machine")
+
+    def refuse(req, timeout=None):
+        raise urllib.error.URLError("stubbed: connection refused")
+
+    def stubbed(*, timeout=None, retries=None):
+        assert timeout == LIVE_REQUEST_TIMEOUT_S and retries == 0
+        return Service(cache=Cache(path=":memory:"),
+                       http=Http(timeout=timeout, retries=retries, opener=refuse,
+                                 sleep=lambda s: None))
+    monkeypatch.setattr(lcsc_fixture, "service", stubbed)
+    monkeypatch.delenv("PADMAP_OFFLINE", raising=False)
+    with pytest.raises(pytest.skip.Exception) as why:
+        test_the_fixture_is_what_the_library_says_today(fixture)
+    assert "the library is unreachable (FetchError" in str(why.value)
+    assert "0 of" in str(why.value)

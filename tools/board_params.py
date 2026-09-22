@@ -42,7 +42,6 @@ Two things follow, and both are load-bearing:
 When the enclosure lands: edit the allowances, flip `ENCLOSURE_DECIDED`, run
 `python3 -m tools.board_fit`, and re-run the envelope search if a wall moved.
 """
-import math
 import re
 from dataclasses import dataclass
 
@@ -430,10 +429,6 @@ class Stack:
         return bool(self.load_bearing) or not CAVITY_MEASURED or not ENCLOSURE_DECIDED
 
 
-def _bad_height(h) -> bool:
-    return h is None or isinstance(h, bool) or math.isnan(h) or h < 0.0
-
-
 def _tallest(items):
     """(height, refdes) of the tallest of [(height, refdes)], or (0, '-')."""
     return max(items, default=(0.0, "-"))
@@ -536,10 +531,9 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
     gaps = []
     for below, above in zip(decks, decks[1:]):
         tops = [(p.height_mm, p.refdes) for p in d.parts
-                if p.board == below and p.side == "top" and not _bad_height(p.height_mm)]
+                if p.board == below and p.side == "top"]
         tops += [(c.height_mm, c.refdes) for c in d.connectors
-                 if c.board == below and c.side == "top" and c.refdes not in paired
-                 and not _bad_height(c.height_mm)]
+                 if c.board == below and c.side == "top" and c.refdes not in paired]
         if below in order:                   # pins of parts mounted underneath
             up_tails, up_ref = _tails(d, below, "bottom")
             if up_tails:
@@ -547,11 +541,9 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
         top_mm, top_ref = _tallest(tops)
 
         hangs = [(p.height_mm, p.refdes) for p in d.parts
-                 if p.board == above and p.side == "bottom"
-                 and not _bad_height(p.height_mm)]
+                 if p.board == above and p.side == "bottom"]
         hangs += [(c.height_mm, c.refdes) for c in d.connectors
-                  if c.board == above and c.side == "bottom" and c.refdes not in paired
-                  and not _bad_height(c.height_mm)]
+                  if c.board == above and c.side == "bottom" and c.refdes not in paired]
         tails, tails_ref = _tails(d, above, "top") if above in order else (0.0, "-")
         part_mm, part_ref = _tallest(hangs)
         hang_mm, hang_ref = (part_mm, part_ref) if part_mm >= tails else (tails, tails_ref)
@@ -582,8 +574,7 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
             Pair(lo.refdes, up.refdes, lo.height_mm + up.height_mm,
                  lo.height_confirmed and up.height_confirmed)
             for lo, up in (_pairs(d, below, above, order)
-                           if below in order and above in order else [])
-            if not _bad_height(lo.height_mm) and not _bad_height(up.height_mm))
+                           if below in order and above in order else []))
         stand = _standoff(d, below, above)
         chosen = [p.mated_mm for p in pairs if p.confirmed]
         if chosen:
@@ -656,13 +647,6 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
     """The derived stack against the height available. See `layer_gaps`."""
     problems, notes = [], []
     items: list[Part | Connector] = [*d.parts, *d.connectors]
-    for x in items:
-        if x.board in order and _bad_height(x.height_mm):
-            problems.append(
-                f"height: {x.refdes} on {x.board} has no usable height "
-                f"({x.height_mm!r}) -- the stack cannot be derived around a part "
-                f"of unknown size, so this is a failure, not a pass")
-
     gaps = layer_gaps(d, order)
     paired = _paired(d, order)
     by_ref = {x.refdes: x for x in items}
@@ -803,13 +787,12 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
         # deeper. Anything that does lifts the brick off its heatsink, so the
         # gap silently growing to fit it is exactly the failure to catch.
         seat = by_ref.get(FLOOR_SEAT)
-        if g.seat_mm and seat is not None and not _bad_height(seat.height_mm):
+        if g.seat_mm and seat is not None:
             # Parts AND the tails of what is soldered on top: both stand on the
             # liner, and either one deeper than the seat lifts the baseplate.
             beside = [(x.height_mm, x.refdes) for x in items
                       if x.board == g.above and x.refdes != FLOOR_SEAT
-                      and getattr(x, "side", "top") == "bottom"
-                      and not _bad_height(x.height_mm)]
+                      and getattr(x, "side", "top") == "bottom"]
             tail_mm_, tail_ref = _tails(d, g.above, "top")
             if tail_mm_:
                 beside.append((tail_mm_, tail_ref))
@@ -831,14 +814,12 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
         # nothing.
         if g.below in order and g.above in order:
             for p in (*d.parts, *d.connectors):
-                if (p.board != g.above or getattr(p, "side", "top") != "bottom"
-                        or _bad_height(p.height_mm) or p.refdes in paired):
+                if (p.board != g.above or getattr(p, "side", "top") != "bottom" or p.refdes in paired):
                     continue
                 room = g.gap_mm - p.height_mm - CLEARANCE
                 blockers = sorted(
                     x.refdes for x in items
-                    if x.board == g.below and getattr(x, "side", "top") == "top"
-                    and not _bad_height(x.height_mm) and x.height_mm > room)
+                    if x.board == g.below and getattr(x, "side", "top") == "top" and x.height_mm > room)
                 if blockers:
                     notes.append(
                         f"keep-out: {p.refdes} hangs {p.height_mm:.1f} mm under "
