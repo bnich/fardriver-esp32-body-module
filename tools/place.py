@@ -2273,9 +2273,13 @@ def main(argv=None):
             return EXIT_REFUSED
     if not a.stack:
         pl = Placement.from_file(project, ix)
-        problems = check(pl, ix)
+        picked = list(a.board) if a.board else None
+        problems = check(pl, ix, boards=picked)
         if a.check:
-            print(summary(pl))
+            print(summary(pl) if not picked else
+                  "\n".join(ln for ln in summary(pl).split("\n") if ln.split(":")[0] in picked))
+            if picked:
+                print(f"checking {' '.join(picked)} only")
             print(f"{len(problems)} problem(s)"
                   + ("" if problems else " -- the placement passes every check"))
             for p in problems:

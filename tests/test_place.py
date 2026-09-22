@@ -1003,3 +1003,18 @@ def test_a_zero_size_hole_is_an_smd_pad_not_a_pin_through_the_board():
     assert none.pads[0][5] is False and not none.tht
     drilled = place.envelope(pad({"holeType": "ROUND", "width": 23.622, "height": 23.622}), (2.0, 2.0))
     assert drilled.pads[0][5] is True and drilled.tht
+
+
+def test_check_board_reports_that_board_only(synthetic_project, capsys):
+    """`--check --board POWER` on the import (every part dumped below the
+    outline) lists POWER's problems and none of LOGIC's or OUTPUTS' -- the
+    flag narrows the report the way it narrows the write.  A mated pair spans
+    two boards, so check 4 is kept when either end is named; every other
+    check that names another board's part is not."""
+    assert place.main(["--check", "--board", "POWER", "--file", str(synthetic_project)]) \
+        == place.EXIT_PROBLEMS
+    text = capsys.readouterr().out
+    assert "checking POWER only" in text
+    assert text.startswith("POWER:") and "\nLOGIC:" not in text and "\nOUTPUTS:" not in text
+    problems = [ln for ln in text.splitlines() if ln.startswith("  - ")]
+    assert problems and all(" POWER " in p for p in problems), problems[:3]
