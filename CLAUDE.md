@@ -67,12 +67,15 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
 - ⛔ **Never close a gap on paper only.** A part counts as protection when both its pins are on nets,
   not when a comment says so.
 - A height or rating is "confirmed" only if it was read in a manufacturer PDF — say which.
-- The generated EasyEDA project is a build artefact: never hand-edit it, never commit it. ⚠️ **The
-  owner's LAYOUT is not that artefact.** Once boards are placed, the project is saved to
-  **`layout/revv1-module.eprj2`** (tracked) and every session opens that file — 📄 `layout/README.md`.
-  A layout saved in `build-eprj3/` is one `gate.sh` away from being renamed `.stale`.
-- ⛔ **EasyEDA Pro 3.2.149 opens `.eprj2`, not `.eprj3`.** Open `build-eprj3/revv1-module.eprj2`.
-  The editor refuses a netlist export while any part lacks a footprint. 📄 The
+- The generated folder under `build-eprj3/` is a build artefact: never hand-edit it, never commit it.
+  **The `.eprj2` lives in ONE place: `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2`** (owner,
+  2026-09-22). The build writes it there — and **refuses to overwrite one the editor has saved**,
+  because that is the owner's layout. 📄 `layout/README.md` has the netlist-change procedure that
+  keeps placement.
+- ⛔ **EasyEDA Pro 3.2.149 opens `.eprj2`, not `.eprj3`.** Open
+  `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2`.
+  The editor refuses a netlist export while any part lacks a footprint. The file to open is
+  `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2`, not anything under `build-eprj3/`. 📄 The
   `working-with-easyeda-pro` skill has the formats and the proof method.
 - **LCSC parts live in `netlist.py` only**: `_R_LCSC`, `_C_LCSC`, `_FAB_BY_MPN`, `_LOOSE_BY_MPN`,
   `_FAB_CONN`, and the harness terminals' `_TERMINALS`. Never in a document. JLC Basic first; the

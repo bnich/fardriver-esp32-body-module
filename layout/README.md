@@ -1,35 +1,32 @@
-# `layout/` — the owner's PCB layout, saved from EasyEDA Pro
+# Where the EasyEDA project lives
 
-**This is where the laid-out project lives.** `build-eprj3/` is a build artefact: the generator
-overwrites it, `tools/gate.sh` renames it `.stale`, and `.gitignore` excludes it. A layout saved there
-is one build away from being lost. Save here instead.
+**One place, one file: `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2`** (owner, 2026-09-22:
+*"all easyeda files should be in ~/Documents/EasyEDA-Pro/projects"*). Open it there; save it there.
+Nothing else on this machine is an `.eprj2` of this design.
 
-**How:** `layout/revv1-module.eprj2` is seeded as a byte-identical copy of the generated project at
-the netlist commit named below. **Open THIS file** in EasyEDA Pro, do the Import Changes here, place
-and route here, save here. Never open `build-eprj3/revv1-module.eprj2` for layout — it is the
-build's, and the build will replace it.
+**What the build does with it.** `python3 tools/build_project.py` (and `tools/gate.sh`) writes the
+generated folder, zip and `layout-rules.txt` under `build-eprj3/`, and writes the **`.eprj2` into the
+editor's folder** — ⚠️ **unless the file already there has been SAVED by the editor**, in which case it
+is the owner's layout and the build **refuses to overwrite it**, exits `INCOMPLETE`, and says so. A
+generated project carries the build's fixed timestamp on every document; a saved one carries the
+editor's real one — that is how the two are told apart (`build_project._is_generated`).
 
-| Seeded from | Netlist commit | Date |
-|---|---|---|
-| `build-eprj3/revv1-module.eprj2`, fresh build | `d48f148` | 2026-09-22 |
+**So the workflow is:**
 
-**The rule:** `build-eprj3/` is generated FROM the netlist and holds an EMPTY PCB (outline, holes,
-rules). `layout/` holds the netlist PLUS placement and routing. When the netlist changes, the fix is
-**not** to rebuild and re-import from scratch — that discards the layout. It is:
+| Situation | What to do |
+|---|---|
+| No layout yet (today) | run the build; open the `.eprj2` it writes; Import Changes; **flip the seven bottom parts**; save |
+| Layout exists, netlist unchanged | just open the file; the build will not touch it |
+| Layout exists, netlist changed | fix `netlist.py`; run the gate (it writes a fresh **`build-eprj3/`** folder and refuses the `.eprj2`); open your layout; re-import only the changed board's **schematic sheet** from `build-eprj3/revv1-module/sch/<BOARD>/`; Import Changes on that PCB — placement survives, changed parts land unplaced; export and `tel_check` |
+| You want a clean regenerated project anyway | move or rename your layout first; then build |
 
-1. Fix `tools/netlist.py`; run `tools/gate.sh` (the editor must be closed).
-2. Open `layout/revv1-module.eprj2`, and in the schematic re-import the changed board's sheet from
-   the fresh `build-eprj3/` — or, for a small change, edit the schematic to match the netlist.
-3. *Import Changes* on the PCB; placement survives, the changed parts land unplaced.
-4. Export each board's netlist; `python3 -m tools.tel_check BOARD file.tel` → identical.
+⛔ Never run the build or the gate while EasyEDA is open — the gate refuses, and it is right to.
 
-⛔ Never run `build_project.py` or `gate.sh` while EasyEDA is open — the gate refuses, and it is
-right to.
+**The seven parts that must be on the bottom layer** — the generated project carries no layer, so
+Import Changes puts everything on top: POWER `U201`, `U202` · OUTPUTS `J314`, `J311`, `J312` · LOGIC
+`J406`, `J407`. `J406`/`J407` footprints are pre-mirrored for this; `J311`/`J312` deliberately are not.
 
-**What is committed:** the `.eprj2` here (it is the design's placement — a real artefact of the
-owner's work, unlike the generated one). ⚠️ It is a binary blob to git; commit it at meaningful
-points (a board placed, a board routed), not every save.
-
-**Seven parts must be on the bottom layer** — the generated project carries no layer, so Import
-Changes puts everything on top: POWER `U201`, `U202` · OUTPUTS `J314`, `J311`, `J312` · LOGIC
-`J406`, `J407`. `J406`/`J407` footprints are pre-mirrored; `J311`/`J312` are deliberately not.
+**This directory** holds only this README. The `.eprj2` is not in the repo: it is a binary the editor
+rewrites on every save, it lives where the editor looks for it, and the design it encodes is
+`tools/netlist.py` plus the owner's placement — the netlist is versioned here, the placement in the
+editor's own history.

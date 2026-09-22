@@ -79,18 +79,40 @@ def test_a_refused_build_renames_the_previous_project_stale(tmp_path, monkeypatc
     """A good build, then a refusal into the same directory: the old .eprj2
     must not be there to open as current.  Every artefact is renamed, not only
     the .eprj2 -- the folder and zip are its sources and the layout rules its
-    derivation, and any of them read as 'the current build' otherwise."""
+    derivation, and any of them read as 'the current build' otherwise.
+
+    The .eprj2 lives in the EDITOR's folder (2026-09-22), not under --out, so
+    it is checked there; the folder, zip and rules under --out as before."""
     run(tmp_path)
+    editor = bp.EDITOR_PROJECTS / f"{NAME}.eprj2"
     before = _names(tmp_path)
-    assert f"{NAME}.eprj2" in before and NAME in before and "layout-rules.txt" in before
+    assert NAME in before and "layout-rules.txt" in before and f"{NAME}.zip" in before
+    assert editor.is_file() and bp._is_generated(editor)
     _refuse_next_build(monkeypatch)
     assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
     after = _names(tmp_path)
     assert after == sorted(n + bp.STALE_SUFFIX for n in before)
-    assert not (tmp_path / f"{NAME}.eprj2").exists()
+    assert not editor.exists(), "a GENERATED .eprj2 in the editor folder is renamed stale too"
+    assert editor.with_name(editor.name + bp.STALE_SUFFIX).is_file()
     assert (tmp_path / f"{NAME}{bp.STALE_SUFFIX}" / f"{NAME}.eprj3").is_file()
     err = capsys.readouterr().err
     assert f"renamed {bp.STALE_SUFFIX}" in err and f"{NAME}.eprj2" in err
+
+
+def test_a_refused_build_leaves_a_saved_layout_alone(tmp_path, monkeypatch, capsys):
+    """The one case that matters most: the editor folder holds the owner's
+    SAVED layout (real timestamps, not the build's fixed one). A refused
+    netlist is no reason to touch it. Nothing renames it, nothing overwrites
+    it, and the summary says why the .eprj2 was not written."""
+    run(tmp_path)
+    editor = bp.EDITOR_PROJECTS / f"{NAME}.eprj2"
+    # make it look saved: the editor re-stamps documents with the wall clock
+    monkeypatch.setattr(bp, "_is_generated", lambda path: False)
+    marker = editor.read_bytes()
+    _refuse_next_build(monkeypatch)
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    assert editor.is_file() and editor.read_bytes() == marker, "the saved layout is untouched"
+    assert not editor.with_name(editor.name + bp.STALE_SUFFIX).exists()
 
 
 def test_a_second_refusal_has_nothing_left_to_rename(tmp_path, monkeypatch):
@@ -396,3 +418,65 @@ def test_the_build_refuses_sheets_that_do_not_carry_the_netlist(tmp_path, monkey
     assert code == bp.EXIT_REFUSED
     assert "read-back" in err and "OUTPUTS" in err
     assert not any(tmp_path.iterdir()), "nothing may be written when read-back fails"
+
+
+# --- the .eprj2 lives in the editor's folder, and a SAVED one is never overwritten -----------
+# Owner, 2026-09-22: "all easyeda files should be in ~/Documents/EasyEDA-Pro/projects". The
+# build writes its generated .eprj2 there. But once the owner has imported, placed and SAVED,
+# that same path holds the layout -- and a generated project written over it would erase every
+# placement. The build tells the two apart by the fixed updateTime the emitter stamps on every
+# document (eprj2._head): a saved project carries the editor's real clock instead.
+
+def _fake_eprj2(tmp_path, monkeypatch, stamps):
+    """A stand-in .eprj2 whose DOCHEADs carry `stamps`, read through a patched eprj2.read."""
+    target = tmp_path / "projects" / "revv1-module.eprj2"
+    target.parent.mkdir()
+    target.write_bytes(b"x")
+    text = "".join(f'{{"type":"DOCHEAD"}}||{{"docType":"PCB","updateTime":{s}}}\n' for s in stamps)
+    monkeypatch.setattr(build_project.eprj2, "read", lambda p: {"text": text})
+    monkeypatch.setattr(build_project, "EDITOR_PROJECTS", target.parent)
+    return target
+
+
+def test_a_generated_eprj2_in_the_editor_folder_is_replaceable(tmp_path, monkeypatch):
+    """Every DOCHEAD carries the build's fixed stamp: this is a build output."""
+    t = _fake_eprj2(tmp_path, monkeypatch, [build_project.GENERATED_STAMP] * 3)
+    assert build_project._is_generated(t)
+
+
+def test_a_saved_eprj2_in_the_editor_folder_is_precious(tmp_path, monkeypatch):
+    """One document the editor has re-stamped is enough: the file holds the owner's work."""
+    t = _fake_eprj2(tmp_path, monkeypatch,
+                    [build_project.GENERATED_STAMP, "1790100000000", build_project.GENERATED_STAMP])
+    assert not build_project._is_generated(t)
+
+
+def test_an_unreadable_eprj2_is_treated_as_precious(tmp_path, monkeypatch):
+    """If the build cannot read it, it must not assume it may overwrite it."""
+    t = _fake_eprj2(tmp_path, monkeypatch, [build_project.GENERATED_STAMP])
+    monkeypatch.setattr(build_project.eprj2, "read", lambda p: (_ for _ in ()).throw(RuntimeError("no keys")))
+    assert not build_project._is_generated(t)
+
+
+def test_write_eprj2_refuses_to_overwrite_a_saved_layout(tmp_path, monkeypatch):
+    """The whole point: a saved project in the editor folder stops the build cold, with the
+    reason and the way forward (Import Changes, not regeneration) in the message."""
+    t = _fake_eprj2(tmp_path, monkeypatch, ["1790100000000"])
+    monkeypatch.setattr(build_project.eprj2, "convert",
+                        lambda *a, **k: pytest.fail("convert must not be reached"))
+    root = tmp_path / "revv1-module"; root.mkdir()
+    path, why = build_project.write_eprj2(root, template=tmp_path / "t.eprj2")
+    assert path is None
+    assert "SAVED layout" in why and "refusing to overwrite" in why
+    assert "Import Changes" in why
+
+
+def test_write_eprj2_replaces_a_generated_project(tmp_path, monkeypatch):
+    """And the mirror: a generated one is replaced, and convert IS reached with the editor path."""
+    t = _fake_eprj2(tmp_path, monkeypatch, [build_project.GENERATED_STAMP] * 2)
+    seen = {}
+    monkeypatch.setattr(build_project.eprj2, "convert",
+                        lambda root, out, tpl: seen.setdefault("out", out) or out)
+    root = tmp_path / "revv1-module"; root.mkdir()
+    path, why = build_project.write_eprj2(root, template=tmp_path / "t.eprj2")
+    assert why is None and seen["out"] == t

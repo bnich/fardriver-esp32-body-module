@@ -79,4 +79,4 @@ fi
 run build_project python3 tools/build_project.py
 run jlc_bom       python3 -m tools.jlc_bom
 
-printf '\nGATE PASSED: every check exit 0; build-eprj3/revv1-module.eprj2 is current.\n'
+printf '\nGATE PASSED: every check exit 0; the .eprj2 in ~/Documents/EasyEDA-Pro/projects is current (or was left alone as the owner's saved layout -- see the build line).\n'

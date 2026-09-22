@@ -339,10 +339,15 @@ python3 tools/gauge.py             # gauge-revv1/ + .eprj2 + .zip + GAUGE-INSTRU
 python3 tools/build_project.py     # revv1-module/ + revv1-module.eprj2 + .zip + layout-rules.txt   exit 1 if any gate fails
 ```
 
-Both write to `build-eprj3/` by default (`--out DIR` to change it). That folder is gitignored: the
-project is a build artefact. Never hand-edit it; change the netlist and regenerate.
+Both write their folder, zip and `layout-rules.txt` to `build-eprj3/` (`--out DIR` to change it) — a
+gitignored build artefact; never hand-edit it. **The `.eprj2` goes to
+`~/Documents/EasyEDA-Pro/projects/`**, the editor's own folder and the ONE place it lives (owner,
+2026-09-22) — ⚠️ **unless the file there has been SAVED by the editor**, in which case it is the owner's
+layout and the build refuses to overwrite it (exit `INCOMPLETE`, reason printed). A generated project
+carries the build's fixed `updateTime` on every document; a saved one does not. 📄 `layout/README.md`
+for the netlist-change procedure that keeps placement.
 
-⭐ **Open `revv1-module.eprj2` in EasyEDA Pro**, by its path. The editor lists a project only after
+⭐ **Open `~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2` in EasyEDA Pro**, by its path. The editor lists a project only after
 it has been opened once. EasyEDA Pro 3.2.149 does not open the `.eprj3` folder or the zip; its
 native project is `.eprj2`. `tools/eprj2.py` wraps the folder as one:
 

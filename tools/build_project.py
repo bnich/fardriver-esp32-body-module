@@ -59,6 +59,7 @@ LCSC part (through ~/tools/lcsc-search), or one generated here
 (`footprint_lib.generated`).  The build names any item still without one.
 """
 import argparse
+import re
 import shutil
 import sys
 import zipfile
@@ -75,6 +76,12 @@ from tools.eprj3.project import DEFAULT_EPOCH_MS, Project  # noqa: E402
 
 PROJECT_NAME = "revv1-module"
 DEFAULT_OUT = "build-eprj3"
+#: Where EasyEDA Pro keeps its projects, and the ONE place an .eprj2 of this
+#: design lives (owner, 2026-09-22: "all easyeda files should be in
+#: ~/Documents/EasyEDA-Pro/projects"). The build writes the generated .eprj2
+#: there -- unless one is already there that the editor has SAVED, which is the
+#: owner's layout and must never be overwritten by a generated one.
+EDITOR_PROJECTS = Path.home() / "Documents" / "EasyEDA-Pro" / "projects"
 
 #: A gate refused the netlist: nothing new on disk, the old build marked stale.
 EXIT_REFUSED = 1
@@ -178,9 +185,17 @@ def _remove(path):
 def mark_stale(out, name=PROJECT_NAME):
     """Rename the previous build's artefacts under `out` to `<path>.stale`, so
     a REFUSED build leaves nothing that opens as the current project.  A
-    `.stale` from an earlier refusal is replaced.  Returns the new paths."""
+    `.stale` from an earlier refusal is replaced.  Returns the new paths.
+
+    The .eprj2 in the editor's folder is marked too -- but ONLY if it is a
+    generated one.  A project the editor has saved is the owner's layout: a
+    refused netlist is no reason to touch it, and the build never does."""
     renamed = []
-    for path in artefacts(out, name):
+    editor = EDITOR_PROJECTS / f"{name}.eprj2"
+    candidates = list(artefacts(out, name))
+    if editor.exists() and _is_generated(editor):
+        candidates.append(editor)
+    for path in candidates:
         if not path.exists():
             continue
         stale = path.with_name(path.name + STALE_SUFFIX)
@@ -193,8 +208,8 @@ def mark_stale(out, name=PROJECT_NAME):
 def clear_stale(out, name=PROJECT_NAME):
     """A build that writes removes the `.stale` copies a refusal left: the
     directory holds either the current build or the marked remains of the
-    last one, never both."""
-    for path in artefacts(out, name):
+    last one, never both.  The editor folder's `.stale` goes the same way."""
+    for path in list(artefacts(out, name)) + [EDITOR_PROJECTS / f"{name}.eprj2"]:
         _remove(path.with_name(path.name + STALE_SUFFIX))
 
 
@@ -234,11 +249,34 @@ def write_eprj2(root, template):
     if template is None:
         return None, ("no template: open any project in EasyEDA Pro once so it "
                       "saves an .eprj2, or pass --template")
+    target = EDITOR_PROJECTS / f"{root.name}.eprj2"
+    if target.exists() and not _is_generated(target):
+        return None, (f"{target} is the owner's SAVED layout, not a generated "
+                      f"project -- refusing to overwrite it. Layout absorbs a "
+                      f"netlist change through Import Changes (layout/README.md), "
+                      f"never by regenerating over it. Pass --out to write elsewhere")
     try:
-        return eprj2.convert(root, root.parent / f"{root.name}.eprj2",
-                             template), None
+        EDITOR_PROJECTS.mkdir(parents=True, exist_ok=True)
+        return eprj2.convert(root, target, template), None
     except (RuntimeError, ValueError) as exc:
         return None, str(exc)
+
+
+#: The build stamps every document it writes with this fixed timestamp
+#: (`eprj2._head` / `from_eprj3`), so a project the editor has saved carries a
+#: real one instead. That is how a generated .eprj2 is told from a laid-out one.
+GENERATED_STAMP = "1788000000000"
+
+
+def _is_generated(path) -> bool:
+    """True if `path` is a build output (fixed stamp on its DOCHEADs), False if
+    the editor has saved it since -- which means it holds the owner's work."""
+    try:
+        d = eprj2.read(path)
+    except Exception:
+        return False                # unreadable: treat as precious
+    heads = re.findall(r'"updateTime":(\d+)', d["text"][:200000])
+    return bool(heads) and all(h == GENERATED_STAMP for h in heads)
 
 
 def eprj2_line(path, why):

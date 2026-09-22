@@ -223,7 +223,9 @@ def test_the_build_writes_an_openable_eprj2_for_every_board(template, tmp_path, 
     # The .eprj2 is written all the same, which is what this test reads.
     assert build_project.main(["--out", str(tmp_path), "--template", str(template)]) \
         == build_project.EXIT_INCOMPLETE
-    out = tmp_path / f"{build_project.PROJECT_NAME}.eprj2"
+    # The .eprj2 goes to the editor's folder (2026-09-22), not under --out; in
+    # the suite that folder is conftest's stand-in, never the owner's real one.
+    out = build_project.EDITOR_PROJECTS / f"{build_project.PROJECT_NAME}.eprj2"
     snap = eprj2.read(out)
     assert sorted(b["title"] for b in snap["structure"]["boards"].values()) == sorted(STACK_ORDER)
     assert f"open in EasyEDA Pro: {out}" in capsys.readouterr().out

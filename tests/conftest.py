@@ -132,3 +132,20 @@ def grown_body():
         long_side, short = max(w, l), min(w, l)
         return d.replace_part(refdes, footprint_mm=(short, long_side + mm))
     return grow
+
+@pytest.fixture(autouse=True, scope="session")
+def _tests_never_touch_the_owners_editor_folder(tmp_path_factory):
+    """The build writes its .eprj2 into ~/Documents/EasyEDA-Pro/projects -- the
+    owner's real editor folder, where the laid-out project lives (2026-09-22).
+    A test that runs a build must NEVER write there: one run did, and rewrote
+    the real file with a fixture build before this guard existed.
+
+    Session-scoped, so it covers the module-scoped `built` fixture too, and
+    OUTSIDE every test's tmp_path, so directory-listing assertions do not see
+    it. Not monkeypatch (function-scoped): set and restored by hand."""
+    from tools import build_project
+    fake = tmp_path_factory.mktemp("editor-projects-standin")
+    real = build_project.EDITOR_PROJECTS
+    build_project.EDITOR_PROJECTS = fake
+    yield fake
+    build_project.EDITOR_PROJECTS = real
