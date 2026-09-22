@@ -82,7 +82,12 @@ no signals on the module's rail are 4; any other passive takes its function part
 **Order within a band:** parts with a fixed target first (the S3, the flush connectors, the loom
 mates), then the function parts by area, then the passives by area. A **satellite** — a 100 nF
 decoupler, an ADC input's RC filter, the CAN transceiver — is placed the moment its host is,
-against the host's body, whichever side is free.
+against the host's body, whichever side is free. ⚠️ **And the host stands where its satellite can
+follow it**: a position with no room beside it for the satellite costs the host `SATELLITE_ROOM`
+(10 mm of its own travel), because a host that drops into a hole exactly its own size pushes its
+satellite across the board. That is how `U406` — walled in by `U405`, the channel in front of it
+and `J406`'s through-hole pads behind — left its 100 nF 8.6 mm away and failed check 15 while
+every other check passed.
 
 **Adjacency scoring:** the candidate `u` is the pin-weighted centroid of the already-placed pins
 the part connects to — GND weighs 0 (it is a plane), pack-voltage nets and the 12 V bus weigh 10
@@ -200,6 +205,10 @@ tools/place.py --stack --keep J302 J305 # re-place, holding the owner's hand-mov
   ⛔ It refuses if the editor is open, if any check fails, **or if any part had nowhere to go** —
   and then names each one and why. `--file` and `--out` point it elsewhere; `--docs` says where
   the tables go.
+- **`--board LOGIC [BOARD …]` writes only the named boards' PCB documents** — every other board's
+  records are left exactly as saved, and only the named boards' failed checks and unplaced parts
+  refuse the write — while all three are still placed in memory, because LOGIC's mates sit at
+  OUTPUTS' `J307`/`J308`.
 - `--check` never writes. It is the review step and the regression test: after the owner moves
   things by hand, `--check` says what broke.
 - ✔ **`--draw DIR` writes one PNG per board, and looking at it is a step of the process** — the

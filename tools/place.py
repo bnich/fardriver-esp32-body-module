@@ -139,6 +139,17 @@ V_STEP = 0.5
 #: standing ahead of it (in the band in front) four times.
 BEHIND_COST = 3.0
 AHEAD_COST = 4.0
+#: What a host pays in the packer for standing where its SATELLITE cannot
+#: follow it.  A decoupler, an ADC filter's RC and the CAN transceiver are
+#: placed against their host, so a host that lands in a hole exactly its own
+#: size pushes its satellite across the board: `U406` was boxed in by `U405`,
+#: the band-3 channel in front of it and `J406`'s through-hole pads behind,
+#: and its 100 nF ended up 8.6 mm away, failing check 15 (2026-09-22).  It is
+#: a COST, not a bar -- when no position on the board has room the host is
+#: still placed and the check says so -- and it is worth this many millimetres
+#: of the host's own travel, which is `DECOUPLE_REACH` three times over: past
+#: that the host itself is in the wrong place.
+SATELLITE_ROOM = 10.0
 #: Two footprints coincide when every pad lands within this of its mate.
 MATE_TOL = 0.01
 #: A 100 nF ceramic on a rail and GND is a decoupler for the IC on that rail.
@@ -347,6 +358,30 @@ def envelope(records, body_mm):
         return Envelope(min(gx0, cx - w / 2), min(gy0, cy - l / 2),
                         max(gx1, cx + w / 2), max(gy1, cy + l / 2), tuple(pads))
     return Envelope(-w / 2, -l / 2, w / 2, l / 2, tuple(pads))
+
+
+def _conflicts(box, other, gu, gv):
+    """Does `box` come within (gu, gv) of `other`?  The packer's own test,
+    written once so a keep-out and a slot scan cannot disagree."""
+    return (box.u0 < other.u1 + gu - 1e-9 and other.u0 < box.u1 + gu - 1e-9
+            and box.v0 < other.v1 + gv - 1e-9 and other.v0 < box.v1 + gv - 1e-9)
+
+
+def _room_beside(box, reserve, length, width):
+    """Is there a free `w x d` rectangle against `box` -- left, right, in
+    front or behind, `CLEAR` away and on the board -- for the satellite that
+    must follow this part?"""
+    w, d, obs = reserve
+    spots = (Box(box.u0 - CLEAR - w, box.cv - d / 2, box.u0 - CLEAR, box.cv + d / 2),
+             Box(box.u1 + CLEAR, box.cv - d / 2, box.u1 + CLEAR + w, box.cv + d / 2),
+             Box(box.cu - w / 2, box.v0 - CLEAR - d, box.cu + w / 2, box.v0 - CLEAR),
+             Box(box.cu - w / 2, box.v1 + CLEAR, box.cu + w / 2, box.v1 + CLEAR + d))
+    for s in spots:
+        if s.u0 < -1e-9 or s.v0 < -1e-9 or s.u1 > length + 1e-9 or s.v1 > width + 1e-9:
+            continue
+        if not any(_conflicts(s, o, gu, gv) for o, gu, gv in obs):
+            return True
+    return False
 
 
 def _place_point(frame, lx, ly, u, v, board_angle, bottom):
@@ -725,6 +760,23 @@ def decouplers(ix, board):
     return out
 
 
+def decoupler_hosts(ix, board):
+    """{cap refdes: the IC it sits beside}.  The ICs on a rail take its 100 nFs
+    in turn, so every IC on the rail gets one before any gets two.  The engine
+    places a cap against this IC, and check 15 then asks only that it be near
+    the NEAREST IC on the rail -- so a host that leaves its own cap no room is
+    the earlier failure."""
+    out = {}
+    dec = decouplers(ix, board)
+    for rail in sorted(set(dec.values())):
+        caps = sorted((c for c, r in dec.items() if r == rail), key=_ref_key)
+        hosts = sorted((i.refdes for i in ics_on(ix, board, rail)), key=_ref_key)
+        for i, cap in enumerate(caps):
+            if hosts:
+                out[cap] = hosts[i % len(hosts)]
+    return out
+
+
 def ics_on(ix, board, net):
     return [it for it in ix.on(board)
             if it.kind in ("IC", "MODULE", "CONVERTER") and net in it.nets]
@@ -867,15 +919,7 @@ class Placer:
         self.near_why = {}
         self.band = bands(self.ix, board)
         self.decouple = decouplers(self.ix, board)
-        # cap -> the IC it sits beside: the ICs on a rail take its 100 nFs in
-        # turn, so every IC on the rail gets one before any gets two
-        self.host_of = {}
-        for rail in sorted(set(self.decouple.values())):
-            caps = sorted((c for c, r in self.decouple.items() if r == rail), key=_ref_key)
-            hosts = sorted((i.refdes for i in ics_on(self.ix, board, rail)), key=_ref_key)
-            for i, cap in enumerate(caps):
-                if hosts:
-                    self.host_of[cap] = hosts[i % len(hosts)]
+        self.host_of = decoupler_hosts(self.ix, board)
         self.hv_board = board == "POWER"
         self.extra = {}             # refdes -> [Box] keep-outs that bind it alone
         self.target_u = {}          # refdes -> (u, why) the engine must aim at
@@ -957,6 +1001,29 @@ class Placer:
                 body.append((Box(p.box.u0, p.box.v1, p.box.u1, p.box.v1 + ANTENNA_ZONE_D), 0.0, 0.0))
         return body, zones, cross
 
+    def satellites_of(self, ref):
+        """The parts that must sit against `ref` and are not placed yet -- a
+        decoupler, an ADC input's RC, the CAN transceiver."""
+        return sorted((r for r in self.doc.components if self.host(r) == ref
+                       and r not in self.pl.boards[self.board]), key=_ref_key)
+
+    def _reserve(self, ref, band):
+        """`(w, d, obstacles)` for the satellite that will follow `ref`, or
+        None when nothing must sit against it.  The satellite is measured at
+        board angle 0 and 90 -- the smaller of the two, since it may turn --
+        and it must clear what IT must clear, not what its host must."""
+        sats = self.satellites_of(ref)
+        if not sats:
+            return None
+        sat = sats[0]
+        layer = self.layer_of(sat)
+        boxes = [placed_box(self.env(sat), self.frame, 0.0, 0.0, ang, layer == 2)
+                 for ang in (0, 90)]
+        w = min(b.w for b in boxes)
+        d = min(b.d for b in boxes)
+        obs, _, _ = self._obstacles(sat, self.band.get(sat, band), layer)
+        return (w, d, obs)
+
     def _margins(self, ref, off, zones):
         """How close each body edge may come to the board edge: an HV part's
         copper keeps HV_EDGE, and its body may reach the edge only by the
@@ -970,12 +1037,15 @@ class Placer:
         return (max(0.0, HV_EDGE - z0u), max(0.0, HV_EDGE - z0v),
                 max(0.0, HV_EDGE - z1u), max(0.0, HV_EDGE - z1v))
 
-    def _slot(self, ref, band, angle, target_u, v_front, back_flush=False, near=None):
+    def _slot(self, ref, band, angle, target_u, v_front, back_flush=False, near=None,
+              reserve=None):
         """The cheapest free origin for `ref` at `angle`: nearest `target_u`,
         then nearest `v_front` (ahead of it costs more).  With `near`, a Box,
         the cost is the body's distance from that box instead: a satellite
-        sits against its host whichever side is free.  None if it fits nowhere
-        on its face."""
+        sits against its host whichever side is free.  With `reserve`, a
+        `(w, d, obstacles)` from `_reserve`, a position with no room beside it
+        for the satellite that must follow costs `SATELLITE_ROOM` more.  None
+        if it fits nowhere on its face."""
         env = self.env(ref)
         layer = self.layer_of(ref)
         bottom = layer == 2
@@ -1038,6 +1108,11 @@ class Placer:
                 else:
                     cost = abs(u0 - want) + (AHEAD_COST * -dv if dv < 0 else
                                              (AHEAD_COST if back_flush else BEHIND_COST) * dv)
+                if best is not None and cost >= best[0]:
+                    continue        # the room penalty only adds, so this cannot win
+                if reserve is not None and not _room_beside(Box(u0, v0, u0 + a, v0 + b),
+                                                            reserve, L, W):
+                    cost += SATELLITE_ROOM
                 if best is None or cost < best[0]:
                     best = (cost, u0 - off.u0, v0 - off.v0)
             v0 += V_STEP
@@ -1154,9 +1229,7 @@ class Placer:
         """Place `ref`, then at once everything that must sit against it."""
         self.place_one(ref, band)
         # a satellite follows its host whatever pass the host is placed in
-        sats = [r for r in self.doc.components if self.host(r) == ref
-                and r not in self.pl.boards[self.board]]
-        for sat in sorted(sats, key=_ref_key):
+        for sat in self.satellites_of(ref):
             self.place_one(sat, self.band.get(sat, band))
 
     def place_one(self, ref, band):
@@ -1213,9 +1286,12 @@ class Placer:
                 angles = (first.angle,)
                 v_front, back_flush = first.box.v0, True
                 why += f"; in line with {first.refdes}"
+        # a host stands where its satellite can follow it (check 14, check 15)
+        reserve = self._reserve(ref, band)
         best = None
         for ang in angles:
-            got = self._slot(ref, band, ang, target, v_front, back_flush=back_flush, near=near)
+            got = self._slot(ref, band, ang, target, v_front, back_flush=back_flush, near=near,
+                             reserve=reserve)
             if got is None:
                 continue
             u, v, cost = got
@@ -1455,13 +1531,18 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
 
 
 # --- the checks -------------------------------------------------------------------
-def check(pl, ix=None):
+def check(pl, ix=None, boards=None):
     """Every problem with `pl`, as readable lines.  Empty means the placement
-    may be written.  Each check is proven to fire in tests/test_place.py."""
+    may be written.  Each check is proven to fire in tests/test_place.py.
+
+    `boards` narrows it to the boards being written (`--board`): a check that
+    names parts on one board only is skipped for the others, and a check that
+    spans two -- the mated pairs, the cross-board keep-outs -- is kept when
+    either end is selected."""
     ix = ix or pl.ix
     out = []
     for board in bp.STACK_ORDER:
-        if board not in pl.project.pcbs:
+        if board not in pl.project.pcbs or (boards is not None and board not in boards):
             continue
         frame = pl.frame(board)
         items = pl.placed(board)
@@ -1562,17 +1643,17 @@ def check(pl, ix=None):
             if near > DECOUPLE_REACH + TOL:
                 out.append(f"15 decoupling: {board} {cap} (100 nF on {rail}) is {near:.1f} mm from the "
                            f"nearest IC on that rail; {DECOUPLE_REACH:g} mm is a decoupler")
-    out += _check_cross_board(pl, ix)
-    out += _check_pairs(pl, ix)
-    out += _check_keepouts(pl, ix)
-    out += _check_hv(pl, ix)
-    out += _check_antenna(pl, ix)
-    out += _check_bus(pl, ix)
-    out += _check_sensitive(pl, ix)
+    out += _check_cross_board(pl, ix, boards)
+    out += _check_pairs(pl, ix, boards)
+    out += _check_keepouts(pl, ix, boards)
+    out += _check_hv(pl, ix, boards)
+    out += _check_antenna(pl, ix, boards)
+    out += _check_bus(pl, ix, boards)
+    out += _check_sensitive(pl, ix, boards)
     return out
 
 
-def _check_cross_board(pl, ix):
+def _check_cross_board(pl, ix, boards=None):
     """17 -- a through-hole part crosses the board.  Its pads are copper on
     BOTH faces and its pin tips and solder fillets stand proud of the far one,
     so no body on the other layer may come within `PIN_PROTRUSION` of one.
@@ -1585,7 +1666,7 @@ def _check_cross_board(pl, ix):
     pad needs no separate test: a body's box contains its own pads."""
     out = []
     for board in bp.STACK_ORDER:
-        if board not in pl.project.pcbs:
+        if board not in pl.project.pcbs or (boards is not None and board not in boards):
             continue
         frame = pl.frame(board)
         items = sorted((p for p in pl.boards[board].values() if not p.unplaced),
@@ -1624,12 +1705,15 @@ def _pad_gap(boxes, body):
     return min(gaps) if gaps else None
 
 
-def _check_pairs(pl, ix):
-    """4 -- the mated pairs coincide, in X, Y and pin for pin by net."""
+def _check_pairs(pl, ix, boards=None):
+    """4 -- the mated pairs coincide, in X, Y and pin for pin by net.  A
+    pair spans two boards, so it is checked when EITHER end is selected."""
     out = []
     for lower, upper in (("J307", "J407"), ("J308", "J406")):
         lo, up = pl.get(lower), pl.get(upper)
         if lo is None or up is None or lo.unplaced or up.unplaced:
+            continue
+        if boards is not None and not {lo.board, up.board} & set(boards):
             continue
         if abs(lo.u - up.u) > MATE_TOL or abs(lo.v - up.v) > MATE_TOL:
             out.append(f"4 mate: {upper} at ({up.u:.2f}, {up.v:.2f}) is not over {lower} at "
@@ -1643,11 +1727,13 @@ def _check_pairs(pl, ix):
     return out
 
 
-def _check_keepouts(pl, ix):
-    """5 -- nothing tall on POWER's top under J311 / J312 as placed on OUTPUTS."""
+def _check_keepouts(pl, ix, boards=None):
+    """5 -- nothing tall on POWER's top under J311 / J312 as placed on
+    OUTPUTS.  It names POWER's parts, so it is POWER's check."""
     out = []
     gap = ix.gaps.get(("POWER", "OUTPUTS"))
-    if gap is None or "POWER" not in pl.boards:
+    if gap is None or "POWER" not in pl.boards or (boards is not None
+                                                   and "POWER" not in boards):
         return out
     for hang in ("J311", "J312"):
         up = pl.get(hang)
@@ -1662,12 +1748,12 @@ def _check_keepouts(pl, ix):
     return out
 
 
-def _check_hv(pl, ix):
+def _check_hv(pl, ix, boards=None):
     """7 -- HV copper off the edge and clear of LV courtyards; 13 -- the HV
     parts are one group and no LV part is sandwiched between HV copper."""
     out = []
     board = "POWER"
-    if not pl.boards.get(board):
+    if not pl.boards.get(board) or (boards is not None and board not in boards):
         return out
     frame = pl.frame(board)
     hv = [p for p in pl.placed(board).values() if ix.is_hv(p.refdes)]
@@ -1726,11 +1812,11 @@ def _check_hv(pl, ix):
     return out
 
 
-def _check_antenna(pl, ix):
+def _check_antenna(pl, ix, boards=None):
     """8 -- the S3's antenna end at the back edge, the zone beyond it empty."""
     out = []
     p = pl.get("U401")
-    if p is None:
+    if p is None or (boards is not None and p.board not in boards):
         return out
     frame = pl.frame(p.board)
     W, L = frame.width, frame.length
@@ -1758,11 +1844,11 @@ def _check_antenna(pl, ix):
     return out
 
 
-def _check_bus(pl, ix):
+def _check_bus(pl, ix, boards=None):
     """11 -- the V12 bus on OUTPUTS: its ICs one way, J311 under their middle."""
     out = []
     board = "OUTPUTS"
-    if not pl.boards.get(board):
+    if not pl.boards.get(board) or (boards is not None and board not in boards):
         return out
     items = pl.placed(board)
     pwr12 = ix.classes["PWR12"]
@@ -1784,12 +1870,12 @@ def _check_bus(pl, ix):
     return out
 
 
-def _check_sensitive(pl, ix):
+def _check_sensitive(pl, ix, boards=None):
     """14 -- CAN transceiver by its STACK contacts; the brake nets' corridor
     clear of the I2C pull-ups; an ADC input's RC beside the S3."""
     out = []
     board = "LOGIC"
-    if not pl.boards.get(board):
+    if not pl.boards.get(board) or (boards is not None and board not in boards):
         return out
     items = pl.placed(board)
     frame = pl.frame(board)
@@ -1904,13 +1990,17 @@ def _mil(mm):
     return int(v) if v == int(v) else v
 
 
-def apply(project, pl):
+def apply(project, pl, boards=None):
     """Edit the COMPONENT records (and their labels, which follow the part) to
-    `pl`.  Returns {board: {refdes: (x mil, y mil, angle, layer)}}."""
+    `pl`.  Returns {board: {refdes: (x mil, y mil, angle, layer)}}.
+
+    `boards` restricts it to the boards being written (`--board`): every
+    record of a board left out is untouched, so it serialises back exactly
+    as it was saved."""
     written = {}
     for board, items in pl.boards.items():
         doc = project.pcbs.get(board)
-        if doc is None:
+        if doc is None or (boards is not None and board not in boards):
             continue
         for ref, p in items.items():
             comp = doc.components.get(ref)
@@ -1936,11 +2026,13 @@ def apply(project, pl):
     return written
 
 
-def write(project, pl, src, out):
+def write(project, pl, src, out, boards=None):
     """Write `project` (already `apply`d) to `out` through the build's round
     trip, keeping the previous `out` as `.prev`.  Refuses while the editor is
     open, and refuses to leave a file whose re-read differs from what was
-    meant.  Returns the written path."""
+    meant.  `boards` is the same selection `apply` was given -- a board left
+    out was not edited, so its coordinates are not what `pl` proposes and are
+    not what is verified.  Returns the written path."""
     if editor_running():
         raise RuntimeError("EasyEDA Pro is running -- close it before writing the project")
     out, src = Path(out), Path(src)
@@ -1959,6 +2051,8 @@ def write(project, pl, src, out):
     os.replace(tmp, out)
     back = load(out)
     for board, items in pl.boards.items():
+        if boards is not None and board not in boards:
+            continue
         doc = back.pcbs.get(board)
         frame = project.pcbs[board].frame
         for ref, p in items.items():
@@ -2139,6 +2233,11 @@ def main(argv=None):
                     help="draw one PNG per board into DIR -- the placement proposed by --stack, "
                          "or the one the file holds; on its own it draws the file. LOOK AT IT: "
                          "the picture is a step of the process, not a decoration")
+    ap.add_argument("--board", nargs="+", default=None, metavar="BOARD", choices=bp.STACK_ORDER,
+                    help="write ONLY these boards' PCB documents; every other board's records are "
+                         "left exactly as saved. All three are still placed in memory, because the "
+                         "stack is one problem -- LOGIC's mates sit at OUTPUTS' J307/J308 -- and "
+                         "only the named boards' checks and unplaced parts gate the write")
     ap.add_argument("--anchor", choices=("left", "right", "centre"), default="centre",
                     help="which end of the board the face row sits toward (default centre)")
     ap.add_argument("--keep", nargs="*", default=[], metavar="REF",
@@ -2189,12 +2288,15 @@ def main(argv=None):
     if editor_running():
         print("REFUSED: EasyEDA Pro is running; close it first", file=sys.stderr)
         return EXIT_REFUSED
+    picked = list(a.board) if a.board else None
     pl = stack(project, ix, anchor=a.anchor, keep=a.keep)
     print(summary(pl))
     problems = check(pl, ix)
     docs = Path(a.docs)
     docs.mkdir(parents=True, exist_ok=True)
-    for board in bp.STACK_ORDER:
+    for board in (picked or bp.STACK_ORDER):
+        # the table is the record of what went INTO the file, so a board that
+        # is not being written does not get one
         (docs / f"{board}-placement.md").write_text(placement_table(pl, board), encoding="utf-8")
     unplaced = sorted((p for items in pl.boards.values() for p in items.values() if p.unplaced),
                       key=lambda p: (bp.STACK_ORDER.index(p.board), _ref_key(p.refdes)))
@@ -2206,14 +2308,21 @@ def main(argv=None):
     if a.draw:
         for path in draw(pl, ix, a.draw, prefix=out.stem):
             print(f"drawn: {path}")
-    if problems or unplaced:
-        print(f"REFUSED: not written; {len(unplaced)} part(s) had nowhere to go and "
-              f"{len(problems)} check(s) failed. The tables in {docs} show the proposal"
+    # only the boards being written gate the write; the rest are reported
+    gate_problems = problems if picked is None else check(pl, ix, boards=picked)
+    gate_unplaced = [p for p in unplaced if picked is None or p.board in picked]
+    if picked is not None:
+        print(f"writing {' '.join(picked)} only: {len(gate_problems)} failed check(s) and "
+              f"{len(gate_unplaced)} unplaced part(s) there; every other board's records are "
+              f"left exactly as saved")
+    if gate_problems or gate_unplaced:
+        print(f"REFUSED: not written; {len(gate_unplaced)} part(s) had nowhere to go and "
+              f"{len(gate_problems)} check(s) failed. The tables in {docs} show the proposal"
               + (f" and the pictures in {a.draw} show it" if a.draw else ""), file=sys.stderr)
         return EXIT_PROBLEMS
-    apply(project, pl)
+    apply(project, pl, boards=picked)
     try:
-        path = write(project, pl, src, out)
+        path = write(project, pl, src, out, boards=picked)
     except RuntimeError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED

@@ -717,6 +717,81 @@ def test_the_engine_never_lands_a_pin_in_a_body_on_the_other_face(placed, placea
         assert lines(place.check(pl, ix), 17) == []
 
 
+# --- a host stands where its satellite can follow ------------------------------------
+def test_every_decoupler_sits_on_the_ic_it_decouples(placed, ix):
+    """Stronger than check 15, which asks only for the NEAREST IC on the rail:
+    every 100 nF is within `DECOUPLE_REACH` of the IC it was given."""
+    _, pl = placed
+    for board in bp.STACK_ORDER:
+        for cap, host in place.decoupler_hosts(ix, board).items():
+            p, h = pl.get(cap), pl.get(host)
+            if p is None or h is None or p.unplaced or h.unplaced:
+                continue
+            sep = p.box.separation(h.box)
+            assert sep <= place.DECOUPLE_REACH + place.TOL, (board, cap, host, sep)
+
+
+def test_room_beside_finds_a_free_side_and_refuses_a_pocket():
+    """The mechanism: a satellite needs a `w x d` rectangle against its host,
+    CLEAR away and on the board."""
+    host = place.Box(100.0, 20.0, 103.0, 23.0)
+    sat = (3.9, 1.8, [])
+    assert place._room_beside(host, sat, 242.0, 41.84)
+    c = place.CLEAR
+    walls = [(place.Box(90.0, 10.0, 100.0 - c, 33.0), 0.0, 0.0),
+             (place.Box(103.0 + c, 10.0, 113.0, 33.0), 0.0, 0.0),
+             (place.Box(90.0, 10.0, 113.0, 20.0 - c), 0.0, 0.0),
+             (place.Box(90.0, 23.0 + c, 113.0, 33.0), 0.0, 0.0)]
+    assert not place._room_beside(host, (3.9, 1.8, walls), 242.0, 41.84)
+    # the same pocket with the left wall pulled back leaves room on that side
+    walls[0] = (place.Box(90.0, 10.0, 100.0 - c - 3.9, 33.0), 0.0, 0.0)
+    assert place._room_beside(host, (3.9, 1.8, walls), 242.0, 41.84)
+    # and a side that runs off the board is not room
+    edge = place.Box(0.0, 0.0, 3.0, 3.0)
+    assert not place._room_beside(edge, (3.9, 1.8, []), 3.0, 3.0)
+
+
+def test_a_host_is_steered_to_a_position_its_satellite_can_follow(placed, ix):
+    """⭐ The cause of the defect this fixed: `U406` was placed into a hole
+    exactly its own size -- `U405` beside it, the band-3 channel in front and
+    `J406`'s through-hole pads behind -- so its 100 nF had nowhere nearer than
+    8.6 mm and check 15 failed while every other check passed. A host now pays
+    `SATELLITE_ROOM` for a position its satellite cannot follow, and the slot
+    scan walks past a pocket that is exactly big enough."""
+    project, _ = placed
+    pr = place.Placer(place.Placement(project, ix), "LOGIC")
+    host, sat = "U406", "C436"
+    assert pr.host(sat) == host
+    hbox = place.placed_box(pr.env(host), pr.frame, 0.0, 0.0, 0, False)
+    # a pocket walled on all four sides, the host's own size plus SLACK: it
+    # seats the host and nothing else
+    slack, thick = 0.5, 3.0
+    pu, pv = 100.0, 20.0
+    u0, u1 = pu - slack - thick, pu + hbox.w + slack + thick
+    v0, v1 = pv - slack - thick, pv + hbox.d + slack + thick
+    walls = [place.Box(u0, v0, pu - slack, v1),
+             place.Box(pu + hbox.w + slack, v0, u1, v1),
+             place.Box(u0, v0, u1, pv - slack),
+             place.Box(u0, pv + hbox.d + slack, u1, v1)]
+    pr.extra[host] = walls
+    pr.extra[sat] = walls
+    reserve = pr._reserve(host, 4)
+    assert reserve is not None and reserve[0] > 0 and reserve[1] > 0
+    # ... because a satellite needs CLEAR plus its own size beyond the host,
+    # and the pocket gives at most twice the slack on any side
+    assert min(reserve[0], reserve[1]) + place.CLEAR > 2 * slack
+
+    def body(got):
+        return place.placed_box(pr.env(host), pr.frame, got[0], got[1], 0, False)
+
+    loose = body(pr._slot(host, 4, 0, pu + hbox.w / 2, pv))
+    assert loose.u0 == pytest.approx(pu, abs=0.01)         # it takes the pocket
+    assert not place._room_beside(loose, reserve, pr.frame.length, pr.frame.width)
+    tight = body(pr._slot(host, 4, 0, pu + hbox.w / 2, pv, reserve=reserve))
+    assert abs(tight.u0 - pu) > hbox.w                     # it walks past it
+    assert place._room_beside(tight, reserve, pr.frame.length, pr.frame.width)
+
+
 # --- the picture ----------------------------------------------------------------------
 def test_draw_writes_one_picture_per_board(placed, ix, tmp_path):
     Image = pytest.importorskip("PIL.Image")
@@ -814,6 +889,72 @@ def test_cli_stack_refuses_and_names_what_had_nowhere_to_go(synthetic_project, t
     row = next(ln for ln in (tmp_path / "docs" / "OUTPUTS-placement.md").read_text().splitlines()
                if ln.startswith("| J314 "))
     assert row.count("| — ") == 5 and "UNPLACED" in row
+
+
+def _doc_span(records, title):
+    """(first, last + 1) of the PCB document titled `title` in `records` --
+    the same walk `place.load` does."""
+    lead, docs = eprj2.documents(records)
+    pos = len(lead)
+    for doc_type, _uuid, recs in docs:
+        if doc_type == "PCB" and any(h["type"] == "META" and json.loads(p).get("title") == title
+                                     for h, p in recs):
+            return pos, pos + len(recs)
+        pos += len(recs)
+    raise AssertionError(f"no PCB titled {title}")
+
+
+def test_board_writes_only_that_boards_records(synthetic_project, tmp_path, monkeypatch, capsys):
+    """`--board LOGIC`: LOGIC is placeable today while OUTPUTS and POWER wait
+    on the row decision, so it is written on its own and every other record in
+    the file is left exactly as it was saved."""
+    monkeypatch.setattr(place, "editor_running", lambda: False)
+    out = tmp_path / "one.eprj2"
+    docs = tmp_path / "docs"
+    assert place.main(["--stack", "--board", "LOGIC", "--file", str(synthetic_project),
+                       "--out", str(out), "--docs", str(docs)]) == 0
+    text = capsys.readouterr().out
+    assert "writing LOGIC only: 0 failed check(s) and 0 unplaced part(s)" in text
+    before = eprj2.split_records(eprj2.read(synthetic_project)["text"])
+    after = eprj2.split_records(eprj2.read(out)["text"])
+    assert len(before) == len(after)
+    changed = [i for i, (x, y) in enumerate(zip(before, after)) if x != y]
+    lo, hi = _doc_span(after, "LOGIC")
+    assert changed and all(lo <= i < hi for i in changed)
+    assert {before[i][0]["type"] for i in changed} == {"COMPONENT", "ATTR"}
+    for title in ("OUTPUTS", "POWER"):
+        a0, a1 = _doc_span(before, title)
+        assert (a0, a1) == _doc_span(after, title) and before[a0:a1] == after[a0:a1]
+    # LOGIC's parts really did move, and only LOGIC got a table
+    fresh = place.load(out)
+    assert fresh.pcbs["LOGIC"].components["U401"].y > 0      # the import left it below the outline
+    assert {p.name for p in docs.iterdir()} == {"LOGIC-placement.md"}
+
+
+def test_board_refuses_when_the_board_it_names_cannot_be_placed(synthetic_project, tmp_path,
+                                                                monkeypatch, capsys):
+    """The gate is per selected board: POWER cannot seat the brick, so
+    `--board POWER` refuses and writes nothing -- while the same run reports
+    LOGIC as clean."""
+    monkeypatch.setattr(place, "editor_running", lambda: False)
+    out = tmp_path / "p.eprj2"
+    assert place.main(["--stack", "--board", "POWER", "--file", str(synthetic_project),
+                       "--out", str(out), "--docs", str(tmp_path / "docs")]) == place.EXIT_PROBLEMS
+    text = capsys.readouterr().out
+    assert "POWER U201: UNPLACED" in text
+    assert "writing POWER only: 0 failed check(s) and 1 unplaced part(s)" in text
+    assert not out.exists()
+
+
+def test_board_gates_on_the_named_board_alone(placed, ix):
+    """`check(boards=...)` is what the gate reads: a problem on a board that
+    is not being written does not block the one that is."""
+    _, pl = placed
+    j402, r = pl.get("J402"), pl.get("R402")
+    broken = moved(pl, "R402", du=j402.box.cu - r.box.cu, dv=(j402.box.v1 + 1.0) - r.box.v0)
+    assert any(" LOGIC " in s for s in place.check(broken, ix))
+    assert place.check(broken, ix, boards=["POWER"]) == []
+    assert place.check(broken, ix, boards=["LOGIC"]) != []
 
 
 def test_cli_draw_alone_draws_the_file_and_judges_nothing(synthetic_project, tmp_path, capsys):
