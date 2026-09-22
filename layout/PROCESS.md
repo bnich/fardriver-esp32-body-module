@@ -77,8 +77,9 @@ back edge, exactly over `J411` on LOGIC's top face. The pair's position is chose
 and CTRL inherits it.
 
 ⚠️ **`J411` and the S3 share LOGIC's back edge side by side.** The socket is 56.28 mm of a 242 mm
-edge and it is seated before the module; `U401`'s antenna rule is a floor on its position rather
-than a cost, so the adjacency cannot buy the module out of the back edge to shorten a trace.
+edge and **the module is seated first** (the clustering objective, above): `U401`'s antenna rule is
+a floor on its position rather than a cost, so the adjacency cannot buy the module out of the back
+edge to shorten a trace, and the half that is free to choose is the one that yields.
 
 **Bands are fronts, not walls.** A part is pulled toward its band's front and charged for the
 distance it ends up from it — three times a sideways step behind the front, four times ahead of
@@ -122,6 +123,49 @@ shelf scan with the clearances below. Among the four quarter turns, the one whos
 their partners wins (that is what tells 0 from 180 on a symmetric body). It is a greedy first-fit
 — good enough to be *reviewed*, and honest about being a proposal, not an optimum.
 
+### ⭐ Cluster by circuit — the objective above adjacency (`place.Placer.circuit_u`)
+
+Owner, 2026-09-22, looking at the four placed boards: *routing all four will be extremely
+difficult.* Congestion was not the reason — the worst 1 mm cut filled 24 % of two signal layers on
+LOGIC and less everywhere else — **the net LENGTHS were**. Bands put a part in the right strip;
+plain adjacency did not put it near the parts it belongs with, because it counts every partner on
+every net and **the rails win**: `V12` weighs 10 a pin and lands on every driver, so the three
+`TPS4H160B` were pulled onto the contact that feeds them and stood in one line in the middle of
+OUTPUTS while the terminals they drive were at the ends of the row. `AUX12V_3` ran **121 mm**;
+`R362`, whose whole job is to sit on `J313`'s channel, stood **119 mm** from it.
+
+So a part's u is decided by **what it serves**, with the rails DROPPED rather than discounted —
+where a part's power comes from says nothing about which circuit it belongs to. Two halves:
+
+- **A HOST** — an IC, the module, a converter — stands at the u-centroid of the **connectors it
+  serves**: the connectors on its own signal nets, and where a signal net reaches none, the ones one
+  hop away through a **series** passive (a part with exactly two nets), which is how an expander
+  reaches the input terminals it reads. Each contact is weighted by the width of the copper its net
+  needs (the R0 class table below): a `CH12` channel counts 5 and a `CH5` 4 against a signal's 1, so
+  a driver is pulled by the four channels it drives and only nudged by the nine control lines it
+  shares with the `STACK` socket. That is "each `TPS4H160B` behind the terminals its channels feed",
+  "each `TPS2553` behind `J314`", "each expander behind the input terminals it reads" and "the S3 at
+  the centroid of what it talks to" — one rule, not four.
+- **A PASSIVE** stands at the weighted centroid of everything already placed on its **signal** nets.
+  It is a link in a chain and belongs BETWEEN the two things it links. ⚠️ Pinning it to the
+  connector instead drags the other end: the `AUX5V_n_EN` series resistors sat on `J501`'s contacts
+  with their switch 82 mm away.
+
+**The programming land is the module's satellite** — `EN`, `BOOT_IO0` and the two UART0 lines are
+the S3's own pins (D25), so `J408` follows the module wherever the clustering puts it (check 20b).
+
+⛔ **The objective does NOT steer POWER's 84 V parts.** They are placed as a REGION and checks 13,
+18 and 19 already answer "where does this part belong"; a second objective pulled them out of the
+blob toward the signal partners they link and split the region in two.
+
+⚠️ **The module is seated between a pair's inherited UPPER halves and its free LOWER ones.** An
+upper half's position comes from the board below and cannot move; a lower half chooses its own u;
+the module is the host every signal on LOGIC clusters around. Seated after the lowers it found the
+back edge full — `J406` u 21.9…90.5, `J411` 91.7…148, `J407` 103…139 — and its antenna floor makes
+it 25.5 mm deep on a 41.84 mm board, so the only position left was u 149.6, and every `LGT_*`
+command ran 127–145 mm. The thing everything clusters around chooses **before** the things that
+cluster around it.
+
 **POWER places its 84 V parts first**, as one group: the bulk (bricks under the board, chokes,
 cans, the fuse clip) packs against the end `J101` stands at, and the HV passives fill the gaps; the
 low-voltage parts then take the rest of the board. Three of them have a u of their own instead,
@@ -155,6 +199,19 @@ through-hole pad is copper on **both** faces (check 17): nothing else has to be 
 What it protects is an **11.39 A** feed entering the layer-3 pour **where the load is**; fed from
 the end of the line instead, the whole bus current runs the length of every driver before it
 reaches the last one. Check 11 says so.
+
+⭐ **Amended 2026-09-22 by the clustering objective: the gap is now "inside the POUR's span".**
+3a was written when the drivers stood in one line and the gap was a hole in that line. Clustering
+spreads them behind the terminals they feed — they span 122 mm of OUTPUTS — and what carries the
+bus between them is the **layer-3 `V12` pour** (R1 below), which the amended check 11 makes
+**mandatory**: the pour's u-extent covers every driver's `VS` pads, and `J311`'s pin row comes up
+INSIDE that span with a driver on each side of the slot. 3a's intent is unchanged and its wording
+is the only thing that moved — the feed enters the pour **where the load is**, not off its end.
+⚠️ The feed's u is still the mean of the drivers' own SIGNAL centroids, deliberately and not the
+clustering objective's targets: the two answers sit 20 mm apart (u 119.3 against 99.9) with no
+electrical difference — the feed's pads barely move a pour whose length the drivers set — but
+`J311` hangs into the 30 mm gap and nothing on POWER's top taller than 18.1 mm may stand under it
+(check 5), so the feed's u decides where POWER's 22 mm chokes and 18.5 mm cans pack.
 
 **(4a) POWER is partitioned along its length:** 84 V end · `HV_STRIP` (3 mm) · low-voltage end.
 
@@ -191,8 +248,8 @@ squeezed somewhere illegal. Each check is numbered in the tool's output, every c
 `place.py` says what it protects, and `tests/test_place.py` proves each check fires on a placement
 that breaks it. The first nine are the placement's own; **checks 10–16 exist because the board must
 be routed afterwards (owner, 2026-09-22) — placement decides whether routing is possible**; check 17
-is the board itself, which has two faces and one set of holes; check 18 is IO-26's partition, and
-check 19 the order inside it.
+is the board itself, which has two faces and one set of holes; check 18 is IO-26's partition,
+check 19 the order inside it, and check 20 asks of the NETS what 10–16 ask of the board.
 
 📄 **Where the two rules IO-26 decided live:** (3a), the slot the driver line leaves for the loom's
 pins, is **folded into check 11** — the bus is a line AND the feed enters it from inside, which is
@@ -234,15 +291,31 @@ walled in by pack voltage whatever the construction believed.
 9. **Nothing on a face taller than that face's gap** (`layer_gaps`).
 10. **Channels**: 2 mm between bands, 3 mm to or from Band 4 (the S3's 25 STACK signals fan out
     there), wherever one band's part stands directly behind another's.
-11. **The 12 V bus on OUTPUTS is a line, fed from inside it**: the centroid of the V12-fed ICs
-    (`U301 U302 U303`) within 15 mm of the contact that feeds them (`J311`), all of them facing one
-    way, **and a driver on each side of the slot that contact's pin row stands in** — so `V12` is
-    one straight pour, not a tree, and the 11.39 A enters it where the load is rather than at one
-    end of the line. Which ICs and which contact come from the copper: the net `U201`'s `+V` is on,
-    and the FEED is the connector whose other half stands on the board the 12 V comes from (several
-    carry `V12` away since IO-26). The slot is the pad row plus `DRIVER_SLOT_MARGIN` each side —
-    IO-26 3a, and it is what settles the pull against check 17. ⛔ The 15 mm is not relaxed: it is
-    the length of an 11.39 A pour.
+11. **The 12 V POUR on OUTPUTS** (amended 2026-09-22 for the clustering objective). Until the
+    drivers were clustered this asked that their centroid stand within **15 mm** of the contact
+    that feeds them — a trace-era figure, and the one that FORCED the single mid-board driver line
+    the owner could not route out of. Clustering spreads the drivers along the board and the
+    layer-3 pour IS the bus (R1), so the pour is what is measured. It is **mandatory**: a placement
+    with no pour under the line has no bus. Four clauses —
+    - **every V12 IC faces one way**: one pour, one orientation, so every `VS` pad row presents to
+      the same edge of it;
+    - **every driver's `VS` pads are ON the pour.** The pour is a strip under the line: its
+      u-extent runs from the first driver's `VS` pads to the last with the feed's own contacts in
+      it, and its v-band is the strip the driver **nearest the feed** stands in. A driver pushed
+      off the line needs a neck to the pour instead of vias into it;
+    - **the feed's pin row stands INSIDE the pour's span, with a driver on each side of the slot**
+      it leaves (IO-26 3a, unchanged in substance): the 11.39 A enters where the load is, not off
+      the end. The slot is the pad row plus `DRIVER_SLOT_MARGIN` each side, and it is what settles
+      the pull against check 17;
+    - **the pour is no longer than `V12_POUR_MM` (178 mm)** — the drop the copper allows, and what
+      replaces the 15 mm. 11.39 A (the LIMITED case) through a 20 mm × 35 µm pour is 0.493 mΩ per
+      20 mm, so 5.61 mV per 20 mm, and a 50 mV budget — 0.42 % of the 12 V rail — buys 178 mm. The
+      clustered placement measures **122.5 mm**; a driver at each end of the board scores 221.
+
+    Which ICs and which contact come from the copper: the net `U201`'s `+V` is on, and the FEED is
+    the connector whose other half stands on the board the 12 V comes from (several carry `V12`
+    away since IO-26). Which pads are `VS` is read off the copper too, never off TI's pin name.
+    ⛔ The 178 mm is the DROP, not the channel lengths: check 20(a) is what keeps a channel short.
 12. **The ground plane** (139 ground pins on LOGIC, 100 CTRL, 92 OUTPUTS, 30 POWER — never traces): no through-hole
     connector longer than 40 mm laid across the board's short axis. `J308`/`J406` (2 × 29, 73.66 mm)
     lie along the board, flush to the back edge, where a row of holes cuts a plane least.
@@ -303,6 +376,47 @@ walled in by pack voltage whatever the construction believed.
     re-flows when the brick moves, so when the region ends up short of the end reserved for it the
     board is placed again with the line pulled in (`PARTITION_GROWTHS`, the mirror of the growth
     revision) — and check 13 stays the backstop that reports a region still in two pieces.
+20. ⭐ **ROUTABILITY, per board** (owner, 2026-09-22: routing all four boards will be extremely
+    difficult). Checks 10–16 ask whether the BOARD can be routed; this asks it of the **NETS**, and
+    it is the measurement that finding was made with, moved inside the tool. **Its figures are
+    reported on every run, passing or failing** — the point is that the number is visible.
+
+    Measured over every net that is copper the placement leaves to be THREADED: the ground plane
+    and the rails are out (layer 2 is GND on all four boards and layer 3 a pour or a second ground,
+    R1; the rails that get neither are R0's wide traces, laid by hand in R2 before the autorouter
+    runs). Three figures per board: the **u-span** of each net, the **star length** — each net's
+    pins to their own centroid, summed, the MST proxy — and the **worst 1 mm cut** in each axis.
+
+    - **(a) a net's u-span against its class's reach.** One budget shape: **the connector's own
+      u-extent plus a reach**, because which contact of a header a net lands on is the pinout's
+      choice, not the placement's. A **CHANNEL** — a `TPS4H160B` `OUTx` or a `TPS2553` `OUT` and
+      everything on it — gets `CHANNEL_REACH` (40 mm); a **SIGNAL** that ends at a harness terminal
+      gets `SIGNAL_REACH` (16 mm). Both figures are derived from this design: the clustered
+      placement needs 36.2 and 12.0 mm of them, and the placement before it ran nine channels and
+      seven signals long, the narrowest by 40.8 and 19.5. ⚠️ The channel band is only (36.2, 40.8]
+      wide, and the narrowness is the finding: `U301` feeds `J301` at one end of the row and
+      `AUX12` on `J304`/`J305` at the other and cannot be near both. The next part that does that
+      wants two drivers, not a bigger number.
+
+      Six kinds of net are **reported and not bound**, each because another rule owns it: a
+      **RAIL** (not measured at all), a **SENSE** net on the module (check 14), POWER's **pack
+      voltage** (checks 7, 13, 18, 19), a net on a **straddler** of POWER's partition (4a puts its
+      two ends in two different halves of the board), a **face-row** net that lands on two
+      terminals (the row's order is `edge_budget`'s), a **BUS** on two or more hosts (`EN` is every
+      expander's RESET since IO-22; its span says where the expanders are), a net on an
+      **inter-board half** — that half lies flush to the back edge (check 12) where the module's
+      antenna must also be (check 8), and on LOGIC those three halves and the module want 180 mm of
+      a 228 mm strip with two of the three fixed on the board below — and a net on the
+      **programming land**, which 20(b) owns. ⛔ An exemption is a claim about **who owns the
+      net**, not a way to pass.
+    - **(b) the programming land within `PROG_REACH` (25 mm) of the module**, pin to pin on the
+      nets they share. `EN`, `BOOT_IO0` and the two UART0 lines are the S3's OWN pins (D25). The
+      clustered placement measures 21.4 mm; the one before it 38.4.
+    - **(c) the worst 1 mm cut under `CUT_LOAD` (50 %)** of what two signal layers hold at
+      `TRACK_PITCH` (0.4 mm — a 0.2 mm trace with 0.2 mm of clearance, JLC's 4-layer capability),
+      which on a 41.84 mm board is 209 tracks across and 1210 along. It is a **BACKSTOP**: the four
+      boards fill 4 % (POWER), 11 % (CTRL), 12 % (OUTPUTS) and 21 % (LOGIC) today, so congestion is
+      not what makes this stack hard to route — the lengths are.
 
 Every comparison allows a micrometre: the file holds mils to four decimals, and a coordinate
 written and read back may move by nanometres.
@@ -319,6 +433,8 @@ flow rather than being bolted on.
 ```
 tools/place.py --stack --draw pics/    # place OUTPUTS, LOGIC, CTRL, POWER in that order; check; write
                                        #   → ~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2
+READ THE ROUTABILITY BLOCK             # ✔ a required step: check 20's star length, three longest
+                                       #   spans and worst cut, printed under each board
 owner opens it, looks, closes the editor
 tools/place.py --check --draw pics/    # re-read the SAVED file; report every rule above
 LOOK AT pics/*.png                     # ✔ a required step, not a decoration
@@ -336,6 +452,11 @@ tools/place.py --stack --keep J302 J305 # re-place, holding the owner's hand-mov
   OUTPUTS' `J307`/`J308` and CTRL's at LOGIC's `J411`.
 - `--check` never writes. It is the review step and the regression test: after the owner moves
   things by hand, `--check` says what broke.
+- ✔ **Check 20's figures are printed under every board on every `--stack` and `--check`, and
+  written into `layout/<BOARD>-placement.md`** — the star length, the three longest spans with the
+  limit each one answers to, and the worst 1 mm cut in each axis. **Reading them is a step of the
+  process**, not a decoration: the owner read this stack as hard to route off numbers like these
+  while all nineteen checks were green, which is what check 20 exists to stop happening again.
 - ✔ **`--draw DIR` writes one PNG per board, and looking at it is a step of the process** — the
   proposal for `--stack`, the file's own placement for `--check`, and on its own it just draws the
   file and judges nothing. Outline, M3 washer squares, band fronts, every body as a box (top black,
@@ -377,9 +498,10 @@ tool derived.
   land patterns, so a placement it calls legal can still be tight on the owner's. Run the tool on
   the real project as well, and look at the pictures; `REVV1_PLACE_PROJECT=/path/to/saved.eprj2 pytest tests/test_place.py`
   runs the same tests on a real save.
-- `layout/PROCESS.md` — this document. `layout/<BOARD>-placement.md` — the per-board tables
-  (`u`, `v`, angle, file X, Y, layer, band, and the reason: "face row, position 3 of 5" /
-  "centroid of U402, R413, …" / "fixed: mate of J308"), regenerated on every `--stack`.
+- `layout/PROCESS.md` — this document. `layout/<BOARD>-placement.md` — check 20's routability
+  block and then the per-board table (`u`, `v`, angle, file X, Y, layer, band, and the reason:
+  "face row, position 3 of 5" / "behind J313, J308 — the connectors it serves" / "between U303,
+  J313 — the signal partners it links" / "fixed: mate of J308"), regenerated on every `--stack`.
 
 ---
 
