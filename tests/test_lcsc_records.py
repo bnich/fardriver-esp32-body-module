@@ -95,7 +95,9 @@ def test_another_makers_smcj90a_is_caught_by_maker(fixture):
     errs = lcsc_fixture.check(bad, {**fixture, "C2994079": MDD_SMCJ90A}, catalogue=cat)
     assert errs == ["C2994079 is SMCJ90A by 'MDD(Microdiode Semiconductor)', not "
                     "Vishay's as its table 'Vishay SMCJ90A-E3/57T' says -- a "
-                    "same-numbered part from another maker is another part"]
+                    "same-numbered part from another maker is another part",
+                    "D101: JLC places it from C2994079, whose library footprint is not "
+                    "on record, so tel_check could not compare its land"]
 
 
 def test_a_terminal_from_another_maker_is_caught(fixture):
@@ -218,3 +220,23 @@ def test_the_fixture_is_what_the_library_says_today(fixture):
     for code, rec in fixture.items():
         live = lcsc_fixture.record(svc, code)
         assert (live["mpn"], live["symbol_pins"]) == (rec["mpn"], rec["symbol_pins"]), code
+
+
+def test_a_placed_part_with_no_footprint_on_record_fails_the_fixture_check(fixture):
+    """tel_check cannot compare a land the fixture does not hold (H14); the
+    fixture check says so before any export is read."""
+    nulled = {**fixture, "C19077512": {**fixture["C19077512"], "footprint": None}}
+    errs = lcsc_fixture.check(netlist.current(), nulled)
+    smf = sorted(p.refdes for p in netlist.current().parts if p.lcsc == "C19077512")
+    assert len(smf) == 17
+    assert errs == [f"{ref}: JLC places it from C19077512, whose library footprint is not "
+                    f"on record, so tel_check could not compare its land" for ref in smf]
+    # The legitimately footprint-less records -- plugs, standoffs, the loose
+    # parts -- are the footprint source of nothing JLC places, and fire nothing:
+    from tools import padmap
+    d = netlist.current()
+    nulls = {c for c, r in fixture.items() if r["footprint"] is None}
+    assert len(nulls) == 22
+    placed = {padmap.footprint_source(x) for x in (*d.parts, *d.connectors) if x.assembly == "jlc"}
+    assert not nulls & placed
+    assert lcsc_fixture.check(d, fixture) == []

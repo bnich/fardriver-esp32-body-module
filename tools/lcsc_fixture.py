@@ -228,6 +228,18 @@ def check(d, fixture: dict, catalogue=None, terminals=None) -> list[str]:
             errs.append(f"{p.refdes}: the netlist places a {p.package!r} but "
                         f"{p.lcsc} comes in {rec['package']!r}; if those are one "
                         f"package, say so in lcsc_fixture.PACKAGE_IS")
+    # A placed part's land comes from the library: with no footprint on record
+    # tel_check cannot compare it, and a proof with an uncompared land is no
+    # proof (H14). Loose and hand parts carry lands drawn here.
+    for x in (*d.parts, *d.connectors):
+        if x.assembly != "jlc":
+            continue
+        code = padmap.footprint_source(x)
+        rec = fixture.get(code) if code else None
+        if rec and rec.get("footprint") is None:
+            errs.append(f"{x.refdes}: JLC places it from {code}, whose library "
+                        f"footprint is not on record, so tel_check could not "
+                        f"compare its land")
     for c in d.connectors:
         rec = fixture.get(c.lcsc)
         if not rec or rec["symbol_pins"] is None:

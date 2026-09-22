@@ -31,6 +31,10 @@ class Result:
     left_off: list            # parts not converted to PCB, absent as they should be
     nets: int = 0
     pins: int = 0
+    #: Footprints actually compared. `ok` requires this to be EVERY part on
+    #: the PCB: a part whose footprint could not be checked is a problem in
+    #: `problems`, never a silent skip (H14).
+    footprints: int = 0
     ok: bool = field(init=False)
 
     def __post_init__(self):
@@ -129,12 +133,26 @@ def compare(design, board, tel, fixture=None):
     problems += [f"{ref} is in $PACKAGES but not on {board}"
                  for ref in sorted(set(tel.packages) - refs)]
     # Pads carry pin names, so a wrong land pattern with the right pad names
-    # would pass the nets: the footprint itself is compared too.
+    # would pass the nets: the footprint itself is compared too -- for EVERY
+    # part on the PCB. One whose expected footprint is unknown (no library
+    # footprint on record for its LCSC code) is a problem, not a skip: until
+    # 2026-09-21 a `footprint: null` record dropped the comparison and the
+    # verdict still read "identical" over 17 SMF18A on the wrong land (H14).
+    compared = 0
     for ref, want_fp in sorted(expected_footprints(design, board, fixture).items()):
+        if ref in off:
+            continue
         got_fp = tel.packages.get(ref)
-        if got_fp is not None and want_fp is not None and got_fp != want_fp:
+        if got_fp is None:
+            continue                    # already "missing from $PACKAGES" above
+        if want_fp is None:
+            problems.append(f"footprint of {ref} could not be checked: no footprint "
+                            f"on record for it (tests/fixtures/lcsc.json)")
+        elif got_fp != want_fp:
             problems.append(f"{ref} has footprint {got_fp}, the generator bound {want_fp}")
-    return Result(problems, off, len(tel.nets), sum(map(len, tel.nets.values())))
+        else:
+            compared += 1
+    return Result(problems, off, len(tel.nets), sum(map(len, tel.nets.values())), compared)
 
 
 def main(argv=None):
@@ -150,7 +168,8 @@ def main(argv=None):
           + (f"; left off the PCB as intended: {' '.join(r.left_off)}" if r.left_off else ""))
     for p in r.problems:
         print(f"  ✗ {p}")
-    print("  identical to the generator's netlist" if r.ok else f"  {len(r.problems)} problem(s)")
+    print(f"  identical to the generator's netlist, every one of {r.footprints} footprints "
+          f"compared" if r.ok else f"  {len(r.problems)} problem(s)")
     return 0 if r.ok else 1
 
 
