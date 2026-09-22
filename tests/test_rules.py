@@ -56,8 +56,9 @@ def _c(ref, board, value, volts, **kw):
 
 
 #: Each fixture TVS's clamping voltage at its rated pulse, as its datasheet
-#: states it (VR-CLAMP needs one on every TVS).
-CLAMPS = {"SMCJ90A": 146.0, "SMBJ15A": 24.4, "SMS15T1G": 29.0, "PESD5V0S4UD": 9.8}
+#: states it (VR-CLAMP needs one on every TVS, and VR-DATASHEET holds each to
+#: rules.DATASHEET_V_CLAMP: the PESD5V0S4UD is 13 V @ 20 A, nexperia p.4).
+CLAMPS = {"SMCJ90A": 146.0, "SMBJ15A": 24.4, "SMS15T1G": 29.0, "PESD5V0S4UD": 13.0}
 
 
 def _d(ref, board, mpn, kind, volts, **kw):
@@ -880,6 +881,37 @@ def test_vr_datasheet_fires_on_a_rating_typed_above_the_datasheet():
     assert any("D310" in e for e in fired(GOOD.replace_part("D310", v_max=999.0), "VR-DATASHEET"))
     bad = GOOD.replace_part("D401", v_max=50.0)               # mutation N8
     assert any("D401" in e for e in fired(bad, "VR-DATASHEET"))
+
+
+def test_vr_datasheet_holds_every_tvs_clamp_to_its_datasheet_line():
+    """H19: `v_clamp` was a typed figure nothing checked. A clamp typed low
+    flatters every victim; typed high it is a typo all the same; a TVS with no
+    line in DATASHEET_V_CLAMP is refused, not skipped."""
+    assert fired(GOOD, "VR-DATASHEET") == []
+    low = GOOD.replace_part("D401", v_clamp=4.0)                 # a PESD5V0S4UD: 13 V
+    assert any("D401" in e and "v_clamp=4 V" in e and "13 V" in e
+               for e in fired(low, "VR-DATASHEET"))
+    high = GOOD.replace_part("D401", v_clamp=20.0)
+    assert any("D401" in e and "v_clamp=20 V" in e for e in fired(high, "VR-DATASHEET"))
+    unlisted = GOOD.replace_part("D401", mpn="PTVS5V5D1BL")
+    assert any("D401" in e and "DATASHEET_V_CLAMP has no line" in e
+               for e in fired(unlisted, "VR-DATASHEET"))
+    # ...and an MPN change that leaves the old clamp behind is caught too: the
+    # existing VR-CLAMP mutations change MPN and clamp together, so this one
+    # could pass every rule.
+    swapped = GOOD.replace_part("D401", mpn="SMS15T1G", v_max=15.0)
+    assert any("D401" in e and "29 V" in e for e in fired(swapped, "VR-DATASHEET"))
+
+
+def test_the_datasheet_clamp_table_cites_a_file_and_a_page_for_every_line():
+    for prefix, volts, src in rules.DATASHEET_V_CLAMP:
+        assert volts > 0 and ".pdf) p." in src and "I_PP" in src, prefix
+
+
+def test_r_power_w_is_the_chip_resistor_standard():
+    """H18: this table ×10 passed every test. UNI-ROYAL's power codes
+    (uniroyal_0805W8.pdf p.2 §2.2): WG 1/16 W, WA 1/10 W, W8 1/8 W, W4 1/4 W."""
+    assert rules.R_POWER_W == {"0402": 0.0625, "0603": 0.1, "0805": 0.125, "1206": 0.25}
 
 
 def test_vr_under_fires_on_a_30v_fet_on_an_84v_node():

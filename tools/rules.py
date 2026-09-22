@@ -194,6 +194,24 @@ DATASHEET_V_MAX: tuple[tuple[str, float, str], ...] = (
     ("TPS2553", 6.5, "TI SLVS841F, recommended operating V_IN; abs max 7 V"),
 )
 
+#: Every TVS's clamping voltage READ FROM ITS DATASHEET, with the pulse current
+#: the figure holds at: (prefix, volts, "file p.N"). VR-CLAMP holds every part
+#: behind a TVS to its typed `v_clamp`; until 2026-09-21 nothing held that
+#: figure to anything, and a flattering clamp passed an overdriven victim (H19).
+#: A TVS in the design with no line here FAILS -- an unverified clamp is an
+#: unchecked one. Files are in ../fardriver-nd72450-reference/reference/.
+DATASHEET_V_CLAMP: tuple[tuple[str, float, str], ...] = (
+    ("SMS05T1G", 9.8, "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf) p.2: V_C 9.8 V @ I_PP 5 A"),
+    ("SMS15T1G", 29.0, "onsemi SMS05T1/D rev 10 (tvs_onsemi_sms05t1-d.pdf) p.2: V_C 29.0 V @ I_PP 12 A"),
+    ("SMCJ90A", 146.0, "Vishay doc 88394 rev 20-Jul-2020 (vishay_smcj_88394_C1976063.pdf) p.2: "
+                       "V_C 146 V @ I_PP 10.3 A"),
+    ("SMBJ18A", 29.2, "SMBJ series (smbj_series_C7420377.pdf) p.2: V_C 29.2 V @ I_PP 20.55 A"),
+    ("SMBJ15A", 24.4, "SMBJ series (smbj_series_C7420377.pdf) p.2: V_C 24.4 V @ I_PP 24.59 A"),
+    ("SMF18A", 29.2, "SMF series rev 2.2 (smf_series_C19077499.pdf) p.2: V_C 29.2 V @ I_PP 6.8 A"),
+    ("SMF6.0A", 10.3, "SMF series rev 2.2 (smf_series_C19077499.pdf) p.2: V_C 10.3 V @ I_PP 19.4 A"),
+    ("PESD5V0S4UD", 13.0, "Nexperia PESD5V0S4UD (nexperia_pesd5v0s4ud.pdf) p.4: V_CL 13 V @ I_PP 20 A"),
+)
+
 
 # ── the index: everything a rule needs, derived once ─────────────────────────
 class _Ix:
@@ -1353,6 +1371,18 @@ def voltage_ratings(d: Design) -> list[str]:
                 errs.append(f"VR-DATASHEET: {p.refdes} ({p.mpn}) is typed "
                             f"v_max={p.v_max:g} V; the datasheet says {limit:g} V "
                             f"({src}).")
+        if p.kind == "TVS" and not p.dnp and p.v_clamp is not None:
+            line = next(((v, src) for prefix, v, src in DATASHEET_V_CLAMP
+                         if p.mpn.upper().startswith(prefix)), None)
+            if line is None:
+                errs.append(f"VR-DATASHEET: {p.refdes} ({p.mpn}) is typed "
+                            f"v_clamp={p.v_clamp:g} V, and DATASHEET_V_CLAMP has no "
+                            f"line for it: an unverified clamp is an unchecked one. "
+                            f"Read V_C from its datasheet and add the line.")
+            elif abs(p.v_clamp - line[0]) > 0.05:
+                errs.append(f"VR-DATASHEET: {p.refdes} ({p.mpn}) is typed "
+                            f"v_clamp={p.v_clamp:g} V; the datasheet says "
+                            f"{line[0]:g} V ({line[1]}).")
 
         all_pins = ix.pins_of(p)
         pins = (tuple(x for x in ("D", "S") if x in all_pins)
@@ -1671,9 +1701,13 @@ def _supply_pins(p: Part) -> tuple[str, ...]:
 
 
 # ── VR-POWER: what a resistor dissipates at its worst ──────────────────────
-#: Rated power by package: UNI-ROYAL 0603WA (1/10 W), 0805W8 (1/8 W), 1206W4
-#: (1/4 W), the parts _R_LCSC buys.
-R_POWER_W = {"0402": 0.0625, "0603": 0.1, "0805": 0.125, "1206": 0.25}
+#: Rated power by package, the chip-resistor standard: 0402 1/16 W, 0603
+#: 1/10 W, 0805 1/8 W, 1206 1/4 W. UNI-ROYAL's part-number power code says so
+#: for the parts _R_LCSC buys (uniroyal_0805W8.pdf p.2 §2.2: WG = 1/16 W,
+#: WA = 1/10 W, W8 = 1/8 W, W4 = 1/4 W -- 0603WA…, 0805W8…, 1206W4…). ⛔ Pinned
+#: by value in tests/test_rules.py: this table ×10 once passed every test, and
+#: the design runs at 58-73 % of these figures (H18).
+R_POWER_W = {"0402": 1 / 16, "0603": 1 / 10, "0805": 1 / 8, "1206": 1 / 4}
 #: The most a logic pin drives into a resistor: Espressif ESP32-S3 datasheet
 #: v2.2 p.65 Table 5-4, I_OH 40 mA at PAD_DRIVER 3 (I_OL 28 mA); Microchip
 #: DS20001952D p.3, 25 mA sourced or sunk by any MCP23017 pin.

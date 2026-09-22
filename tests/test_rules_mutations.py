@@ -112,6 +112,25 @@ def test_m27_a_100_ohm_open_load_pull_up_burns_an_0805():
     assert any("R345" in e for e in fired(D.replace_part("R345", value="100R"), "VR-POWER"))
 
 
+def test_h18_the_1k_lamp_series_resistor_in_an_0805_is_over_by_15_percent():
+    """The near-threshold case: R426 (1 kΩ across 12 V, 144 mW) is a 1206 at
+    58 % of 250 mW. In an 0805 it is 144 mW on 125 mW -- 1.15×, the region the
+    design lives in (R401 73 %, R426-R429 58 %). A rule that let the threshold
+    drift to 2× let this ship (H18)."""
+    errs = fired(D.replace_part("R426", package="0805"), "VR-POWER")
+    assert errs == ["VR-POWER: R426 (1k, 0805) can see 12 V and dissipate 0.144 W; "
+                    "its package is rated 0.125 W."]
+    assert fired(D, "VR-POWER") == []
+
+
+def test_h19_a_flattering_clamp_typed_on_a_real_tvs_is_caught():
+    """SMS05T1G 9.8 → 4.0 and SMCJ90A 146 → 50 passed 1479 tests (H19)."""
+    for ref, clamp, real in (("D404", 4.0, "9.8 V"), ("D101", 50.0, "146 V")):
+        errs = fired(D.replace_part(ref, v_clamp=clamp), "VR-DATASHEET")
+        assert any(ref in e and f"v_clamp={clamp:g} V" in e and real in e for e in errs), errs
+    assert fired(D, "VR-DATASHEET") == []
+
+
 # ── CK-11: a gate divider that cannot switch its FET (review 2026-09-19) ─────
 def test_m37_a_series_resistor_that_leaves_the_motor_cut_ungateable():
     """The defect the review found: R114 = 100k puts 3.3 V × 10k / 110k = 0.30 V
