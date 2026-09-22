@@ -2390,6 +2390,18 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
     return ConnPin(pin, net, note)
 
 
+def _empty_ways(first: int, last: int, why: str) -> tuple[ConnPin, ...]:
+    """Positions `first`..`last` of a terminal with nothing landed on them, as
+    J403 carries its sixth: the terminal is bought larger than its conductors
+    need so that its SIZE is one no other terminal of its pitch has. A plug
+    seats in any header of its pitch at least its size, so with every plug
+    seated each one is forced into the header of exactly its own size, and a
+    unique size cannot be swapped without leaving a plug in the hand
+    (tests/test_interconnect.py). `why` is said once, on the first empty way."""
+    return tuple(_cp(str(n), "", f"empty way: {why}" if n == first else "empty way")
+                 for n in range(first, last + 1))
+
+
 #: Every wire into the box lands on a pluggable screw terminal (owner,
 #: 2026-09-18): nothing to crimp, no housing to match.  (pitch mm, positions) ->
 #: (the right-angle header JLC places, the loose screw plug the owner wires).
@@ -2403,6 +2415,12 @@ def _cp(pin: str, net: str, note: str = "") -> ConnPin:
 #: there would seat in J409 and J410, the two general-input terminals, which
 #: are 3.81 × 8 -- so the 12 V row and the inputs row share a pitch and never a
 #: size (tests/test_rows.py).
+#: (3.81, 10) and (3.81, 12) are J303 and J305 (IO-24): no two 12 V terminals
+#: may share a size either, every size 2-9 at 3.81 mm is taken, and the 11-way
+#: header (C3030059) is stock 0, so the two that grow take the smallest stocked
+#: sizes nothing else uses. Their extra ways are EMPTY -- no net, no pin on any
+#: part -- and the 12 V row they lengthen to 220.28 mm is the one stated
+#: exception to the 90 % design margin (tests/test_board_params.py).
 _TERMINALS = {
     (3.50, 8): ("C441263", "C441113"),
     (3.81, 2): ("C133147", "C62113"), (3.81, 3): ("C160129", "C106871"),
@@ -2410,6 +2428,8 @@ _TERMINALS = {
     (3.81, 6): ("C160126", "C157470"), (3.81, 7): ("C489994", "C489981"),
     (3.81, 8): ("C189319", "C62102"),
     (3.81, 9): ("C489995", "C384932"),
+    (3.81, 10): ("C160125", "C157469"),
+    (3.81, 12): ("C508940", "C193771"),
     (5.08, 2): ("C63299", "C63303"), (5.08, 3): ("C49238", "C49239"),
     (5.08, 5): ("C49240", "C49241"), (5.08, 9): ("C508920", "C508910"),
     (7.62, 6): ("C441304", "C441154"),
@@ -2772,22 +2792,47 @@ _CONNECTORS = (
         _cp("4", "TURN_L", "blue — rear LEFT (M6)"),
         _cp("5", "TURN_R", "green — rear RIGHT (M6)"),
     )),
-    _tb("J303", "OUTPUTS", "Front turn L/R, two isolated 2-wire pairs", (
-        _cp("1", "TURN_L", "front LEFT feed"),
-        _cp("2", "GND", "front LEFT return. ⬜ M6: confirm the front pair may "
-                        "share the tail common"),
-        _cp("3", "TURN_R", "front RIGHT feed"),
-        _cp("4", "GND", "front RIGHT return"),
-    )),
+    _tb("J303", "OUTPUTS", "Front turn L/R, two isolated 2-wire pairs, on a "
+        "TEN-way terminal (IO-24)", (
+            _cp("1", "TURN_L", "front LEFT feed"),
+            _cp("2", "GND", "front LEFT return. ⬜ M6: confirm the front pair may "
+                            "share the tail common"),
+            _cp("3", "TURN_R", "front RIGHT feed"),
+            _cp("4", "GND", "front RIGHT return"),
+            *_empty_ways(5, 10, "ten ways for four conductors, so this plug has "
+                                "a size no other 12 V terminal has (IO-24). As a "
+                                "4-way it swapped with J301 [G,+,+,+] and J305 "
+                                "[+,-,+,-] -- a lamp common held at +12 V, or a "
+                                "load driven reversed. Every size 2-9 at 3.81 mm "
+                                "is taken and the 11-way header is stock 0, so 10 "
+                                "and 12 are the sizes left. The front lamps are a "
+                                "fixed pair that will not gain conductors, so this "
+                                "terminal takes the smaller, 10; the fan + buzzer "
+                                "terminal, where a third accessory pair is the "
+                                "likely addition, takes 12"),
+        )),
     _tb("J304", "OUTPUTS", "Horn (M7)", (
         _cp("1", "AUX12", "⛔ BLUE IS THE POSITIVE"),
         _cp("2", "HORN_N", "black = '-'. ⛔ Red is not the positive"),
     )),
-    _tb("J305", "OUTPUTS", "Fan + buzzer", (
+    _tb("J305", "OUTPUTS", "Fan + buzzer, on a TWELVE-way terminal (IO-24)", (
         _cp("1", "AUX12", "fan +"),
         _cp("2", "FAN_RTN", "fan -, flyback D307"),
         _cp("3", "AUX12", "buzzer +"),
         _cp("4", "BUZZ_RTN", "buzzer -, flyback D314"),
+        *_empty_ways(5, 12, "twelve ways for four conductors, so this plug has "
+                            "a size no other 12 V terminal has (IO-24). As a "
+                            "4-way it swapped with J301 [G,+,+,+] and J303 "
+                            "[+,G,+,G]: the headlight's plug here puts AUX12 "
+                            "on the lamp common and its beams on the fan and "
+                            "buzzer returns, loads driven REVERSED. J303 took "
+                            "10, the smaller of the two "
+                            "sizes left; this terminal takes 12 because a third "
+                            "accessory pair (a second fan, a relay coil) is the "
+                            "likely addition to it, and the eight empty ways "
+                            "carry the 12 V row to 220.28 mm, 91.0 % of the "
+                            "board -- accepted by the owner 2026-09-21 as the one "
+                            "exception to the 90 % design margin"),
     )),
     _tb("J313", "OUTPUTS", "12 V aux 1-4 (IO-1): four feeds alternating with "
         "three shared returns, in the 12 V row", tuple(

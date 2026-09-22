@@ -67,25 +67,65 @@ def test_the_envelope_the_pcb_outline_is_cut_to():
 # envelope quietly stops being the one IO-14 chose.
 # ⛔ Do not "simplify" one of these into board_fit's limit. A tripwire set at the
 # limit it is guarding is not a tripwire.
+#: IO-24 (amended 2026-09-21): the 12 V row, OUTPUTS top, is the ONE stated
+#: exception to the 90 % row margin, and only as far as it stands. The row is
+#: arithmetic (tools.netlist._tb: N x 3.81 + 10.48 per 3.81 mm Kangnex header,
+#: HEADER_GAP between neighbours), so the exception is the row's own figure,
+#: not a rounder fraction -- 0.91 x 242.0 = 220.22 would not even hold it.
+TWELVE_V_ROW_MM = 220.28
+
+
 def test_the_board_length_holds_the_longest_row_with_room_to_spare():
     """The row is arithmetic, not a heuristic, so it is one of the two things
-    BOARD_L answers to. POWER top's five headers are 55.88 + 25.4 + 35.56 +
-    20.32 + 55.88 = 193.04 of body and four 1 mm gaps = 197.04 mm. Against the
-    242.0 mm board that is 81.4 %, so the row clears 0.90 x 242.0 = 217.80 by
-    20.76 mm and clears the board itself by 44.96 mm -- 14.0 mm of which the
-    four M3 corners take: at each END of the row two corners take 2 x 3.5 mm of
-    length between them, so 2 x 2 x 3.5 = 14.0 mm in all.
+    BOARD_L answers to. Every row is held to 0.90 x 242.0 = 217.80 mm except
+    the 12 V row, which is held to TWELVE_V_ROW_MM, where it stands.
 
-    ⚠️ The row is no longer what sets the length. It wanted 197.04 / 0.90 =
-    218.93; the PACK wanted 239.49 and won, and 242.0 was then taken to keep
-    the pack tripwire off a hair trigger.
-    Protects: that the row keeps its margin while the length is being set by
-    something else."""
+    THE EXCEPTION (IO-24, amended 2026-09-21). J301, J303 and J305 were three
+    3.81 x 4 terminals with three polarity conventions, and a swapped plug
+    drove a load reversed or held a lamp common at +12 V. The fix is a unique
+    size for each, and the family is saturated: every size 2-9 at 3.81 mm is a
+    terminal in one of the two rows and the 11-way header is stock 0, so J303
+    took 10 ways and J305 twelve. The 12 V row, by hand, header by header:
+      J301  4 x 3.81 + 10.48 =  25.72
+      J302  5 x 3.81 + 10.48 =  29.53
+      J303 10 x 3.81 + 10.48 =  48.58
+      J304  2 x 3.81 + 10.48 =  18.10
+      J305 12 x 3.81 + 10.48 =  56.20
+      J313  7 x 3.81 + 10.48 =  37.15   bodies 215.28
+      five HEADER_GAPs of 1.0            +  5.00 = 220.28 mm
+    220.28 / 242.0 = 91.0 %, 2.48 mm past the 90 % line. The margin exists to
+    absorb connector growth, and closing a real polarity hazard is what it is
+    for; the owner accepted this row on 2026-09-21. It is an exception, not a
+    loosening: the other rows keep 0.90, the pack and density tripwires below
+    are untouched, and the row is pinned where it stands, so the NEXT thing to
+    lengthen it -- a seventh header (18.10 + 1.0 mm at the least) or one more
+    position (3.81 mm) -- fails here and is a new decision. What a real defect
+    scores: a row over the board itself is 242.0 mm, 100 %, and board_fit
+    fails it; this test fires 21.72 mm before that.
+
+    The other rows: POWER top's five headers are 55.88 + 25.4 + 35.56 + 20.32 +
+    55.88 = 193.04 of body and four 1 mm gaps = 197.04 mm, 81.4 %, clearing
+    217.80 by 20.76 mm; LOGIC top 185.94, OUTPUTS bottom 38.40. The 12 V row
+    clears the board by 21.72 mm, 14.0 mm of which the four M3 corners take: at
+    each END of the row two corners take 2 x 3.5 mm of length between them, so
+    2 x 2 x 3.5 = 14.0 mm in all, and 7.72 mm is left.
+
+    ⚠️ No row sets the length. The 12 V row would want 220.28 / 0.90 = 244.76
+    and does not get it; the PACK wanted 239.49, and 242.0 was taken to keep the
+    pack tripwire off a hair trigger.
+    Protects: that every row but the one excepted keeps its margin while the
+    length is being set by something else, and that the exception stays the
+    size it was accepted at."""
     from tools import board_fit as bf, netlist
-    longest = max(e.length_mm for e in bf.edge_budget(netlist.current()))
-    assert longest == pytest.approx(197.04)
-    assert longest <= 0.90 * bp.BOARD_L
-    assert bp.BOARD_L - longest > 4 * bf.M3_INSET_MM
+    rows = {(e.board, e.side): e.length_mm for e in bf.edge_budget(netlist.current())}
+    twelve_v = rows.pop(("OUTPUTS", "top"))
+    assert twelve_v == pytest.approx(TWELVE_V_ROW_MM, abs=0.01)   # the exception, where it stands
+    assert twelve_v / bp.BOARD_L == pytest.approx(0.910, abs=0.0005)
+    assert twelve_v - 0.90 * bp.BOARD_L == pytest.approx(2.48, abs=0.01)
+    for face, length in rows.items():
+        assert length <= 0.90 * bp.BOARD_L, face                     # the tripwire, every other row
+    assert max(rows.values()) == pytest.approx(197.04)              # POWER top, unchanged
+    assert bp.BOARD_L - twelve_v > 4 * bf.M3_INSET_MM
 
 
 def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():

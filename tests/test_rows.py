@@ -243,42 +243,33 @@ def test_a_terminal_is_in_the_size_check_the_moment_it_is_in_the_row():
     assert shared_sizes(bad) == {(3.81, len(j.pins))} == {(3.81, 8)}
 
 
-def _grown(d, refdes, positions):
-    """`refdes` with empty ways added up to `positions`, as J403 carries its
-    sixth: the plug of a smaller terminal seats in it offset, the plug of the
-    same terminal seats nowhere else once every plug is in."""
-    c = d.connector(refdes)
-    extra = tuple(ConnPin(str(i), "", "empty way") for i in range(len(c.pins) + 1, positions + 1))
-    return d.replace_connector(refdes, pins=c.pins + extra,
-                               footprint_mm=(round(positions * 3.81 + 10.48, 2),
-                                             c.footprint_mm[1]))
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "M7 / IO-24: J301, J303 and J305 are all 3.81 × 4 with three polarity "
-    "conventions. The fix -- two of them grow an empty way -- is blocked on an "
-    "owner decision: every size 2-9 at 3.81 mm is taken, the 11P Kangnex header "
-    "(C3030059) is stock 0, and 10 + 12 puts the 12 V row at 220.28 mm, 2.48 mm "
-    "over the IO-14 90 % tripwire in tests/test_board_params.py. Strict: the "
-    "moment the sizes land this XPASSES and the marker comes off."))
 def test_no_two_12_v_terminals_share_a_size():
+    """IO-24 (M7): J301, J303 and J305 were all 3.81 × 4 with three polarity
+    conventions. J303 carries ten ways and J305 twelve for its four conductors
+    each -- every size 2-9 at 3.81 mm is taken and the 11-way header (C3030059)
+    is stock 0 -- so the 12 V row's sizes are 2, 4, 5, 7, 10, 12, each used
+    once."""
     assert repeated_sizes(D) == {}
+    assert sorted(n for _, n in row_sizes(D, TWELVE_VOLT_FACE).values()) == \
+        [2, 4, 5, 7, 10, 12]
+    for ref, n in (("J303", 10), ("J305", 12)):
+        j = D.connector(ref)
+        assert len(j.pins) == n and all(cp.net == "" for cp in j.pins[4:]), ref
 
 
 def test_two_12_v_terminals_of_one_size_are_caught():
-    """⚠️ THE MUTATIONS for the check above, on a design where the sizes are
-    distinct -- J303 grown to ten ways and J305 to twelve, the two smallest
-    sizes nothing else at 3.81 mm uses. Undo one and the check names both
-    terminals that share the size; the pre-fix netlist names all three."""
-    fixed = _grown(_grown(D, "J303", 10), "J305", 12)
-    assert repeated_sizes(fixed) == {}
-    assert shared_sizes(fixed) == set()
-    # The four conductors each carries, empty ways off: the pre-fix size.
-    four = {r: fixed.connector(r).pins[:4] for r in ("J303", "J305")}
-    one_back = fixed.replace_connector("J305", pins=four["J305"])
+    """⚠️ THE MUTATIONS for the check above. Take J305's eight empty ways off
+    and it is a 4-way again, the check names it beside J301; take J303's six
+    off as well and it names all three, the pre-IO-24 netlist."""
+    four = {r: D.connector(r).pins[:4] for r in ("J303", "J305")}
+    assert all(cp.net for pins in four.values() for cp in pins), "the conductors"
+    one_back = D.replace_connector("J305", pins=four["J305"])
     assert repeated_sizes(one_back) == {(3.81, 4): ("J301", "J305")}
     pre_fix = one_back.replace_connector("J303", pins=four["J303"])
     assert repeated_sizes(pre_fix) == {(3.81, 4): ("J301", "J303", "J305")}
+    # ...and neither mutation puts a 12 V size on the inputs row: the check
+    # above is the one that catches this defect, not shared_sizes.
+    assert shared_sizes(pre_fix) == set()
 
 
 def test_a_row_is_as_long_as_its_headers_and_the_gaps_between_them():

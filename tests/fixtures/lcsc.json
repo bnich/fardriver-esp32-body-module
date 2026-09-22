@@ -189,6 +189,13 @@
    ]
   ]
  },
+ "C157469": {
+  "footprint": null,
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGKM-3.81-10P-14-00A",
+  "package": "P=3.81mm",
+  "symbol_pins": null
+ },
  "C157470": {
   "footprint": null,
   "manufacturer": "KANGNEX",
@@ -216,6 +223,54 @@
    [
     "2",
     "2"
+   ]
+  ]
+ },
+ "C160125": {
+  "footprint": "conn-th_10p-p3_81_wj15edgrm-3_81-10p-14-00a",
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGRM-3.81-10P-14-00A",
+  "package": "Through Hole,Right Angle,P=3.81mm",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ],
+   [
+    "3",
+    "3"
+   ],
+   [
+    "4",
+    "4"
+   ],
+   [
+    "5",
+    "5"
+   ],
+   [
+    "6",
+    "6"
+   ],
+   [
+    "7",
+    "7"
+   ],
+   [
+    "8",
+    "8"
+   ],
+   [
+    "9",
+    "9"
+   ],
+   [
+    "10",
+    "10"
    ]
   ]
  },
@@ -629,6 +684,13 @@
     "A"
    ]
   ]
+ },
+ "C193771": {
+  "footprint": null,
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGKM-3.81-12P-14-00A",
+  "package": "P=3.81mm",
+  "symbol_pins": null
  },
  "C1976063": {
   "footprint": "smc_l6_9-w5_9-ls7_9-rd",
@@ -2418,6 +2480,62 @@
    [
     "9",
     "9"
+   ]
+  ]
+ },
+ "C508940": {
+  "footprint": "conn-th_wj15edgrm-3_81-12p",
+  "manufacturer": "KANGNEX",
+  "mpn": "WJ15EDGRM-3.81-12P-14-00A",
+  "package": "Through Hole,Right Angle,P=3.81mm",
+  "symbol_pins": [
+   [
+    "1",
+    "1"
+   ],
+   [
+    "2",
+    "2"
+   ],
+   [
+    "3",
+    "3"
+   ],
+   [
+    "4",
+    "4"
+   ],
+   [
+    "5",
+    "5"
+   ],
+   [
+    "6",
+    "6"
+   ],
+   [
+    "7",
+    "7"
+   ],
+   [
+    "8",
+    "8"
+   ],
+   [
+    "9",
+    "9"
+   ],
+   [
+    "10",
+    "10"
+   ],
+   [
+    "11",
+    "11"
+   ],
+   [
+    "12",
+    "12"
    ]
   ]
  },
