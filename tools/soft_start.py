@@ -67,6 +67,7 @@ pull-down path that does not exist there is reported as one. `SPEC` below is
 the specified circuit, used when no netlist can be read, and the run says
 which it used and where the two differ.
 """
+import heapq
 import math
 import pathlib
 import re
@@ -82,7 +83,7 @@ _ROOT = str(pathlib.Path(__file__).resolve().parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from tools import netlist, power_budget                        # noqa: E402
+from tools import netlist, power_budget, rules                 # noqa: E402
 
 # ── Q101 IXTA26P20P -- IXYS DS99913D (01/13): the IXTP's die in TO-263 ─────
 VTH_MIN, VTH_MAX = 2.0, 4.0      # |V_GS(th)| at 250 µA, p.1
@@ -353,6 +354,24 @@ def static_v_sg(v_pack: float, c: Circuit = SPEC) -> float:
 SPEC_ENABLE = (R_EN_TOP, R_EN_BOTTOM, C_EN)
 
 
+def level_shifter(d, switch: str = "Q101"):
+    """The grounded N-FET that pulls `switch`'s gate down -- Q105, found by what
+    it IS and not by its refdes: an N-FET whose source is on a ground net and
+    whose drain is the foot of the pull-down string.
+
+    ⚠️ One function, two callers. `enable_from` reads its gate divider and
+    `hv_node_voltages` reads the nets on its drain and gate; a second search
+    written beside either would be a second thing to keep true.
+    """
+    for p in d.parts:
+        if p.kind == "NFET" and not p.dnp:
+            low, dr = d.net_of(p.refdes, "S"), d.net_of(p.refdes, "D")
+            if low is not None and low.domain == "GND" and dr is not None \
+                    and d.net_of(switch, "G") is not None:
+                return p
+    raise ValueError("no grounded N-FET level shifter found")
+
+
 def enable_from(d, switch: str = "Q101", key_net: str = "KSW"):
     """The level shifter's gate divider as netlisted: (top, bottom, cap).
 
@@ -362,16 +381,7 @@ def enable_from(d, switch: str = "Q101", key_net: str = "KSW"):
     filter. Raises if the shifter's gate has no divider -- a gate nobody drives.
     """
     parts = {p.refdes: p for p in d.parts if not p.dnp and len(p.pins) == 2}
-    shifter = None
-    for p in d.parts:
-        if p.kind == "NFET" and not p.dnp:
-            low, dr = d.net_of(p.refdes, "S"), d.net_of(p.refdes, "D")
-            if low is not None and low.domain == "GND" and dr is not None \
-                    and d.net_of(switch, "G") is not None:
-                shifter = p
-                break
-    if shifter is None:
-        raise ValueError("no grounded N-FET level shifter found")
+    shifter = level_shifter(d, switch)
     gate = d.net_of(shifter.refdes, "G")
     if gate is None:
         raise ValueError(f"{shifter.refdes} has no gate net")
@@ -419,6 +429,280 @@ def enable_delay_s(v_pack: float, en=SPEC_ENABLE) -> float:
         return math.inf
     tau = (top * bottom / (top + bottom)) * c_en
     return -tau * math.log(1.0 - Q105_VTH_MAX / v_final)
+
+
+# ── IO-29: what voltage each node of the 84 V section sits at ──────────────
+# The routing clearance between two 84 V nets is the voltage BETWEEN THEM on
+# IPC-2221B Table 6-1 (`tools/route.py`), so the router needs each node's DC
+# voltage referred to GND. It is derived here, where the gate network already
+# lives, and never typed into `route.py`: a resistor changed in the netlist
+# moves the node, the IPC band it lands in and the clearance with it.
+#
+# ⛔ DERIVED PER NODE, never per pair. `route.pair_clearance` takes the
+# difference; nothing here knows which pairs exist on the board.
+
+#: A plain silicon rectifier's forward drop in the 84 V section, volts, as an
+#: upper bound. D201 is the SMA 1N4007 (`M7`, netlist): V_FM 1.1 V at the full
+#: 1 A, and the netlist has it carrying 0.07 A, so the real drop is well under
+#: it. ⛔ NOT a band on one node: the drop is an operating POINT of its own
+#: (`operating_points` walks 0 V and this), because a node is only ever at one
+#: voltage at a time and a band would make two nets a fuse apart -- literally
+#: the same copper through F201 -- read as the band's own width apart.
+DIODE_VF_MAX = 1.1
+
+#: Part kinds a DC path crosses with nothing across them at these currents: a
+#: choke winding (40 mΩ), a fuse, a solder link. The same set `rules` walks a
+#: clamp's return through. ⚠️ A DC short is NOT an AC one -- the chokes are
+#: exactly what puts the 84 V section's switching and surge swing on
+#: `HV_C1_N` / `HV_C2_N`, which is why those two are 84 V-section copper and
+#: keep the full HV clearance to GND although this model has them at 0 V DC.
+_DC_SHORT = ("L", "FUSE", "LINK", "CMCHOKE")
+#: The 84 V section's own domain tag in the netlist: the walk stays inside it,
+#: so a seed on GND reaches `HV_C1_N` through L101's second winding and stops
+#: rather than wandering out along the 12 V rail.
+_HV_DOMAIN = "84V"
+
+
+def pack_ceiling_v(d=None) -> float:
+    """The pack node's do-not-exceed, volts -- 160 V, including transients.
+
+    ⛔ Not typed: it is the lowest input rating among the fitted converters the
+    pack feeds, which is what the rating means. `netlist` gives each brick a
+    `v_max` and says of U201's that "160 V is a hard ceiling, transients
+    included". A converter swapped for a 100 V part moves this figure, the IPC
+    band every HV-to-low-voltage pair lands in, and the clearance with it.
+    """
+    d = d or netlist.current()
+    rated = [p.v_max for p in d.parts
+             if p.kind == "CONVERTER" and not p.dnp and p.v_max
+             and any(n.domain == _HV_DOMAIN for n in d.nets_of(p.refdes))]
+    if not rated:
+        raise ValueError("no fitted converter on the 84 V section: nothing rates the pack node")
+    return min(rated)
+
+
+def operating_points(d=None) -> tuple[tuple[float, bool, bool, float], ...]:
+    """Every (pack volts, key on, hold-up charged, diode drop) a clearance is
+    judged at. Each one is a single world in which every node has ONE voltage,
+    which is what lets a pair's difference be exact.
+
+    ⚠️ NOT the ramp corners. A ramp has one worst case; a clearance is about the
+    voltage standing across a gap, and the pair that is 13 V apart running can
+    be a whole pack apart parked. The pack voltages are the operating range end
+    to end:
+
+      * `V_CONVERTER_MIN` 43 V -- the converters' input floor, the lowest pack
+        voltage at which the module still runs.
+      * `V_LVC` 60 V -- the pack's own low-voltage cutoff.
+      * `V_PACK_FULL` 84 V -- a full pack.
+      * `pack_ceiling_v()` 160 V -- the do-not-exceed, transients included.
+
+    and each is walked in three states:
+
+      * **key on** -- Q101 conducting, everything downstream at pack voltage.
+      * **key off, settled** -- ⚠️ THE HARSH ONE on this board: parked with the
+        XT90-S mated, the whole pack stands between `HV_BPLUS` and everything
+        downstream of the switch, for days, which is when contamination and
+        humidity get their chance. It is paired with the 160 V ceiling too,
+        because the ceiling is a transient the pack may show at any time and a
+        clearance answers instantaneously.
+      * **key off, hold-up still charged** -- the ride-out (237 ms, plan
+        §3.2.2). ⭐ D201 BLOCKS, so `HV_C2_HOLD` stays near pack voltage while
+        `HV_SW` has already collapsed. Without this world the two read 1.1 V
+        apart and the copper between them would relax to 0.1 mm, when standing
+        the full difference is the blocking diode's entire job.
+
+    and at both ends of the rectifier's forward drop, 0 V and `DIODE_VF_MAX` --
+    a point, not a band, so a pair either side of the fuse that follows it is
+    exactly equal instead of a drop apart.
+
+    ⚠️ The TRANSITIONS between these states are not walked, and do not need to
+    be: every node moves monotonically from one state to the next, so the
+    widest difference a pair reaches in transit is already at one of the
+    endpoints. The hold-up is the one node that leaves that envelope, and it
+    has a state of its own above.
+    """
+    return tuple((v, key_on, held, vf)
+                 for v in (V_CONVERTER_MIN, V_LVC, V_PACK_FULL, pack_ceiling_v(d))
+                 for key_on, held in ((True, False), (False, False), (False, True))
+                 for vf in (0.0, DIODE_VF_MAX))
+
+
+def _resistor_edges(ix, net):
+    """(other net, part) for every fitted two-pin resistor on `net`."""
+    for other, part, _flow, _a, _b in ix.adj[net]:
+        if part.kind == "R" and not part.dnp and len(part.pins) == 2:
+            yield other, part
+
+
+def _terminals(ix, start, known):
+    """{known net: ohms} for the nearest known node on every resistor path out
+    of `start`, the path STOPPING at the first known node it meets.
+
+    Stopping is the point: past a known node the string is somebody else's
+    divider, and counting it would put `D13_PD_MID`'s terminal at `HV_BPLUS`
+    through R110 as well as at the gate it actually divides from.
+    """
+    best, seen, queue = {}, {start: 0.0}, [(0.0, start)]
+    while queue:
+        r, net = heapq.heappop(queue)
+        if r > seen.get(net, math.inf) + 1e-9:
+            continue
+        if net != start and net in known:
+            best[net] = min(best.get(net, math.inf), r)
+            continue
+        for other, part in _resistor_edges(ix, net):
+            nr = r + _value(part)
+            if nr < seen.get(other, math.inf):
+                seen[other] = nr
+                heapq.heappush(queue, (nr, other))
+    return best
+
+
+def _resistive_node_v(ix, net, known):
+    """The DC voltage of a node that sits in a string of resistors between nodes
+    whose voltages are known: the conductance-weighted mean of the nearest known
+    node on each path out of it.
+
+    ⛔ A SERIES MID ONLY, and the function refuses anything else rather than
+    guessing: a node with three resistors on it is a mesh, and the answer would
+    then depend on branches this walk does not solve. Every such node in this
+    design is a two-resistor join written for voltage rating -- R101A/R101B,
+    R112A/R112B, R107/R108 -- so the guard costs nothing and closes the class.
+
+    ⚠️ Branches that dead-end in a capacitor or a high-impedance pin draw no DC
+    and are correctly ignored: the walk finds no known node down them.
+    """
+    edges = list(_resistor_edges(ix, net))
+    if len(edges) != 2:
+        raise ValueError(f"{net}: {len(edges)} resistor(s) on it -- a node voltage can only "
+                         f"be read off a SERIES string, not a mesh")
+    terms = _terminals(ix, net, known)
+    if len(terms) < 2:
+        raise ValueError(f"{net}: its resistor string reaches {len(terms)} known node(s); "
+                         f"a divider mid needs two")
+    g = {n: 1.0 / r for n, r in terms.items() if r > 0.0}
+    return sum(known[n] * gi for n, gi in g.items()) / sum(g.values())
+
+
+def hv_node_voltages(d=None, v_pack: float = V_PACK_FULL, key_on: bool = True,
+                     held: bool = False, vf: float = DIODE_VF_MAX,
+                     switch: str = "Q101", key_net: str = "KSW") -> dict:
+    """{net: volts} for every node of the 84 V section in ONE world -- one pack
+    voltage, one key state, one hold-up state, one rectifier drop -- referred to
+    GND. One value per node, so a pair's difference is exact.
+
+    How each node is reached, none of it by refdes except the switch itself:
+
+    * the switch's SOURCE is the fused B+ tap -- `v_pack`, key or no key.
+    * the KEY net is the key switch's output: `v_pack` closed, and 0 open,
+      where the two ≥ 330 kΩ strings on it are the only things holding it.
+    * the switch's DRAIN is `v_pack` with the key on and 0 with it off: D14's
+      bias-OFF means no key, no conduction, and the bulk caps end at 0.
+    * the switch's GATE is the source less `static_v_sg` with the key on --
+      R110 against the R101 string, clamped by D102 -- and AT the source with
+      it off, which is R110 doing the holding.
+    * the level shifter's DRAIN, the foot of the pull-down string, is ~0 with
+      the key on (Q105 saturated, ~0.13 mA through 540 kΩ) and at the gate's
+      own voltage with it off, no current flowing in the string.
+    * its GATE is `enable_level_v` -- the netlisted divider off the key net,
+      clamped by D106 -- and 0 with the key off.
+    * everything else in the 84 V domain is then walked to: `_DC_SHORT` parts
+      carry a node's voltage across unchanged (the chokes' windings, the fuse),
+      a rectifier drops `vf` anode to cathode, and GND seeds the returns, which
+      reach `HV_C1_N` / `HV_C2_N` through each choke's second winding at 0 V DC.
+    * what the walk cannot reach is a divider mid, read off the netlist's own
+      resistor values by `_resistive_node_v`.
+
+    ⭐ `held` IS THE RIDE-OUT, and it is not a refinement. D201 blocks, so with
+    the key off C2 keeps `HV_C2_HOLD` near pack voltage (237 ms, plan §3.2.2)
+    while `HV_SW` has already collapsed -- which is the whole point of the part.
+    Without that world the two read one diode drop apart and the copper between
+    them would relax to 0.1 mm, when standing the full difference is the
+    blocking diode's job. `held` has no effect with the key on, where the diode
+    conducts anyway.
+
+    ⚠️ 0 V DC is not 0 V of clearance. `HV_C1_N` / `HV_C2_N` sit at the pack's
+    negative and this returns 0 for them, but they are 84 V-section copper: the
+    choke that makes them 0 V DC is exactly what puts the section's HF and
+    surge swing on them, and `route` gives them the full HV figure to anything
+    outside the class for that reason.
+    """
+    d = d or netlist.current()
+    ix = rules._index(d)
+    gate = d.net_of(switch, "G")
+    source = d.net_of(switch, "S")
+    drain = d.net_of(switch, "D")
+    if None in (gate, source, drain):
+        raise ValueError(f"{switch} has a pin on no net")
+    shifter = level_shifter(d, switch)
+    pd_net = d.net_of(shifter.refdes, "D")
+    en_net = d.net_of(shifter.refdes, "G")
+    circuit = circuit_from(d, switch)
+    enable = enable_from(d, switch, key_net)
+
+    v_sg = static_v_sg(v_pack, circuit) if key_on else 0.0
+    v = {source.name: float(v_pack),
+         key_net: float(v_pack if key_on else 0.0),
+         drain.name: float(v_pack if key_on else 0.0),
+         gate.name: float(v_pack - v_sg)}
+    v[pd_net.name] = 0.0 if key_on else v[gate.name]
+    v[en_net.name] = float(enable_level_v(v_pack, enable) if key_on else 0.0)
+    for n in d.nets:
+        if n.domain == "GND":
+            v.setdefault(n.name, 0.0)
+
+    # the walk: out of every known node, across what carries a voltage
+    # unchanged or drops a rectifier, staying inside the 84 V domain.
+    domain = {n.name: n.domain for n in d.nets}
+    queue = [n for n in v]
+    while queue:
+        net = queue.pop()
+        here = v[net]
+        for other, part, flow, _a, _b in ix.adj[net]:
+            if other in v or domain.get(other) != _HV_DOMAIN or part.dnp:
+                continue
+            kind = rules._kind(part)
+            if kind in _DC_SHORT:
+                v[other] = here
+            elif part.kind == "D" and flow == "out":        # anode here, cathode there
+                if held and not key_on:
+                    # the ride-out: the cathode is where the key-ON walk left
+                    # it, because C2 is still holding it there.
+                    v[other] = float(v_pack - vf)
+                else:
+                    # the drop is only where current flows: a rectifier whose
+                    # anode sits at 0 is not conducting and drops nothing.
+                    v[other] = here - vf if here > 0.0 else here
+            elif part.kind == "D" and flow == "in":         # cathode here, anode there
+                v[other] = here + vf
+            else:
+                continue                # a zener or TVS stands off; a cap is not a DC path
+            queue.append(other)
+
+    for n in d.nets:
+        if n.domain == _HV_DOMAIN and n.name not in v:
+            v[n.name] = _resistive_node_v(ix, n.name, v)
+    return v
+
+
+def hv_node_ranges(d=None) -> dict:
+    """{net: (volts at each of `operating_points`, in that order)} for every
+    node of the 84 V section -- what a pairwise clearance is read off.
+
+    ⛔ A VECTOR, not a min/max envelope, and the difference matters. Two nets
+    that move together are 0 V apart at every point; envelopes would report
+    them a whole pack apart, because one is low in one world and the other high
+    in another. `HV_SW` and `KSW` are exactly that pair, and so are the two
+    ends of F201.
+    """
+    d = d or netlist.current()
+    points = operating_points(d)
+    out = {}
+    for v_pack, key_on, held, vf in points:
+        for net, volts in hv_node_voltages(d, v_pack, key_on, held, vf).items():
+            out.setdefault(net, []).append(volts)
+    return {n: tuple(vs) for n, vs in out.items() if len(vs) == len(points)}
 
 
 def miller_estimate_s(v_pack: float, c: Circuit = SPEC, fet: Fet = NOMINAL,

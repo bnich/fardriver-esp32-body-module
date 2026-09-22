@@ -611,3 +611,133 @@ def test_over_in_the_text_means_exit_1_and_exit_1_means_over_in_the_text(monkeyp
     over = [l for l in out.splitlines() if "⛔ OVER" in l]
     assert over and all("the derated DC line" in l or "allowed there" in l for l in over)
     assert any(f.startswith("key off, 84 V") for f in ss.assess())
+
+
+# --- IO-29: the node voltages the routing clearances are read off --------------------
+@pytest.fixture(scope="module")
+def nodes():
+    from tools import netlist
+    return ss.hv_node_ranges(netlist.current())
+
+
+def _at(nodes, net, v_pack, key_on, held=False, vf=ss.DIODE_VF_MAX):
+    from tools import netlist
+    points = ss.operating_points(netlist.current())
+    return nodes[net][points.index((v_pack, key_on, held, vf))]
+
+
+def test_the_pack_ceiling_is_the_converters_rating_and_not_a_typed_160():
+    """⛔ 160 V is the do-not-exceed because that is what U201 and U202 are
+    rated to take, transients included -- so it is READ OFF THEM. A brick
+    swapped for a 100 V part moves the ceiling, the IPC band and every
+    HV-to-low-voltage clearance with it."""
+    from tools import netlist
+    d = netlist.current()
+    assert ss.pack_ceiling_v(d) == 160.0
+    assert ss.pack_ceiling_v(d) == min(d.part("U201").v_max, d.part("U202").v_max)
+    lower = d.replace_part("U202", v_max=100.0)
+    assert ss.pack_ceiling_v(lower) == 100.0
+
+
+def test_every_operating_point_is_one_world():
+    """A point is (pack V, key on, hold-up charged, diode drop) -- four packs,
+    three states, two ends of the rectifier's drop = 24."""
+    from tools import netlist
+    points = ss.operating_points(netlist.current())
+    assert len(points) == 24 == len(set(points))
+    assert (84.0, True, False, 0.0) in points and (160.0, False, True, 1.1) in points
+
+
+def test_the_pack_rail_nodes_sit_at_the_pack_and_the_returns_at_zero(nodes):
+    """HAND: `HV_BPLUS` is the fused B+ tap, live whatever the key does, so it
+    is the pack voltage at all 24 points. `HV_SW`, `HV_C1_P`, `HV_C2_P` and
+    `KSW` are downstream of Q101 or of the key switch: the pack with the key
+    on, 0 with it off. `HV_C1_N` / `HV_C2_N` are the pack's negative through
+    each choke's second winding: 0 V DC always."""
+    assert set(nodes["HV_BPLUS"]) == {43.0, 60.0, 84.0, 160.0}
+    for net in ("HV_SW", "HV_C1_P", "HV_C2_P", "KSW"):
+        assert _at(nodes, net, 84.0, True) == 84.0, net
+        assert _at(nodes, net, 84.0, False) == 0.0, net
+        assert _at(nodes, net, 160.0, True) == 160.0, net
+    for net in ("HV_C1_N", "HV_C2_N"):
+        assert set(nodes[net]) == {0.0}, net
+
+
+def test_the_gate_network_nodes_are_the_divider_arithmetic(nodes):
+    """HAND, at a full 84 V pack with the key on:
+
+      * `D13_GATE` = 84 − V_SG, V_SG = min(15 V zener, 84 × 100k/(100k+540k))
+        = min(15, 13.125) = 13.125 → **70.875 V**. The netlist says the same
+        thing as −13.1 V of V_GS.
+      * `D13_PD` = 0: Q105 saturated.
+      * `D13_PD_MID` sits between them on 270 k + 270 k → **35.44 V**.
+      * `D13_EN` = 84 × 100k/(998k+100k) = **7.65 V**, under D106's 10 V clamp;
+        the netlist's "7.6 V at 84 V".
+      * `D13_EN_MID` is the join of the two equal 499 k halves between `KSW`
+        and `D13_EN` → (84 + 7.65)/2 = **45.83 V**.
+      * `KEY_SENSE_MID` is the join of the 2 × 165 k top with 10 k below →
+        84 × 175/340 = **43.24 V**.
+
+    and with the key OFF no current flows in any of those strings, so the
+    pull-down string floats to the gate, which R110 holds at the source."""
+    assert _at(nodes, "D13_GATE", 84.0, True) == pytest.approx(70.875, abs=0.01)
+    assert _at(nodes, "D13_PD", 84.0, True) == 0.0
+    assert _at(nodes, "D13_PD_MID", 84.0, True) == pytest.approx(35.44, abs=0.01)
+    assert _at(nodes, "D13_EN", 84.0, True) == pytest.approx(7.65, abs=0.01)
+    assert _at(nodes, "D13_EN_MID", 84.0, True) == pytest.approx(45.83, abs=0.01)
+    assert _at(nodes, "KEY_SENSE_MID", 84.0, True) == pytest.approx(43.24, abs=0.01)
+    for net in ("D13_GATE", "D13_PD", "D13_PD_MID"):
+        assert _at(nodes, net, 84.0, False) == 84.0, net
+    for net in ("D13_EN", "D13_EN_MID", "KEY_SENSE_MID"):
+        assert _at(nodes, net, 84.0, False) == 0.0, net
+
+
+def test_the_zener_clamps_the_gate_drive_at_the_ceiling(nodes):
+    """HAND at 160 V: 160 × 100k/640k = 25 V, over D102's 15 V, so V_SG clamps
+    and `D13_GATE` is 160 − 15 = **145 V**. ⚠️ 145 is 5 V inside IPC-2221B's
+    101-150 V row, so the gate-to-pull-down pair gets 0.6 mm and not 1.25 --
+    derived, so a higher ceiling moves it by itself."""
+    assert _at(nodes, "D13_GATE", 160.0, True) == 145.0
+    assert _at(nodes, "D13_EN", 160.0, True) == ss.V_EN_CLAMP == 10.0
+
+
+def test_the_hold_up_node_does_not_follow_the_key_down(nodes):
+    """⭐ D201 blocks. With the key off and C2 still charged the hold-up node
+    is at pack voltage less the rectifier's drop while `HV_SW` is already at 0,
+    which is the whole point of the part -- and it is the difference the copper
+    between them has to stand."""
+    assert _at(nodes, "HV_C2_HOLD", 160.0, False, held=True) == pytest.approx(158.9)
+    assert _at(nodes, "HV_SW", 160.0, False, held=True) == 0.0
+    assert _at(nodes, "HV_C2_HOLD", 160.0, False, held=False) == 0.0
+
+
+def test_the_two_ends_of_the_fuse_are_never_a_diode_apart(nodes):
+    """⛔ The reason the rectifier's drop is an operating POINT and not a band
+    on one node: F201 shorts `HV_C2_HOLD_IN` to `HV_C2_HOLD`, so they are equal
+    at every point. A band would have made them a drop apart -- 1.1 V of
+    clearance demanded between two ends of the same copper."""
+    assert nodes["HV_C2_HOLD_IN"] == nodes["HV_C2_HOLD"]
+
+
+def test_a_node_in_a_mesh_is_refused_rather_than_guessed():
+    """⛔ `_resistive_node_v` reads a SERIES string. Hang a third resistor on
+    `D13_PD_MID` and it is a mesh this walk does not solve, so it raises."""
+    from tools import netlist
+    d = netlist.current()
+    # R476 is LOGIC's KEY_SENSE series resistor -- nothing to do with this
+    # string, which is the point: a third arm from anywhere makes it a mesh.
+    d = d.replace_net("D13_PD_MID", pins=d.net("D13_PD_MID").pins + (("R476", "2"),))
+    with pytest.raises(ValueError, match="SERIES string"):
+        ss.hv_node_voltages(d)
+
+
+def test_a_divider_mid_moves_with_its_resistors():
+    """⛔ Not typed: halve the lower arm of the IN-12 divider and the mid moves
+    to 84 × (82.5 + 10)/(165 + 82.5 + 10) = 30.2 V by itself."""
+    from tools import netlist
+    d = netlist.current()
+    base = ss.hv_node_voltages(d, 84.0, True)["KEY_SENSE_MID"]
+    moved = ss.hv_node_voltages(d.replace_part("R108", value="82k5"),
+                                84.0, True)["KEY_SENSE_MID"]
+    assert base == pytest.approx(43.24, abs=0.01)
+    assert moved == pytest.approx(84.0 * 92.5 / 257.5, abs=0.01)
