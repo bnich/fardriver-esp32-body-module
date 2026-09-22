@@ -5,7 +5,7 @@ Parent guidance: `../CLAUDE.md` — repo map, conventions, public-repo hygiene, 
 ## What this is
 
 Design stage — no firmware, no module hardware built. `docs/plan.md` is the architecture and the
-decision log (D1–D27); its header carries the critical path. `docs/bom.md` **owns procurement** of
+decision log (D1–D27, with D27's sub-decisions IO-1…IO-24); its header carries the critical path. `docs/bom.md` **owns procurement** of
 what the owner buys: the breadboard parts, the parts JLC cannot place (hand-soldered), and the parts
 ordered loose with the boards and fitted by the owner. Change a part there first, then the plan
 section that line's Notes names. The LCSC part JLC places for each part lives in `tools/netlist.py`.
@@ -90,7 +90,10 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   the overload figure: 0603 is 75 V, 0805 150 V, 1206 200 V. `VR-UNDER` checks it against the node,
   and `VR-POWER` its V²/R against its package (a logic pin's drive capped at 40 mA ESP32, 25 mA MCP).
 - **A TVS states `v_clamp`**, its datasheet clamping voltage: `VR-CLAMP` holds every part it
-  protects to that figure (an `MCP23017` pin to its 20 mA I<sub>IK</sub>). A TVS without one fails.
+  protects to that figure (an `MCP23017` pin to its 20 mA I<sub>IK</sub>). A TVS without one fails —
+  and the figure itself is held to `DATASHEET_V_CLAMP` (`rules.py`, one `(mpn prefix, volts, page)`
+  row per TVS) by `VR-DATASHEET`, the way `v_max` is held to `DATASHEET_V_MAX`: a flattering clamp
+  typed against the sheet fails, and a TVS with no row in the table fails.
 - **`VR-CLAMP`**, **`VR-POWER`**, **`PULL-DIR`** (a contact to ground needs a pull-up) and
   **`BUS-ORDER`** (a power bus reads the same from both ends and never puts two rails side by side)
   are each proven to fire on a mutation of the real netlist: `tests/test_rules_mutations.py`, and
@@ -114,9 +117,16 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   first sample that a reversed housing will not seat. ⛔ **"VH" clones are rated 3 A**: CAX
   `VH-4A-HT` (C5453989) lists identically and is a 2.8× overload at 8.47 A — genuine JST only, the
   Blue Sea failure shape. ⚠️ **The brass M3×30 standoffs (C775781) SET the 30.0 mm POWER → OUTPUTS
-  gap** — bonded to GND at the OUTPUTS end only (IO-21), on a copper-free pad at POWER, so
-  `PWR-OUT`'s 16 AWG GND stays the sole sized return; the nylon TP-11 beside PWR-LOGIC / STACK is
-  deliberately short and shimmed so the connectors keep setting that 11.04 mm gap. `integrity`
+  gap** — bonded to GND at the OUTPUTS end only (IO-21), on a copper-free pad at POWER, so a brass
+  post never becomes a *third*, unrated return. ⭐ **The 12 V return is SHARED (IO-23):** every load
+  is on OUTPUTS and returns to `U201` on POWER, and the 8.47 A divides by conductance between
+  `PWR-OUT`'s one 16 AWG GND contact and `CTRL`'s **13 ribbon grounds** in parallel — the ribbon
+  carries ~79 %, ~0.52 A per 28 AWG conductor against a 1.5 A contact rating. Both are rated for
+  their share, and the 13 grounds are what make an open loom crimp survivable (0.65 A per conductor
+  with the whole return on the ribbon; 4.24 A each if there were two). ⛔ Never thin CTRL's grounds
+  — and never write that the loom is the sole return. The nylon TP-11 beside PWR-LOGIC / STACK is
+  deliberately short of the 11.04 mm stop and fitted **by measured length (10.94–11.04 mm), with no
+  shim**, so the connectors keep setting that gap. `integrity`
   checks each kind against what is true of it: a pair's halves face each other, mirrored; a cable's
   halves match contact for contact, unmirrored. ⛔ **HV-LINK is gone** — POWER is one board, so no
   84 V crosses an interface. ⛔ **STACK's pinout is derived from `_STACK_SIGNALS`** and has been
@@ -211,14 +221,20 @@ a 2.6× margin. ⛔ **This is the only place in the design where a firmware beha
 inside its rating — never write it as a feature, and never let a change lengthen the decay or raise
 the tap current without re-running `tools/soft_start.py`.**
 
-- ✅ **A watchdog reset, or any restart, sheds the load — because every expander's `RESET` rides the
-  S3's `EN` net (IO-22, 2026-09-21).** An S3 reset resets the chip that commands every aux output;
-  every bit returns to an input and the drivers' own pull-downs take over (D14). ⛔ Before IO-22 the
-  expanders' resets were pull-ups to `V3P3` and nothing else — an S3 restart left them driving what
-  they last drove, and `V3P3` is the last rail to fall at key-off, so nothing else reset them either.
-  `EN` reaches expander #3 down a 29th STACK signal. **The exposure is narrowly a hang that holds
-  the outputs on and does not trip the watchdog**, through the **shortest** hold — ~300 ms at the
-  LVC with a slow FET, not the 774 ms fast-FET figure.
+- **Every expander's `RESET` rides the S3's `EN` net (IO-22, 2026-09-21)**, expander #3's down a 29th
+  STACK signal. Whatever holds the S3 in reset **through `EN`** — the power-up RC, the programmer's
+  pulse at `J408`, the supervisor `U406` if it is ever fitted — holds all three expanders with it, and
+  they leave reset after the S3 does: no expander can come up driving, and every bit returns to an
+  input with the drivers' own pull-downs taking over (D14). ⛔ Before IO-22 the resets were pull-ups
+  to `V3P3` and nothing else, and `V3P3` is the last rail to fall at key-off.
+  ⛔ **`EN` is an INPUT the S3 cannot drive** (ESP32-S3 datasheet Table 2-10; the netlist's `EN`
+  source says so), so **a watchdog or software restart resets NOTHING on this net** — the expanders
+  keep driving what they last drove through the reboot, and boot-to-first-write (~0.5 s, unmeasured)
+  cannot beat the **shortest** hold, ~300 ms at the LVC with a slow FET (774 ms is the fast-FET
+  figure). **The exposure is therefore a hang OR a watchdog / software reboot inside the hold** —
+  162 W against the 138 W line for the rest of the decay. ⬜ **Closing the reboot case needs a reset
+  the S3 itself drives** (a GPIO — all 32 are spent — or a supervisor that pulls `EN`): an owner
+  decision, open. Never write that "any restart sheds the load".
 - `tools/soft_start.py` gates on the shed case and prints the un-shed bound beside it as the residual
   risk it is. ⬜ **M17** scopes a deliberate key-off under load.
 

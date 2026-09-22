@@ -109,11 +109,13 @@ EasyEDA Pro project. No board is laid out yet.
 - ⛔ **One firmware behaviour holds a part inside its rating, and it is the only one.** `Q101`, the
   soft-start switch, stays on for ~0.8 s after key-off; with all eight aux outputs still on it would
   carry a 162 W bound against a 138 W derated DC SOA line. **The firmware releases every aux output
-  when key sense goes inactive**, which brings it to ~53 W. A watchdog reset or any restart sheds the
-  load too, because **every expander's `RESET` rides the S3's `EN` net** — an S3 reset resets the chip
-  that commands every aux output, and the drivers' own pull-downs take over. The exposure is a hang
-  that holds the outputs on without tripping the watchdog, through the shortest hold (~300 ms at the
-  cutoff voltage with a slow FET). `tools/soft_start.py` gates on it.
+  when key sense goes inactive**, which brings it to ~53 W. **Every expander's `RESET` rides the
+  S3's `EN` net**, so a reset that arrives through `EN` — power-up, the programmer, a fitted
+  supervisor — resets the chip that commands every aux output and the drivers' own pull-downs take
+  over. `EN` is an input the S3 cannot drive, so a watchdog or software restart does not reach it:
+  the exposure is a hang **or a reboot** inside the hold, through the shortest hold (~300 ms at the
+  cutoff voltage with a slow FET), and closing the reboot case needs a reset the S3 itself drives —
+  an open owner decision. `tools/soft_start.py` gates on the shed case.
 - **Service.** No USB port: first flash, the console and recovery when OTA fails run over UART0, on a
   Tag-Connect TC2030-NL land on LOGIC — bare pads in the ESP-Prog's order, reached with a
   `TC2030-IDC-NL` cable ([BOM](docs/bom.md) A8). Later updates go over WiFi.
@@ -135,7 +137,10 @@ EasyEDA Pro project. No board is laid out yet.
   controller-row signals cross on a **24-way shrouded IDC ribbon**, every signal flanked by ground.
   A keyed shell that cannot seat reversed replaces the mated pairs' read-the-same-from-both-ends
   contact order, and **brass M3×30 standoffs set that gap at 30.0 mm** — bonded to ground at the
-  OUTPUTS end only, so the cable's 16 AWG ground stays the only sized return between the boards.
+  OUTPUTS end only, so a brass post is never an unrated third return. **The 12 V return is shared
+  by conductance between the loom's 16 AWG ground and the ribbon's 13 grounds** (about 21 % / 79 %),
+  both rated for their share; the 13 grounds are what let the return survive an open loom crimp
+  (D27/IO-23).
 - ✅ **The cavity is measured, and the boards are shaped to it.** M18 came back **260 mm along × 70
   across × 100 tall** (owner, 2026-09-20). The 48 × 219 mm boards did not go in it — they needed
   74.65 mm across — so **IO-17** re-shapes them to the measurement. That inverts IO-14's search
@@ -145,8 +150,10 @@ EasyEDA Pro project. No board is laid out yet.
   then stands the width 1.0 mm clear of a packing discontinuity — re-derived at **40.84 mm** after
   the cabled crossings reshaped POWER's pack: its top face falls 6.90 mm there, because `C207` and
   `J202` share one shelf at exactly that width. The result is **41.84 × 242.0 mm**:
-  `python3 -m tools.board_fit` closes every area, pack and row budget on it (row 18.6 %, pack 10.9 %,
-  density 16.2 % of margin) and derives the stack at **67.3 mm of 94.0 available**. The cavity that
+  `python3 -m tools.board_fit` closes every area, pack and row budget on it (pack 10.9 % and density
+  16.2 % of margin; every row keeps its 10 % except the 12 V row, which stands at 91.0 % of the board
+  — the one stated exception, D27/IO-24, bought to give every 12 V terminal its own size) and derives
+  the stack at **67.3 mm of 94.0 available**. The cavity that
   implies is **256.0 mm along × 68.49 across × 73.3 tall**, inside the measurement by **4.00, 1.51
   and 26.7 mm**. ⚠️ **Width is the axis with least room** — 1.51 mm, and 19.65 mm of the 68.49 is the
   plug-and-bend room in front of the connector face, so anything that deepens a harness plug spends

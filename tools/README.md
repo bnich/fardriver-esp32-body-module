@@ -115,7 +115,9 @@ out from the netlist's own heights:
   fails a "sets" pillar that disagrees with a chosen connector pair's mated height.
   `standoff_problems` holds the table's structure: neighbouring decks only, one pillar per gap. A
   standoff whose `seating` is `"shimmed"` is deliberately short so a connector pair keeps setting
-  its gap, and is reported, not failed;
+  its gap, and is reported, not failed — the TP-11 is fitted **by measured length, with no shim**
+  (10.94–11.04 mm against the 11.04 mm stop), and a shim in the table is bounded by
+  `gap − standoff` so a 2.4 mm nut booked as a 0.5 mm washer fails;
 - a height that is `NaN`, negative or missing is a **failure**, never a short part;
 - every unconfirmed height is listed, and the ones that set a gap are named (`load_bearing`);
 - a bottom-side part and a tall part beneath it share a gap only by standing side by side, so each
@@ -196,8 +198,13 @@ copper**, never by refdes. It prints three cases and says which one the gates us
 - **NOMINAL** — IO-2's eight channels at 1 A each, **8.47 A**, and the converter, choke and tap fuse
   against their derates. ⛔ Never call this "worst case": it is not the ceiling.
 - **LIMITED** — every limiter at its upper threshold, ~11.4 A, over the choke's and the fuse's
-  derates by design. That is eight simultaneous output faults, and a fast-blow fuse opening on it is
-  the fuse working.
+  derates by design: eight simultaneous output faults. ⚠️ **The fuse does not bound this case** —
+  the `KLKD003` holds 100 % indefinitely and opens 135 %+ only within an hour. What bounds a
+  sustained 12 V-side overload is the brick's own **OCP CEILING**, 12.75–18.75 A out (102–150 % of
+  rating), which the tool derives as 2.83–4.17 A at the choke — **94–139 % of its 3 A** — with the
+  time at that current stated (indefinite at the low end, until the brick's over-temperature trip;
+  up to 60 min at the high end). The tap fuse is a short-circuit device for the 84 V side (~200 A
+  prospective), and the tool says so.
 - **SHED** — every aux channel released, which the firmware does at key-off (IO-16). This is the load
   `soft_start` charges `Q101`'s key-off decay with. ⚠️ The buck's standing draw stays in it: `U305`'s
   `EN` is tied to its own `PVIN`, so no firmware can release the 5 V rail.
@@ -231,10 +238,12 @@ CONTRACT (IO-16):** the firmware releases every aux output when `KEY_SENSE` goes
 that hold, so the decay carries the base load plus the 5 V buck's standing draw — which its
 `EN`-to-`PVIN` tie makes unsheddable — and **this part's SOA margin depends on that firmware
 behaviour**. The un-shed case is printed beside the gate as the **residual risk** it is: hold the
-outputs on through the decay and the bound is over the line again. A reset is not that exposure —
-every expander's `RESET` rides the S3's `EN` net (IO-22), so an S3 reset resets the chip that commands
-the aux outputs and the drivers' pull-downs take over; a hang that holds the outputs on without
-tripping the watchdog is what is left, through the shortest hold (~300 ms at the LVC, slow FET). `key_off_decay()`
+outputs on through the decay and the bound is over the line again. Every expander's `RESET`
+rides the S3's `EN` net (IO-22), so a reset that arrives **through `EN`** — power-up, the programmer,
+a fitted supervisor — resets the chip that commands the aux outputs and the drivers' pull-downs take
+over; but `EN` is an input the S3 cannot drive, so a watchdog or software restart does not reach it,
+and the exposure is a hang **or a reboot** inside the hold, through the shortest hold (~300 ms at the
+LVC, slow FET). `key_off_decay()`
 integrates the decay beside the bound, which lands a little under it and puts the equal-energy pulse
 **past the SOA table's 100 ms row**, so the DC line is the right row and not a stand-in for a
 missing one. The `KeyOff` docstring says what a further refinement would take: a converter
@@ -249,8 +258,11 @@ python3 -m tools.layout_rules
 The generated PCBs carry one board-wide clearance, 0.2 mm: the record form of an editor-made net
 class is not known from any file here, and a guessed record can corrupt the project. Copper at pack
 voltage needs **1.25 mm** (IPC-2221B B2, 151–300 V: the 160 V do-not-exceed). This lists, per board,
-every net that can sit at pack voltage — typed 84 V, or joined to one through copper, a switch, a
-choke or a diode — as the net class **HV**. `build_project.py` writes the same text to
+every net that can sit at pack voltage — typed 84 V, DC-joined to one through copper, a switch, a
+choke or a diode, **or SOLVED above the 12 V rail by its resistors** (`rules.hv_nets_solved`, the
+same divider solver the rules use) — as the net class **HV**. A net typed `12V` that the copper holds
+at 84 V is a rule violation, not a silent drop from the class: the class is derived from the solved
+voltage, never from the label alone. Today: 14 nets on POWER, none elsewhere. `build_project.py` writes the same text to
 `build-eprj3/layout-rules.txt`. ⚠️ **Set the class up in the editor before routing POWER:**
 PCB → Design → Net Class, a class `HV` holding those nets; Design Rules → Safe Spacing, a 1.25 mm
 rule applied to `HV`.
@@ -282,8 +294,13 @@ python3 -m tools.lcsc_fixture        # refresh tests/fixtures/lcsc.json
 For every LCSC code the design orders — each part's, each harness terminal's header and plug — the
 fixture records the part number, maker and package LCSC gives it, the library symbol's pin numbers
 and names, and the library footprint's title. `tests/test_lcsc_records.py` holds the design to it
-offline on every run, so a changed code that points at a different part (a 65 °C ESP32, the wrong
-BSS127) fails although the rules, which read the netlist's MPN, pass. Where the library is
+offline on every run: `lcsc_fixture.check` compares the **maker** word of the netlist's table string
+to the record's manufacturer, the netlist **package** to the record's package, the MPN by
+**equality** after a stated suffix strip — never by substring, so `BSS127` does not accept
+`BSS127S-7` and `SMS05T1G` does not accept `TPSMS05T1G` — and each inter-board connector's contact
+count to the record's symbol-pin count. So a changed code that points at a different part (a 65 °C
+ESP32, a Diodes `BSS127S-7`, a clone TVS, a 1×9 socket ordered for a 10-contact table) fails
+although the rules, which read the netlist's MPN, pass. Where the library is
 reachable, the same test holds the fixture to the live library, so a stale fixture fails too.
 ⛔ **Refresh it after changing any LCSC code.**
 
@@ -297,7 +314,10 @@ The export is EasyEDA's own reading of the generated project, so every pin it pu
 the layout will route. `tel_check` compares it with the netlist for that board, net by net and pin by
 pin, and each part's footprint with the one the build binds. The fuse is not converted to PCB (it
 sits in its clips), so it is absent from the export, as it should be. It prints "identical to the
-generator's netlist" and exits 0 when they agree; it exits 1 on any difference. ⚠️ **A proof holds
+generator's netlist" and exits 0 **only when every net and every placed part's footprint was
+compared**; it exits 1 on any difference — and a placed part whose footprint could not be compared
+(no footprint in the fixture record, or none in the export) is a **problem**, never a silent skip, so
+"identical" is never printed over an uncompared part. ⚠️ **A proof holds
 only for the netlist it was taken from:** after any netlist change, re-export and re-prove every board
 the change touches.
 
@@ -380,12 +400,15 @@ flag alone, and flag with wire name, which is what the build emits. `NAMING = "b
 
 - **Every placed item carries a footprint.** The build summary names any that does not, and the
   editor refuses a netlist export while one is missing (its DRC calls a missing footprint fatal).
-- **Place each `…-UNDER` footprint on the bottom layer.** It is the upper half of a **mated**
-  inter-board pair (`J406`, `J407`), which hangs under its board, and it is generated mirrored:
-  after the flip, plus at most a 180° turn, every pad sits over its mate's. A same-numbered dual-row
+- **The generated project carries no layer for any part — SEVEN sit on a bottom face and every one
+  is flipped by hand in the editor**, against `side` in `netlist.py`: `U201` and `U202` under
+  POWER (the brick's underside seat is what `FLOOR_SEAT` and the whole thermal design rest on) ·
+  `J314`, `J311` and `J312` under OUTPUTS · `J406` and `J407` under LOGIC. Each `…-UNDER` footprint
+  (`J406`, `J407`) is the upper half of a **mated** inter-board pair and is generated mirrored: after
+  the flip, plus at most a 180° turn, every pad sits over its mate's. A same-numbered dual-row
   footprint cannot be aligned by any turn — STACK's signals would land on its ground row. The
-  **cabled** halves (`J311`, `J312`) also go on OUTPUTS' bottom layer but are ordinary, un-mirrored
-  footprints — a cable has no mate to line up with; the loom carries the orientation.
+  **cabled** halves (`J311`, `J312`), the 5 V terminal `J314` and both converters are ordinary,
+  un-mirrored footprints — a cable has no mate to line up with; the loom carries the orientation.
 - **Set up the HV net class before routing POWER, and J408's keep-out before routing LOGIC**
   (`layout_rules.py`, above).
 - ⬜ **Check the paste layer has no aperture over `J408`'s six pads** (Gerber viewer, top paste). The

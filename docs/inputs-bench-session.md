@@ -250,8 +250,9 @@ left pod too (hazard), against the convention that black is ground. `yellow` is 
 signal there (selector HIGH, via `blue`), and `green`/`red` differ from the left pod's `green-*` and
 `red-*` trios only by the suffix.
 
-✅ **The toggle closes `red`–`blue` in RUN** (owner, 2026-09-12), which is the sense the brake
-circuit's Q2 inverter expects — and it means a broken bar wire reads as OFF.
+✅ **The toggle closes `red`–`blue` in RUN** (owner, 2026-09-12): a contact to ground against the
+module's 1 kΩ pull-up, read as IN-11 on expander #1 (plan D23 — the run/off kill is firmware; there is
+no inverter) — and it means a broken bar wire reads as OFF.
 
 ### ✔ A3 — M8: the red button on the FarDriver throttle
 
