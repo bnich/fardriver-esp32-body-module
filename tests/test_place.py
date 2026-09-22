@@ -23,9 +23,30 @@ from tools import board_params as bp, build_project, eprj2, netlist, place  # no
 from tools.model import Net, is_cabled  # noqa: E402
 
 MIL = place.MIL_PER_MM
+#: The synthetic hole, mm: smaller than the smallest pad the fixture draws
+#: (0.6 mm), so marking a footprint through-hole moves no pad box and only the
+#: `hole` flag changes.
+HOLE_MM = 0.6
 
 
 # --- a synthetic project -----------------------------------------------------------
+def _is_tht(it, d):
+    """Does `it`'s synthetic footprint cross the board?  A connector does
+    unless it is a bare land (`J408`, a Tag-Connect pad set); a part does when
+    the netlist states its `lead_mm`.
+
+    ⚠️ A MODEL of the real thing, and deliberately a conservative one: on the
+    owner's saved project this predicate is right for every connector, and it
+    misses the radial cans, the disc caps, the fuse clip, the 2 x 1 in. brick
+    and `U404`, whose library footprints have holes the netlist does not
+    describe.  Fewer pins cross here than really do, so a placement the
+    fixture calls legal can still be illegal on the owner's footprints -- the
+    check reads the FILE's pads (`envelope`), never this."""
+    if it.kind == "CONN":
+        return not d.connector(it.refdes).land
+    return d.part(it.refdes).lead_mm is not None
+
+
 def _pads_for(it, d):
     """[(pin, x mm, y mm, half w, half h)] in the footprint frame."""
     w, l = it.body
@@ -72,12 +93,17 @@ def _pads_for(it, d):
     return out
 
 
-def _stream(d, ix):
-    """The V3 record stream of a synthetic project of the design."""
+def _stream(d, ix, omit=()):
+    """The V3 record stream of a synthetic project of the design.  `omit` is
+    the refdes the PCB documents leave out -- a board is allowed to carry
+    fewer parts than the netlist (the tool places what the PCB has), and that
+    is how a project that CAN be fully placed is built out of a design that
+    cannot."""
     recs = [({"type": "EDIT_HEAD"}, eprj2._compact({"uuid": OWNER}))]
     fps, fp_of = {}, {}
     for it in ix.items.values():
-        key = (it.kind, it.body, tuple(sorted(it.pin_net)), it.refdes if it.kind == "CONN" else "")
+        key = (it.kind, it.body, tuple(sorted(it.pin_net)), _is_tht(it, d),
+               it.refdes if it.kind == "CONN" else "")
         if key not in fps:
             fps[key] = f"fp{len(fps):04d}"
         fp_of[it.refdes] = fps[key]
@@ -89,10 +115,12 @@ def _stream(d, ix):
         w, l = it.body
         body = [({"type": "DOCHEAD"}, eprj2._compact({"docType": "FOOTPRINT", "uuid": uuid})),
                 ({"type": "META", "id": "META"}, eprj2._compact({"title": uuid}))]
+        hole = ({"holeType": "ROUND", "width": round(HOLE_MM * MIL, 4),
+                 "height": round(HOLE_MM * MIL, 4)} if _is_tht(it, d) else None)
         for i, (pin, x, y, hw, hh) in enumerate(_pads_for(it, d)):
             body.append(({"type": "PAD", "id": f"p{i}"}, eprj2._compact({
                 "layerId": 1, "num": pin, "centerX": round(x * MIL, 4), "centerY": round(y * MIL, 4),
-                "hole": None, "defaultPad": {"padType": "RECT", "width": round(2 * hw * MIL, 4),
+                "hole": hole, "defaultPad": {"padType": "RECT", "width": round(2 * hw * MIL, 4),
                                              "height": round(2 * hh * MIL, 4)}, "plated": True})))
         if w and l:
             x0, y0, x1, y1 = -w / 2 * MIL, -l / 2 * MIL, w / 2 * MIL, l / 2 * MIL
@@ -114,7 +142,8 @@ def _stream(d, ix):
                 "hole": {"holeType": "ROUND", "width": 125.9843, "height": 125.9843},
                 "defaultPad": {"padType": "ELLIPSE", "width": 125.9843, "height": 125.9843},
                 "plated": False})))
-        for i, it in enumerate(sorted(ix.on(board), key=lambda x: place._ref_key(x.refdes))):
+        on_board = [x for x in ix.on(board) if x.refdes not in omit]
+        for i, it in enumerate(sorted(on_board, key=lambda x: place._ref_key(x.refdes))):
             cid = f"c{bi}_{i}"
             recs.append(({"type": "COMPONENT", "id": cid}, eprj2._compact({
                 "layerId": 1, "x": round((5 + (i % 8) * 4.5) * MIL, 4),
@@ -171,6 +200,45 @@ def placed(synthetic_project, ix):
     return project, place.stack(project, ix)
 
 
+#: The three the engine cannot seat on the real design, and why each one has
+#: nowhere to go.  `NO_ROOM` is not a list of awkward parts: it is this run's
+#: finding, proven by `test_the_engine_leaves_what_has_no_room_unplaced`.
+NO_ROOM = {
+    "J314": "OUTPUTS' face row is ONE strip for both faces -- a terminal's pins cross "
+            "the board -- and it is 259.7 mm of a 228 mm edge",
+    "U201": "the 37.2 mm brick cannot stand behind a 9.5 mm row on a 41.84 mm board, and "
+            "its 10 pins may not come up inside the row's bodies",
+    "J311": "its four pins come up through the top face, so the feed may not sit under "
+            "the driver line: with the two above gone the packer seats it 15.4 mm from "
+            "the drivers' centroid, over BUS_REACH (check 11), and on the owner's own "
+            "footprints 17.5 mm",
+    "J202": "the other half of the PWR-OUT loom: with no J311 there is no loom",
+}
+
+
+@pytest.fixture(scope="module")
+def placeable_project(tmp_path_factory, template, design, ix):
+    """The same synthetic project WITHOUT the three parts of `NO_ROOM`: a
+    board may carry fewer parts than the netlist, and the tool places what the
+    PCB has.
+
+    ⛔ A FIXTURE, and the omission is the finding: no complete placement of
+    this design exists today. It is here because "the engine leaves a CLEAN
+    placement" and "the engine refuses HONESTLY" are two different claims and
+    both have to be proven -- a suite with only the second would pass on an
+    engine that had stopped placing anything at all."""
+    path = tmp_path_factory.mktemp("fits") / "revv1-module.eprj2"
+    eprj2.write(template, path, _stream(design, ix, omit=tuple(NO_ROOM)), {"boards": {}},
+                "revv1-module", owner=OWNER)
+    return path
+
+
+@pytest.fixture(scope="module")
+def placeable_placed(placeable_project, ix):
+    project = place.load(placeable_project)
+    return project, place.stack(project, ix)
+
+
 def clone(pl):
     out = place.Placement(pl.project, pl.ix)
     out.boards = {b: dict(items) for b, items in pl.boards.items()}
@@ -191,8 +259,23 @@ def moved(pl, ref, du=0.0, dv=0.0, layer=None, angle=None, height=None):
     return out
 
 
+def as_tht(pl, ref):
+    """`pl` with every pad of `ref` through-hole -- the flag `envelope()` reads
+    from a PAD record's `hole`.  It changes no box: the synthetic hole is
+    smaller than the pad around it."""
+    out = clone(pl)
+    p = out.get(ref)
+    env = replace(p.env, pads=tuple(pad[:5] + (True,) for pad in p.env.pads))
+    out.boards[p.board][ref] = replace(p, env=env)
+    return out
+
+
 def numbers(problems):
     return {int(p.split()[0]) for p in problems}
+
+
+def lines(problems, n):
+    return [p for p in problems if p.startswith(f"{n} ")]
 
 
 # --- the frame ----------------------------------------------------------------------
@@ -220,7 +303,7 @@ def test_rotation_convention_matches_the_editor():
     """CCW angle; a bottom part is rotated then mirrored about X -- read off
     the editor's own example (a track lands on Q1's pads only under CCW, and
     on CARD1's only when the mirror follows the turn)."""
-    env = place.Envelope(-1, -1, 1, 1, (("1", 1.0, 0.0, 0.1, 0.1),))
+    env = place.Envelope(-1, -1, 1, 1, (("1", 1.0, 0.0, 0.1, 0.1, False),))
     f = place.Frame(10.0, 10.0, False)
     assert place.placed_pads(env, f, 0, 0, 90, False)[0][1:] == pytest.approx((0.0, 1.0))
     assert place.placed_pads(env, f, 0, 0, 90, True)[0][1:] == pytest.approx((0.0, 1.0))
@@ -238,6 +321,11 @@ def test_envelope_unions_pads_outline_and_the_stated_body():
     assert e.y0 == pytest.approx(-35.6 / MIL, abs=0.01)        # the arc's start, below the pads
     assert e.y1 == pytest.approx(53.15 / 2 / MIL, abs=0.01)    # the pads, above the body's 0.625
     assert len(e.pads) == 2 and e.pads[0][0] == "1"
+    # no `hole` record: surface mount, and nothing of it reaches the far face
+    assert e.pads[0][5] is False and not e.tht
+    holed = [(h, json.dumps({**json.loads(p), "hole": {"width": 30, "height": 30}}))
+             for h, p in recs if h["type"] == "PAD"]
+    assert place.envelope(holed, (2.0, 1.25)).tht
     # a brick drawn upright: the stated body is laid along the drawn long axis
     tall = [({"type": "PAD"}, json.dumps({"num": "a", "centerX": 0, "centerY": -900,
                                          "defaultPad": {"width": 60, "height": 60}})),
@@ -280,12 +368,42 @@ def test_decouplers_are_100nF_on_a_rail_and_ground(ix):
 
 
 # --- the engine ---------------------------------------------------------------------
-def test_the_engine_places_every_part_and_the_checks_pass(placed, ix):
-    project, pl = placed
+def test_the_engine_places_every_part_and_the_checks_pass(placeable_placed, ix):
+    """A COMPLETE placement is still reachable: on a project without the four
+    of `NO_ROOM`, every part is seated and every check passes."""
+    project, pl = placeable_placed
     for board in bp.STACK_ORDER:
         assert set(pl.boards[board]) == set(project.pcbs[board].components)
         assert not any(p.unplaced for p in pl.boards[board].values())
     assert place.check(pl, ix) == []
+
+
+def test_the_engine_leaves_what_has_no_room_unplaced(placed, ix):
+    """The whole design. Both faces share one strip of the connector edge, so
+    OUTPUTS' row is 259.7 mm of the 228 mm between the M3 corners, and the
+    37.2 mm brick cannot stand behind a 9.5 mm row on a 41.84 mm board.
+    Neither is squeezed into somewhere illegal: each keeps the reason it
+    could not be placed, every part is still accounted for, and everything
+    the engine DID place passes every check."""
+    project, pl = placed
+    for board in bp.STACK_ORDER:
+        assert set(pl.boards[board]) == set(project.pcbs[board].components)
+    assert not any(p.unplaced for p in pl.boards["LOGIC"].values())
+    assert {r for r, p in pl.boards["OUTPUTS"].items() if p.unplaced} == {"J314"}
+    assert {r for r, p in pl.boards["POWER"].items() if p.unplaced} == {"U201"}
+    assert "228.0 mm" in pl.get("J314").reason and "both faces" in pl.get("J314").reason
+    assert pl.get("U201").reason == "UNPLACED: no free slot"
+    assert place.check(pl, ix) == []
+
+
+def test_an_unplaced_part_is_reported_not_measured(placed, ix):
+    """A part with no position is named once, with its reason. Measuring it
+    where the file happened to leave it would report the import's coordinates
+    as if they were this run's proposal -- `J314` sits below the outline."""
+    _, pl = placed
+    assert pl.get("J314").box.v1 > 41.84                      # where the import left it
+    assert not any("J314" in s for s in place.check(pl, ix))
+    assert "J314" not in pl.placed("OUTPUTS")
 
 
 def test_bottom_parts_come_from_the_netlists_side(placed, ix):
@@ -362,8 +480,8 @@ def test_2_same_face_clearance(placed, ix):
 
 def test_3_layers_follow_the_netlist(placed, ix):
     _, pl = placed
-    flipped = moved(pl, "J314", layer=1)
-    assert any(s.startswith("3 layer: OUTPUTS J314") and "under" in s for s in place.check(flipped, ix))
+    flipped = moved(pl, "J311", layer=1)
+    assert any(s.startswith("3 layer: OUTPUTS J311") and "under" in s for s in place.check(flipped, ix))
     flipped = moved(pl, "R402", layer=2)
     assert any(s.startswith("3 layer: LOGIC R402") for s in place.check(flipped, ix))
 
@@ -512,9 +630,110 @@ def test_16_programming_land_on_top_with_clear_ends(placed, ix):
     assert any(s.startswith("16 service: LOGIC J408") and "layer 2" in s for s in place.check(under, ix))
 
 
+def test_17_two_through_hole_parts_on_opposite_faces(placed, ix):
+    """The first placement's OUTPUTS: `J312`'s 24 pins inside `J308`'s 58.
+    Both are through-hole, so each one's pads are inside the other's body and
+    the message says so, naming both parts and the layer each is on."""
+    _, pl = placed
+    j308, j312 = pl.get("J308"), pl.get("J312")
+    assert j308.tht and j312.tht and j308.layer == 1 and j312.layer == 2
+    inside = moved(pl, "J312", du=j308.box.cu - j312.box.cu, dv=j308.box.cv - j312.box.cv)
+    got = lines(place.check(inside, ix), 17)
+    assert any("J308 (layer 1)" in s and "J312 (layer 2)" in s
+               and "both through-hole" in s for s in got), got
+
+
+def test_17_a_through_hole_pad_under_a_surface_mount_body(placed, ix):
+    """The first placement's `J311`: a VH wafer under the board, its pins
+    coming up through the top face inside `U302`'s body. `U302` is surface
+    mount, so only one direction fires, and it names the pins' owner."""
+    _, pl = placed
+    u302, j311 = pl.get("U302"), pl.get("J311")
+    assert j311.tht and not u302.tht
+    under = moved(pl, "J311", du=u302.box.cu - j311.box.cu, dv=u302.box.cv - j311.box.cv)
+    got = lines(place.check(under, ix), 17)
+    assert any(s.startswith("17 through-hole: OUTPUTS J311's pins (layer 2, through-hole)")
+               and "U302's body (layer 1)" in s for s in got), got
+
+
+def test_17_a_header_under_the_row_on_the_other_face(placed, ix):
+    """A through-hole header hanging under the board, under a through-hole
+    terminal standing on top of it: pins into the other one's plastic body.
+    That is the shape of `J314` under `J303`-`J305` in the first placement,
+    and it is why both faces now share ONE strip of the connector edge."""
+    _, pl = placed
+    j303, j311 = pl.get("J303"), pl.get("J311")
+    assert j303.tht and j311.tht and (j303.layer, j311.layer) == (1, 2)
+    under = moved(pl, "J311", du=j303.box.cu - j311.box.cu, dv=j303.box.cv - j311.box.cv)
+    got = lines(place.check(under, ix), 17)
+    assert any("J303 (layer 1)" in s and "J311 (layer 2)" in s for s in got), got
+
+
+def test_17_allows_a_body_over_a_through_hole_body_clear_of_its_pads(placed, ix):
+    """⭐ The allowance the rule turns on: only the PADS cross the board. A
+    part on the far face may stand over a through-hole part's BODY -- a 0603
+    over the brick's case -- as long as it keeps `PIN_PROTRUSION` from every
+    pad. Here `R301` overlaps `J311`'s body in plan and is 1.0 mm clear of its
+    pad row, and nothing fires."""
+    _, pl = placed
+    j311 = pl.get("J311")
+    frame = pl.frame("OUTPUTS")
+    pads = j311.tht_boxes(frame)
+    assert pads and j311.layer == 2
+    r = pl.get("R301")
+    assert not r.tht and r.layer == 1
+    # just past the back of J311's pad row, inside its body
+    v0 = max(b.v1 for b in pads) + place.PIN_PROTRUSION
+    over = moved(pl, "R301", du=j311.box.cu - r.box.cu, dv=v0 - r.box.v0)
+    q = over.get("R301")
+    assert q.box.overlaps(j311.box)                     # it IS over the body
+    assert min(max(*b.gaps(q.box)) for b in pads) == pytest.approx(place.PIN_PROTRUSION)
+    assert not any("J311" in s and "R301" in s for s in lines(place.check(over, ix), 17))
+    # and half a millimetre closer, it is on the pins
+    on = moved(over, "R301", dv=-0.5)
+    assert any("J311" in s and "R301" in s for s in lines(place.check(on, ix), 17))
+
+
+def test_17_allows_two_surface_mount_parts_on_opposite_faces(placed, ix):
+    """Nothing crosses the board between two surface-mount parts: they may
+    overlap in plan freely, which is the whole point of a second face."""
+    _, pl = placed
+    u202, r110 = pl.get("U202"), pl.get("R110")
+    assert not u202.tht and not r110.tht and (u202.layer, r110.layer) == (2, 1)
+    over = moved(pl, "R110", du=u202.box.cu - r110.box.cu, dv=u202.box.cv - r110.box.cv)
+    assert over.get("R110").box.overlaps(u202.box)
+    assert not any("U202" in s and "R110" in s for s in lines(place.check(over, ix), 17))
+
+
+def test_the_engine_never_lands_a_pin_in_a_body_on_the_other_face(placed, placeable_placed, ix):
+    """The rule in the ENGINE, not only in the check -- on both fixtures, and
+    on a fixture that really does have pins crossing: the face row, `J308`,
+    `J311` and `J312` are all through-hole here."""
+    for _, pl in (placed, placeable_placed):
+        tht = {p.refdes for b in bp.STACK_ORDER for p in pl.placed(b).values() if p.tht}
+        assert {"J308", "J312", "J303", "J406"} <= tht
+        assert lines(place.check(pl, ix), 17) == []
+
+
+# --- the picture ----------------------------------------------------------------------
+def test_draw_writes_one_picture_per_board(placed, ix, tmp_path):
+    Image = pytest.importorskip("PIL.Image")
+    _, pl = placed
+    paths = place.draw(pl, ix, tmp_path / "pics", prefix="stack")
+    assert [p.name for p in paths] == [f"stack-{b}.png" for b in bp.STACK_ORDER]
+    for p in paths:
+        with Image.open(p) as im:
+            # the board at DRAW_SCALE px/mm, plus a margin each side
+            assert im.size[0] == pytest.approx(242.0 * place.DRAW_SCALE + 2 * place.DRAW_MARGIN,
+                                               abs=1)
+            assert im.size[1] == pytest.approx(41.84 * place.DRAW_SCALE + 2 * place.DRAW_MARGIN,
+                                               abs=1)
+
+
 # --- the writer ---------------------------------------------------------------------
-def test_write_round_trips_every_placed_coordinate_and_keeps_prev(synthetic_project, ix, tmp_path,
-                                                                  monkeypatch):
+def test_write_round_trips_every_placed_coordinate_and_keeps_prev(placeable_project, ix,
+                                                                  tmp_path, monkeypatch):
+    synthetic_project = placeable_project
     monkeypatch.setattr(place, "editor_running", lambda: False)
     fresh = place.load(synthetic_project)
     pl2 = place.stack(fresh, ix)
@@ -555,21 +774,54 @@ def test_the_default_file_is_the_editor_folder_and_tests_never_touch_the_real_on
     assert not str(place.default_file()).startswith(str(Path.home() / "Documents"))
 
 
-def test_cli_check_reports_and_stack_writes(synthetic_project, tmp_path, capsys, monkeypatch):
+def test_cli_check_reports_and_stack_writes(placeable_project, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(place, "editor_running", lambda: False)
-    assert place.main(["--check", "--file", str(synthetic_project)]) == place.EXIT_PROBLEMS
+    assert place.main(["--check", "--file", str(placeable_project)]) == place.EXIT_PROBLEMS
     out = tmp_path / "stack.eprj2"
     docs = tmp_path / "docs"
-    assert place.main(["--stack", "--file", str(synthetic_project), "--out", str(out),
-                       "--docs", str(docs)]) == 0
+    pics = tmp_path / "pics"
+    assert place.main(["--stack", "--file", str(placeable_project), "--out", str(out),
+                       "--docs", str(docs), "--draw", str(pics)]) == 0
     text = capsys.readouterr().out
-    assert "0 problem(s)" in text and "written:" in text
+    assert "0 problem(s)" in text and "written:" in text and "drawn:" in text
     for board in bp.STACK_ORDER:
         table = (docs / f"{board}-placement.md").read_text()
         assert "| Refdes |" in table and "reason" in table
+        assert (pics / f"stack-{board}.png").is_file()
     assert place.main(["--check", "--file", str(out)]) == 0
     assert "J406" in (docs / "LOGIC-placement.md").read_text()
     assert "fixed: mate of J308" in (docs / "LOGIC-placement.md").read_text()
+
+
+def test_cli_stack_refuses_and_names_what_had_nowhere_to_go(synthetic_project, tmp_path, capsys,
+                                                            monkeypatch):
+    """The real design: `--stack` writes the tables and the pictures, names
+    every unplaced part with its reason, and does NOT write the project."""
+    monkeypatch.setattr(place, "editor_running", lambda: False)
+    out = tmp_path / "stack.eprj2"
+    pics = tmp_path / "pics"
+    assert place.main(["--stack", "--file", str(synthetic_project), "--out", str(out),
+                       "--docs", str(tmp_path / "docs"), "--draw", str(pics)]) \
+        == place.EXIT_PROBLEMS
+    text = capsys.readouterr().out
+    assert "OUTPUTS J314: UNPLACED" in text and "POWER U201: UNPLACED" in text
+    assert not out.exists()
+    assert (pics / "stack-OUTPUTS.png").is_file()
+    # the table gives an unplaced part no coordinates: where the file happens
+    # to hold it is not a proposal
+    row = next(ln for ln in (tmp_path / "docs" / "OUTPUTS-placement.md").read_text().splitlines()
+               if ln.startswith("| J314 "))
+    assert row.count("| — ") == 5 and "UNPLACED" in row
+
+
+def test_cli_draw_alone_draws_the_file_and_judges_nothing(synthetic_project, tmp_path, capsys):
+    pytest.importorskip("PIL.Image")
+    pics = tmp_path / "pics"
+    assert place.main(["--draw", str(pics), "--file", str(synthetic_project)]) == 0
+    text = capsys.readouterr().out
+    assert "problem(s)" not in text
+    assert {p.name for p in pics.iterdir()} == {f"{synthetic_project.stem}-{b}.png"
+                                                for b in bp.STACK_ORDER}
 
 
 def test_cli_refuses_a_part_the_netlist_does_not_know(synthetic_project, tmp_path, capsys):

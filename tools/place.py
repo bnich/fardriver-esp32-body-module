@@ -3,6 +3,7 @@
 
     python3 -m tools.place --stack [--anchor centre] [--keep REF ...] [--file PATH] [--out PATH]
     python3 -m tools.place --check [--file PATH]
+    python3 -m tools.place --draw DIR [--file PATH]        # and with either mode
 
 `--stack` reads the owner's saved `.eprj2`, places every part of OUTPUTS, then
 LOGIC, then POWER that is not in `--keep`, runs every check below, and writes
@@ -31,7 +32,16 @@ footprint names them (the bricks, the chokes, J101), and its whole body where
 it does not (a D-PAK's pads are 1-2-3): the brick under the board puts pack
 voltage on the top layer only at its input pins, and its output end is 12 V.
 
-Stdlib only (plus what `eprj2` needs to decrypt the file).
+A THROUGH-HOLE PART CROSSES THE BOARD.  The two faces are not two independent
+planes: a THT pad is copper on BOTH of them, and the pin tip and its solder
+fillet stand proud of the far face, so a part on the other layer may not stand
+on one (check 17, `PIN_PROTRUSION`).  Only the pads cross -- an SMD part over
+a THT part's BODY on the other side is fine, which is how a 0603 sits over the
+brick's case.  The harness row obeys the same fact through `edge_budget`: both
+faces share ONE strip of the connector edge.
+
+Stdlib only (plus what `eprj2` needs to decrypt the file, and Pillow for
+`--draw`, which is imported only when that flag is used).
 """
 import argparse
 import json
@@ -63,6 +73,14 @@ COURTYARD = board_fit.COURTYARD
 #: any two neighbours.  Body to body that is 2 x COURTYARD + TRACE_ROOM = 1.6.
 TRACE_ROOM = 0.6
 CLEAR = 2 * COURTYARD + TRACE_ROOM
+#: A through-hole pin's tip and its solder fillet stand ~3 mm proud of the FAR
+#: face of the board, and the fillet spreads around the pad there.  This is the
+#: room they need on that face: no body on the opposite layer may come closer
+#: than this to a through-hole pad, or the pin is inside it.  It is the CHECK's
+#: floor; the engine keeps `CLEAR` from a pad on the other face instead, which
+#: is wider, because the pad is also COPPER there and a trace has to be able to
+#: pass between the pin and its neighbour.
+PIN_PROTRUSION = 1.0
 #: Clear strips between the bands of PROCESS.md where one band's part stands
 #: directly behind another's (their u-ranges overlap): the signals of a band
 #: fan out through the strip in front of it.  Band 4 holds the S3, whose 25
@@ -236,7 +254,11 @@ def _rot(x, y, deg):
 class Envelope:
     """A footprint's plan in its own frame, mm: the box its pads, silk and
     stated body occupy, and each pad (number, centre x, y, half-width,
-    half-height)."""
+    half-height, THROUGH-HOLE).  The last flag is the PAD record's `hole`: that
+    pad is copper on both faces of the board and a pin passes through it.  It
+    is part of the tuple and not a parallel table on purpose -- every place
+    that builds an Envelope has to say, for each pad, whether it crosses the
+    board."""
     x0: float
     y0: float
     x1: float
@@ -246,6 +268,12 @@ class Envelope:
     @property
     def centred(self):
         return abs(self.x0 + self.x1) < 0.1 and abs(self.y0 + self.y1) < 0.1
+
+    @property
+    def tht(self):
+        """True when ANY pad crosses the board: the part is through-hole, and
+        its pins exist on the face it does not stand on."""
+        return any(pad[5] for pad in self.pads)
 
 
 def _path_points(path, out):
@@ -281,7 +309,10 @@ def envelope(records, body_mm):
     """The `Envelope` of a FOOTPRINT document's records, widened to `body_mm`
     (w, l) from the netlist.  The body is laid along the footprint's own long
     axis when the two disagree (a brick drawn upright), and centred on the
-    drawn geometry; with nothing drawn it is centred on the origin."""
+    drawn geometry; with nothing drawn it is centred on the origin.
+
+    A pad is THROUGH-HOLE when its record carries a `hole` -- plated or not,
+    something passes through the board there."""
     pts, pads = [], []
     for h, p in records:
         if h["type"] == "PAD":
@@ -293,7 +324,7 @@ def envelope(records, body_mm):
             cx, cy = o["centerX"], o["centerY"]
             pts += [(cx - hw, cy - hh), (cx + hw, cy + hh)]
             pads.append((str(o.get("num", "")), cx / MIL_PER_MM, cy / MIL_PER_MM,
-                         hw / MIL_PER_MM, hh / MIL_PER_MM))
+                         hw / MIL_PER_MM, hh / MIL_PER_MM, bool(hole)))
         elif h["type"] in ("POLY", "FILL", "LINE"):
             o = json.loads(p)
             if o.get("layerId") in OUTLINE_LAYERS:
@@ -339,13 +370,21 @@ def placed_pads(env, frame, u, v, board_angle, bottom):
     named by the pin they carry (padmap.py renamed them before embedding),
     and one pin can own several pads."""
     return [(num,) + _place_point(frame, lx, ly, u, v, board_angle, bottom)
-            for num, lx, ly, _, _ in env.pads]
+            for num, lx, ly, _, _, _ in env.pads]
 
 
 def placed_pad_boxes(env, frame, u, v, board_angle, bottom):
     """[(pad number, Box)] of `env` with its origin at (u, v)."""
     return [(num, _place_box(frame, lx - hw, ly - hh, lx + hw, ly + hh, u, v, board_angle, bottom))
-            for num, lx, ly, hw, hh in env.pads]
+            for num, lx, ly, hw, hh, _ in env.pads]
+
+
+def placed_tht_boxes(env, frame, u, v, board_angle, bottom):
+    """[Box] of the THROUGH-HOLE pads alone, with the origin at (u, v).  These
+    are the boxes that exist on BOTH faces of the board, whichever face the
+    part stands on."""
+    return [_place_box(frame, lx - hw, ly - hh, lx + hw, ly + hh, u, v, board_angle, bottom)
+            for _, lx, ly, hw, hh, tht in env.pads if tht]
 
 
 # --- the file ----------------------------------------------------------------------
@@ -717,6 +756,16 @@ class Placed:
     def pad_boxes(self, frame):
         return placed_pad_boxes(self.env, frame, self.u, self.v, self.angle, self.bottom)
 
+    @property
+    def tht(self):
+        """A through-hole part: at least one pad crosses the board."""
+        return self.env.tht
+
+    def tht_boxes(self, frame):
+        """Its through-hole pads, board frame -- copper on both faces, with a
+        pin tip and a fillet standing proud of the one it does not sit on."""
+        return placed_tht_boxes(self.env, frame, self.u, self.v, self.angle, self.bottom)
+
     def pin_point(self, frame, pin):
         """Where `pin` is, board frame: the mean of its pads, else the body centre."""
         pts = [(u, v) for num, u, v in self.pads(frame) if num == pin]
@@ -760,8 +809,15 @@ class Placement:
                 return b[ref]
         return None
 
+    def placed(self, board):
+        """The items of `board` that HAVE a position.  An UNPLACED part is
+        reported by refdes and reason and the write is refused; measuring it
+        where the file happened to leave it would report its old coordinates
+        as if they were this run's proposal."""
+        return {r: p for r, p in self.boards[board].items() if not p.unplaced}
+
     def face(self, board, layer):
-        return [p for p in self.boards[board].values() if p.layer == layer]
+        return [p for p in self.placed(board).values() if p.layer == layer]
 
     @classmethod
     def from_file(cls, project, ix):
@@ -820,6 +876,7 @@ class Placer:
         self.extra = {}             # refdes -> [Box] keep-outs that bind it alone
         self.target_u = {}          # refdes -> (u, why) the engine must aim at
         self.target_v = {}          # refdes -> (box front v, why)
+        self._tht_cache = {}        # refdes -> [Box] of its through-hole pads
 
     # -- helpers ------------------------------------------------------------------
     def item(self, ref):
@@ -846,18 +903,38 @@ class Placer:
             return CLEAR
         return CHANNEL_BAND4 if 4 in (band_a, band_b) else CHANNEL
 
+    def _tht(self, p):
+        """`p`'s through-hole pad boxes; a placed part never moves again
+        within one `Placer`, so they are computed once."""
+        if p.refdes not in self._tht_cache:
+            self._tht_cache[p.refdes] = p.tht_boxes(self.frame)
+        return self._tht_cache[p.refdes]
+
     def _obstacles(self, ref, band, layer):
         """([(box, gap u, gap v)] the BODY must clear, [(box, gap u, gap v)]
-        each of the part's own HV ZONES must clear).  HV copper and an LV body
+        each of the part's own HV ZONES must clear, [(box, gap u, gap v)] each
+        of its own THROUGH-HOLE PADS must clear).  HV copper and an LV body
         keep the strip on either face; two bodies on one face keep CLEAR, or
-        the channel between their bands."""
+        the channel between their bands.
+
+        A through-hole pad crosses the board, so it binds the OTHER face too:
+        the pads of a part on the opposite layer are obstacles to this body,
+        and this part's own pads are obstacles against every body over there.
+        Both at CLEAR -- the pad is copper on that face, and a trace must be
+        able to pass between it and whatever stands beside it.  A body over a
+        through-hole part's BODY is not an obstacle: only its pads cross."""
         hv = self.is_hv(ref)
-        body, zones = [], []
+        tht = self.env(ref).tht
+        body, zones, cross = [], [], []
         for p in self.pl.boards[self.board].values():
             if p.unplaced:
                 continue
             if p.layer == layer:
                 body.append((p.box, CLEAR, self._channel(band, p.band)))
+            else:
+                body += [(b, CLEAR, CLEAR) for b in self._tht(p)]
+                if tht:
+                    cross.append((p.box, CLEAR, CLEAR))
             if self.hv_board and self.ix.is_hv(p.refdes) != hv:
                 if hv:
                     zones.append((p.box, self.hv_gap, self.hv_gap))
@@ -874,7 +951,7 @@ class Placer:
             if self.item(p.refdes).kind == "MODULE":
                 # the antenna zone beyond the S3 stays clear on both faces (check 8)
                 body.append((Box(p.box.u0, p.box.v1, p.box.u1, p.box.v1 + ANTENNA_ZONE_D), 0.0, 0.0))
-        return body, zones
+        return body, zones, cross
 
     def _margins(self, ref, off, zones):
         """How close each body edge may come to the board edge: an HV part's
@@ -906,7 +983,7 @@ class Placer:
             zones = hv_zones(self.ix, ref, placed_pad_boxes(env, self.frame, 0.0, 0.0, angle, bottom),
                              placed_box(env, self.frame, 0.0, 0.0, angle, bottom))
         mu0, mv0, mu1, mv1 = self._margins(ref, off, zones)
-        body_obs, zone_obs = self._obstacles(ref, band, layer)
+        body_obs, zone_obs, cross_obs = self._obstacles(ref, band, layer)
         # each HV zone as an offset from the body's corner; the attached zones
         # (antenna, cable ends) likewise, against every placed body
         zone_off = [(z.u0 - off.u0, z.v0 - off.v0, z.u1 - off.u0, z.v1 - off.v0) for z in zones]
@@ -915,6 +992,14 @@ class Placer:
             zone_off += attached
             zone_obs = list(zone_obs) + [(p.box, 0.0, 0.0) for p in self.pl.boards[self.board].values()
                                           if not p.unplaced]
+        # (boxes that travel with the body, as offsets from its (u0, v0)
+        # corner; what each of them must clear).  The second group is this
+        # part's own through-hole pads against the bodies on the other face.
+        groups = [(zone_off, zone_obs)] if zone_off and zone_obs else []
+        if cross_obs:
+            groups.append(([(z.u0 - off.u0, z.v0 - off.v0, z.u1 - off.u0, z.v1 - off.v0)
+                            for z in placed_tht_boxes(env, self.frame, 0.0, 0.0, angle, bottom)],
+                           cross_obs))
         best = None
         v0 = mv0
         while v0 + b <= W - mv1 + 1e-9:
@@ -923,11 +1008,12 @@ class Placer:
                 if v0 >= box.v1 + gv - 1e-9 or v0 + b <= box.v0 - gv + 1e-9:
                     continue
                 forbidden.append((box.u0 - gu - a, box.u1 + gu))
-            for zu0, zv0, zu1, zv1 in zone_off:
-                for box, gu, gv in zone_obs:
-                    if v0 + zv0 >= box.v1 + gv - 1e-9 or v0 + zv1 <= box.v0 - gv + 1e-9:
-                        continue
-                    forbidden.append((box.u0 - gu - zu1, box.u1 + gu - zu0))
+            for offs, obs in groups:
+                for zu0, zv0, zu1, zv1 in offs:
+                    for box, gu, gv in obs:
+                        if v0 + zv0 >= box.v1 + gv - 1e-9 or v0 + zv1 <= box.v0 - gv + 1e-9:
+                            continue
+                        forbidden.append((box.u0 - gu - zu1, box.u1 + gu - zu0))
             forbidden.sort()
             free, lo = [], mu0
             hi_lim = L - mu1 - a
@@ -977,18 +1063,23 @@ class Placer:
         return num / den, sorted(partners, key=_ref_key)
 
     # -- the row ------------------------------------------------------------------
-    def row(self, side):
-        edge = next((e for e in board_fit.edge_budget(self.ix.d)
-                     if e.board == self.board and e.side == side), None)
-        if edge is None:
-            return
-        headers = [r for r in edge.headers if r in self.doc.components and r not in self.keep]
+    def row(self):
+        """The harness row: ONE strip of the connector edge for BOTH faces, in
+        `edge_budget` order.  A harness terminal is through-hole -- its pins
+        cross the board and stand proud of the other face -- so a terminal
+        hanging under the board takes the same length of the edge as one
+        standing on top, and `board_fit.edge_budget` returns one `Edge` per
+        board holding both faces' headers.  A header that does not fit the
+        strip between the M3 corners is left UNPLACED, and so is every header
+        after it: the row is an ordered strip, never squeezed."""
+        headers = [r for e in board_fit.edge_budget(self.ix.d) if e.board == self.board
+                   for r in e.headers if r in self.doc.components and r not in self.keep]
         if not headers:
             return
-        bottom = side == "bottom"
         boxes = {}
         for ref in headers:
             env = self.env(ref)
+            bottom = self.layer_of(ref) == 2
             # The body extends farther from the pad row on its plug side, and
             # that side faces the edge: board angle 0 or 180.
             best = None
@@ -1009,12 +1100,22 @@ class Placer:
         total = sum(boxes[r][1].w for r in headers) + sum(gaps)
         L = self.frame.length
         corner = 2 * M3_KEEPOUT if self.frame.holes else 2 * M3_INSET_MM
+        strip = L - 2 * corner
         start = {"left": corner, "right": L - corner - total}.get(self.anchor, (L - total) / 2)
+        start = max(corner, min(start, L - corner - total))
         u = start
+        over = False
         for i, ref in enumerate(headers):
             ang, box = boxes[ref]
-            reason = (f"face row ({edge.side}), position {i + 1} of {len(headers)} in "
-                      f"edge_budget order, body v 0-{box.d:.1f}")
+            if over or u + box.w > L - corner + TOL:
+                over = True
+                self.keep_one(ref, 1, f"UNPLACED: the row needs {total:.1f} mm of the connector "
+                                      f"edge and the strip between the M3 corners is {strip:.1f} mm "
+                                      f"-- one strip for both faces, because a terminal's pins "
+                                      f"cross the board")
+                continue
+            reason = (f"face row (layer {self.layer_of(ref)}), position {i + 1} of {len(headers)} "
+                      f"in edge_budget order, body v 0-{box.d:.1f}")
             self.pl.add(self.make(ref, u - box.u0, -box.v0, ang, 1, reason))
             u += box.w + (gaps[i] if i < len(gaps) else 0)
 
@@ -1120,10 +1221,7 @@ class Placer:
                 best = (cost, u, v, ang)
         if best is None:
             self.pl.notes.append(f"{self.board}: {ref} fits nowhere on its face; left as saved")
-            comp = self.doc.components[ref]
-            u, v = self.frame.to_board(comp.x / MIL_PER_MM, comp.y / MIL_PER_MM)
-            self.pl.add(self.make(ref, u, v, self.frame.board_angle(comp.angle), band,
-                                  "UNPLACED: no free slot"))
+            self.keep_one(ref, band, "UNPLACED: no free slot")
             return
         _, u, v, ang = best
         self.pl.add(self.make(ref, u, v, ang, band, why))
@@ -1188,6 +1286,14 @@ class Placer:
     def place_fixed(self, ref, u, v, angle, band, reason):
         self.pl.add(self.make(ref, u, v, angle, band, reason))
 
+    def keep_one(self, ref, band, reason):
+        """Leave `ref` exactly where the file has it, with `reason` -- how an
+        UNPLACED part is recorded.  It is reported and refused, never squeezed
+        into a place it does not fit."""
+        comp = self.doc.components[ref]
+        u, v = self.frame.to_board(comp.x / MIL_PER_MM, comp.y / MIL_PER_MM)
+        self.pl.add(self.make(ref, u, v, self.frame.board_angle(comp.angle), band, reason))
+
     def keep_saved(self):
         for ref in sorted(self.keep):
             comp = self.doc.components.get(ref)
@@ -1245,8 +1351,7 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
     if True:
         pr = Placer(pl, board, anchor, keep, relaxed=relaxed)
         pr.keep_saved()
-        pr.row("top")
-        pr.row("bottom")
+        pr.row()
         if board == "OUTPUTS":
             # the pairs' lower halves flush to the back edge: a long through-
             # hole row cuts a plane least at its edge (check 12)
@@ -1355,7 +1460,7 @@ def check(pl, ix=None):
         if board not in pl.project.pcbs:
             continue
         frame = pl.frame(board)
-        items = pl.boards[board]
+        items = pl.placed(board)
         L, W = frame.length, frame.width
         # 1 -- inside the outline, clear of the M3 corners
         for p in items.values():
@@ -1395,12 +1500,10 @@ def check(pl, ix=None):
             if p.layer != want:
                 out.append(f"3 layer: {board} {p.refdes} is on layer {p.layer}; the netlist puts it "
                            f"{'under' if want == 2 else 'on top of'} the board (layer {want})")
-        # 6 -- the face row: at the face, in order, inside the ends
-        for side in ("top", "bottom"):
-            edge = next((e for e in board_fit.edge_budget(ix.d)
-                         if e.board == board and e.side == side), None)
-            if edge is None:
-                continue
+        # 6 -- the face row: at the face, in order, inside the ends.  ONE strip
+        # per board for both faces (edge_budget): a terminal is through-hole,
+        # so one under the board takes the edge like one on top.
+        for edge in [e for e in board_fit.edge_budget(ix.d) if e.board == board]:
             row = [items[r] for r in edge.headers if r in items]
             for p in row:
                 if abs(p.box.v0) > 0.05:
@@ -1455,6 +1558,7 @@ def check(pl, ix=None):
             if near > DECOUPLE_REACH + TOL:
                 out.append(f"15 decoupling: {board} {cap} (100 nF on {rail}) is {near:.1f} mm from the "
                            f"nearest IC on that rail; {DECOUPLE_REACH:g} mm is a decoupler")
+    out += _check_cross_board(pl, ix)
     out += _check_pairs(pl, ix)
     out += _check_keepouts(pl, ix)
     out += _check_hv(pl, ix)
@@ -1464,12 +1568,64 @@ def check(pl, ix=None):
     return out
 
 
+def _check_cross_board(pl, ix):
+    """17 -- a through-hole part crosses the board.  Its pads are copper on
+    BOTH faces and its pin tips and solder fillets stand proud of the far one,
+    so no body on the other layer may come within `PIN_PROTRUSION` of one.
+
+    Only the PADS cross: an SMD part over a through-hole part's BODY on the
+    other side is legal, which is how a 0603 sits over the brick's case, and
+    two SMD parts on opposite faces may overlap freely.  Two through-hole
+    parts on opposite faces may never overlap in plan at all -- each one's
+    pads are inside the other's body, so both directions fire.  Pad against
+    pad needs no separate test: a body's box contains its own pads."""
+    out = []
+    for board in bp.STACK_ORDER:
+        if board not in pl.project.pcbs:
+            continue
+        frame = pl.frame(board)
+        items = sorted((p for p in pl.boards[board].values() if not p.unplaced),
+                       key=lambda p: _ref_key(p.refdes))
+        pads = {p.refdes: (p.tht_boxes(frame) if p.tht else []) for p in items}
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if a.layer == b.layer or not (pads[a.refdes] or pads[b.refdes]):
+                    continue
+                gu, gv = a.box.gaps(b.box)
+                if max(gu, gv) >= PIN_PROTRUSION - TOL:
+                    continue            # the bodies are apart, so the pads are too
+                ga = _pad_gap(pads[a.refdes], b.box)
+                gb = _pad_gap(pads[b.refdes], a.box)
+                hit = [g for g in (ga, gb) if g is not None and g < PIN_PROTRUSION - TOL]
+                if not hit:
+                    continue
+                if len(hit) == 2:
+                    out.append(f"17 through-hole: {board} {a.refdes} (layer {a.layer}) and "
+                               f"{b.refdes} (layer {b.layer}) are both through-hole and overlap "
+                               f"in plan; each one's pins land inside the other's body")
+                    continue
+                pin, host, gap = ((a, b, ga) if ga is not None and ga < PIN_PROTRUSION - TOL
+                                  else (b, a, gb))
+                out.append(f"17 through-hole: {board} {pin.refdes}'s pins (layer {pin.layer}, "
+                           f"through-hole) are {max(gap, 0):.2f} mm from {host.refdes}'s body "
+                           f"(layer {host.layer}) on the other face; a pin tip and its solder "
+                           f"fillet need {PIN_PROTRUSION:g} mm there")
+    return out
+
+
+def _pad_gap(boxes, body):
+    """The smallest gap between any of `boxes` and `body` -- negative where
+    they overlap, None with no boxes at all."""
+    gaps = [max(*b.gaps(body)) for b in boxes]
+    return min(gaps) if gaps else None
+
+
 def _check_pairs(pl, ix):
     """4 -- the mated pairs coincide, in X, Y and pin for pin by net."""
     out = []
     for lower, upper in (("J307", "J407"), ("J308", "J406")):
         lo, up = pl.get(lower), pl.get(upper)
-        if lo is None or up is None:
+        if lo is None or up is None or lo.unplaced or up.unplaced:
             continue
         if abs(lo.u - up.u) > MATE_TOL or abs(lo.v - up.v) > MATE_TOL:
             out.append(f"4 mate: {upper} at ({up.u:.2f}, {up.v:.2f}) is not over {lower} at "
@@ -1491,7 +1647,7 @@ def _check_keepouts(pl, ix):
         return out
     for hang in ("J311", "J312"):
         up = pl.get(hang)
-        if up is None:
+        if up is None or up.unplaced:
             continue
         limit = gap.gap_mm - ix.items[hang].height - bp.CLEARANCE
         for p in pl.face("POWER", 1):
@@ -1510,8 +1666,8 @@ def _check_hv(pl, ix):
     if not pl.boards.get(board):
         return out
     frame = pl.frame(board)
-    hv = [p for p in pl.boards[board].values() if ix.is_hv(p.refdes)]
-    lv = [p for p in pl.boards[board].values() if not ix.is_hv(p.refdes)]
+    hv = [p for p in pl.placed(board).values() if ix.is_hv(p.refdes)]
+    lv = [p for p in pl.placed(board).values() if not ix.is_hv(p.refdes)]
     L, W = frame.length, frame.width
     zones = [(p, z) for p in hv for z in p.hv_zones(ix, frame)]
     for p, z in zones:
@@ -1591,7 +1747,7 @@ def _check_antenna(pl, ix):
     if where != "back" or gap > ANTENNA_EDGE + TOL:
         out.append(f"8 antenna: {p.board} U401's antenna end faces the {where} edge, "
                    f"{gap:.1f} mm from it; it must be within {ANTENNA_EDGE:g} mm of the back edge")
-    for q in pl.boards[p.board].values():
+    for q in pl.placed(p.board).values():
         if q is not p and q.box.overlaps(zone):
             out.append(f"8 antenna: {p.board} {q.refdes} stands in the {ANTENNA_ZONE_W:g} x "
                        f"{ANTENNA_ZONE_D:g} mm zone beyond U401's antenna end")
@@ -1604,7 +1760,7 @@ def _check_bus(pl, ix):
     board = "OUTPUTS"
     if not pl.boards.get(board):
         return out
-    items = pl.boards[board]
+    items = pl.placed(board)
     pwr12 = ix.classes["PWR12"]
     ics = [items[it.refdes] for it in ix.on(board, "top")
            if it.kind == "IC" and any(n in pwr12 for n in it.nets) and it.refdes in items]
@@ -1631,7 +1787,7 @@ def _check_sensitive(pl, ix):
     board = "LOGIC"
     if not pl.boards.get(board):
         return out
-    items = pl.boards[board]
+    items = pl.placed(board)
     frame = pl.frame(board)
     s3 = next((items[it.refdes] for it in ix.on(board) if it.kind == "MODULE" and it.refdes in items),
               None)
@@ -1829,6 +1985,11 @@ def placement_table(pl, board):
              "|---|---|---|---|---|---|---|---|---|"]
     for ref in sorted(pl.boards[board], key=_ref_key):
         p = pl.boards[board][ref]
+        if p.unplaced:
+            # no position to give: where the file happens to hold it is not a
+            # proposal, and a reader must not copy it as one
+            lines.append(f"| {ref} | — | — | — | — | — | {p.layer} | {p.band} | {p.reason} |")
+            continue
         x, y = frame.to_file(p.u, p.v)
         lines.append(f"| {ref} | {p.u:.2f} | {p.v:.2f} | {p.angle} | {x:.2f} | {y:.2f} | {p.layer} | "
                      f"{p.band} | {p.reason} |")
@@ -1853,6 +2014,113 @@ def summary(pl):
     return "\n".join(lines)
 
 
+# --- the picture --------------------------------------------------------------------
+#: Pixels per mm.  At 8 a 0603 (1.6 x 0.8 mm) is 13 x 6 px -- a box you can
+#: see -- and a 242 mm board is 1936 px, which fits on a screen.
+DRAW_SCALE = 8
+#: White margin round the outline, px: room for the title line above the board
+#: and for the label of a part sitting at the very edge.
+DRAW_MARGIN = 60
+#: A pad dot's radius, mm.  Half of the 0.7 mm that is the smallest pad on the
+#: boards, so two pads of one part never merge into one blob.
+DRAW_PAD_R = 0.35
+#: A through-hole pad is drawn as a RING: the hole is what makes it cross the
+#: board, and a ring is the one mark that reads at a glance as "this pin comes
+#: out the other side".  Ring, not colour: colour already says the net.
+DRAW_HOLE_R = 0.55
+#: Body colours, and what each one says.
+DRAW_TOP = (0, 0, 0)            # layer 1: on top of the board
+DRAW_BOTTOM = (60, 60, 200)     # layer 2: under it
+DRAW_HV = (200, 0, 0)           # pack voltage anywhere on the part
+DRAW_UNPLACED = (230, 120, 0)   # no room for it: it is where the file had it
+
+
+def draw(pl, ix, out_dir, prefix="placement"):
+    """One PNG per board of the placement `pl` holds, board frame, face (v = 0)
+    at the bottom: the outline and the M3 washer squares, a line at each band's
+    front, every body as a box (top black, bottom blue, pack voltage red, an
+    UNPLACED part orange), every pad as a dot (GND green, HV red) with a ring
+    where it is through-hole, and every refdes labelled.
+
+    ⚠️ This is a STEP OF THE PROCESS, not a decoration: the picture is what
+    showed the first placement's two faces standing inside each other while all
+    16 checks said `0 problem(s)`.  Returns the paths written, in board order.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as e:                    # pragma: no cover - Pillow is installed
+        raise RuntimeError("--draw needs Pillow (PIL); the rest of the tool is stdlib") from e
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    font = ImageFont.load_default()
+    written = []
+    for board in bp.STACK_ORDER:
+        if board not in pl.project.pcbs:
+            continue
+        fr = pl.frame(board)
+        items = pl.boards[board]
+        W = int(fr.length * DRAW_SCALE) + 2 * DRAW_MARGIN
+        H = int(fr.width * DRAW_SCALE) + 2 * DRAW_MARGIN
+        im = Image.new("RGB", (W, H), "white")
+        dr = ImageDraw.Draw(im)
+
+        def P(u, v):                            # board mm -> px, v upward
+            return (DRAW_MARGIN + u * DRAW_SCALE, H - DRAW_MARGIN - v * DRAW_SCALE)
+
+        def R(a, b):                            # a rectangle from two board points
+            (x0, y0), (x1, y1) = P(*a), P(*b)
+            return [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)]
+
+        dr.rectangle(R((0, 0), (fr.length, fr.width)), outline="black", width=3)
+        row_depth = max((p.box.v1 for p in items.values() if p.band == 1 and not p.unplaced),
+                        default=0.0)
+        fronts = [(2, row_depth + CHANNEL)] + sorted(BAND_FRONT.items())
+        for band, v in fronts:
+            if 0 < v < fr.width:
+                dr.line([P(0, v), P(fr.length, v)], fill=(200, 200, 200), width=1)
+                dr.text((P(0, v)[0] + 2, P(0, v)[1] - 11), f"band {band}", fill=(170, 170, 170),
+                        font=font)
+        for u, v in fr.holes:
+            dr.ellipse(R((u - 1.6, v - 1.6), (u + 1.6, v + 1.6)), outline="gray", width=2)
+            dr.rectangle(R((u - M3_KEEPOUT, v - M3_KEEPOUT), (u + M3_KEEPOUT, v + M3_KEEPOUT)),
+                         outline=(230, 200, 200))
+        hv = ix.hv.get(board, ())
+        n_bottom = 0
+        for ref in sorted(items, key=_ref_key):
+            p = items[ref]
+            b = p.box
+            colour = DRAW_BOTTOM if p.bottom else DRAW_TOP
+            if ix.is_hv(ref):
+                colour = DRAW_HV
+            if p.unplaced:
+                colour = DRAW_UNPLACED
+            n_bottom += 1 if p.bottom else 0
+            dr.rectangle(R((b.u0, b.v0), (b.u1, b.v1)), outline=colour, width=1 if p.bottom else 2)
+            for (num, pu, pv), pad in zip(p.pads(fr), p.env.pads):
+                net = ix.items[ref].pin_net.get(num) if ref in ix.items else None
+                fill = (220, 0, 0) if net in hv else ((0, 140, 0) if net in ix.gnd else (90, 90, 90))
+                dr.ellipse(R((pu - DRAW_PAD_R, pv - DRAW_PAD_R), (pu + DRAW_PAD_R, pv + DRAW_PAD_R)),
+                           fill=fill)
+                if pad[5]:                      # through-hole: it comes out the other side
+                    dr.ellipse(R((pu - DRAW_HOLE_R, pv - DRAW_HOLE_R),
+                                 (pu + DRAW_HOLE_R, pv + DRAW_HOLE_R)), outline=fill)
+            cx, cy = P(b.cu, b.cv)
+            dr.text((cx - dr.textlength(ref, font=font) / 2, cy - 5), ref, fill=colour, font=font)
+        unplaced = sorted((r for r, p in items.items() if p.unplaced), key=_ref_key)
+        dr.text((DRAW_MARGIN, 10),
+                f"{board}  {fr.length:.2f} x {fr.width:.2f} mm  face at the bottom (v = 0)  "
+                f"{len(items)} parts, {n_bottom} under the board (blue), pack voltage red, "
+                f"GND pads green, a ring = a pin through the board", fill="black", font=font)
+        dr.text((DRAW_MARGIN, 26),
+                (f"UNPLACED (orange, drawn where the file had them): {' '.join(unplaced)}"
+                 if unplaced else "every part placed"),
+                fill=DRAW_UNPLACED if unplaced else (120, 120, 120), font=font)
+        path = out_dir / f"{prefix}-{board}.png"
+        im.save(path)
+        written.append(path)
+    return written
+
+
 # --- command line -----------------------------------------------------------------
 def default_file():
     return Path(build_project.EDITOR_PROJECTS) / PROJECT_FILE
@@ -1860,9 +2128,13 @@ def default_file():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    mode = ap.add_mutually_exclusive_group(required=True)
+    mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--stack", action="store_true", help="place every board, check, write")
     mode.add_argument("--check", action="store_true", help="report on the saved file; never writes")
+    ap.add_argument("--draw", default=None, metavar="DIR",
+                    help="draw one PNG per board into DIR -- the placement proposed by --stack, "
+                         "or the one the file holds; on its own it draws the file. LOOK AT IT: "
+                         "the picture is a step of the process, not a decoration")
     ap.add_argument("--anchor", choices=("left", "right", "centre"), default="centre",
                     help="which end of the board the face row sits toward (default centre)")
     ap.add_argument("--keep", nargs="*", default=[], metavar="REF",
@@ -1873,6 +2145,8 @@ def main(argv=None):
     ap.add_argument("--docs", default=str(Path(__file__).resolve().parent.parent / "layout"),
                     help="where the per-board placement tables go (default: layout/)")
     a = ap.parse_args(argv)
+    if not (a.stack or a.check or a.draw):
+        ap.error("one of --stack, --check or --draw is needed")
     src = Path(a.file) if a.file else default_file()
     if not src.is_file():
         print(f"REFUSED: {src} is not a file", file=sys.stderr)
@@ -1894,14 +2168,19 @@ def main(argv=None):
             print(f"REFUSED: {board}'s PCB carries {' '.join(unknown)}, which the netlist does not put "
                   f"there -- re-import the schematic before placing", file=sys.stderr)
             return EXIT_REFUSED
-    if a.check:
+    if not a.stack:
         pl = Placement.from_file(project, ix)
         problems = check(pl, ix)
-        print(summary(pl))
-        print(f"{len(problems)} problem(s)" + ("" if problems else " -- the placement passes every check"))
-        for p in problems:
-            print(f"  - {p}")
-        return EXIT_PROBLEMS if problems else 0
+        if a.check:
+            print(summary(pl))
+            print(f"{len(problems)} problem(s)"
+                  + ("" if problems else " -- the placement passes every check"))
+            for p in problems:
+                print(f"  - {p}")
+        if a.draw:
+            for path in draw(pl, ix, a.draw, prefix=src.stem):
+                print(f"drawn: {path}")
+        return EXIT_PROBLEMS if problems and a.check else 0
     out = Path(a.out) if a.out else src
     if editor_running():
         print("REFUSED: EasyEDA Pro is running; close it first", file=sys.stderr)
@@ -1913,11 +2192,20 @@ def main(argv=None):
     docs.mkdir(parents=True, exist_ok=True)
     for board in bp.STACK_ORDER:
         (docs / f"{board}-placement.md").write_text(placement_table(pl, board), encoding="utf-8")
+    unplaced = sorted((p for items in pl.boards.values() for p in items.values() if p.unplaced),
+                      key=lambda p: (bp.STACK_ORDER.index(p.board), _ref_key(p.refdes)))
     print(f"{len(problems)} problem(s)" + ("" if problems else " -- the placement passes every check"))
     for p in problems:
         print(f"  - {p}")
-    if problems:
-        print(f"REFUSED: not written; the tables in {docs} show the proposal", file=sys.stderr)
+    for p in unplaced:
+        print(f"  - {p.board} {p.refdes}: {p.reason}")
+    if a.draw:
+        for path in draw(pl, ix, a.draw, prefix=out.stem):
+            print(f"drawn: {path}")
+    if problems or unplaced:
+        print(f"REFUSED: not written; {len(unplaced)} part(s) had nowhere to go and "
+              f"{len(problems)} check(s) failed. The tables in {docs} show the proposal"
+              + (f" and the pictures in {a.draw} show it" if a.draw else ""), file=sys.stderr)
         return EXIT_PROBLEMS
     apply(project, pl)
     try:
