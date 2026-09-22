@@ -68,7 +68,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `power_budget.py` | The 12 V load against the parts that carry it: the converter, its input choke and the B+ tap fuse, at the LVC. It states which case it models |
 | `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in |
 | `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
-| `build_project.py` | Generates the EasyEDA Pro project for the three boards. Gated on integrity, rules and a read-back of its own output |
+| `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
 | `eprj3/` | The `.eprj3` emitter: `records.py` (record grammar), `units.py` (mm ↔ file units), `project.py` (the folder and its index), `pcb.py` (outline, 4-layer stackup, holes, rules), `symbols.py` (schematic symbols), `footprints.py` (footprint documents), `v2footprint.py` (EasyEDA library footprints, V2 → V3), `placement.py` (sheet layout), `schematic.py` (sheets, devices and nets), `reader.py` (reads a sheet back and derives its nets) |
 | `padmap.py` | Which footprint pad each netlist pin lands on, typed from the datasheets |
@@ -77,22 +77,25 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `lcsc_fixture.py` | Refreshes `tests/fixtures/lcsc.json`: what LCSC says each ordered code is |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
-| `place.py` | Places the three boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the 16 rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
+| `place.py` | Places the four boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
 
 Holds the **board envelope, 41.84 × 242 mm** — typed, and re-derived by the search written out beside
-it (the width stands **1.0 mm above a 6.90 mm pack cliff at 40.84 mm** — `C207` and `J202` the
-binding pair — which
+it (the width stands **3.64 mm above the nearest packing discontinuity, which since IO-26 is a WALL
+at 38.20 mm** and not a step: the quarter brick `U201` is 37.2 mm deep and with a courtyard either
+side needs that much board, below which POWER's underside cannot be placed in any orientation —
+which
 `tests/test_board_params.py` derives from the packer and guards); the M18 cavity, **260 × 70 × 100 mm, measured by the owner 2026-09-20** (`CAVITY_MEASURED =
 True`); the wall / floor / lid **allowances** (`ENCLOSURE_DECIDED = False` until the enclosure's
 model sets them — the box is all-metal, its thicknesses are not yet known); PCB thickness; the mechanical clearance; the 1.5 mm a
 trimmed through-hole lead stands out of its board (IPC); the 0.5 mm insulating liner on the metal
 floor under POWER, whose underside carries 84 V pins; the floor seat — `U201` bolts its baseplate
 to the box floor through a 0.5 mm thermal pad, which is the only heatsink (BD-27), and the liner is
-cut away there; and the wire-bend room behind a harness plug. `STACK_ORDER` is bottom to top, three
-boards. ⛔ BD-9's alloy plate is withdrawn: there is none in the stack, and nothing here models one.
+cut away there; and the wire-bend room behind a harness plug. `STACK_ORDER` is bottom to top, four
+boards — POWER · OUTPUTS · LOGIC · CTRL. ⛔ BD-9's alloy plate is withdrawn: there is none in the
+stack, and nothing here models one.
 
 ⛔ No layer ceiling is typed anywhere. `layer_gaps(design)` and `stack_height(design)` work the stack
 out from the netlist's own heights:
@@ -134,7 +137,7 @@ deliberately *not* in that gate (owner's measurement, 2026-09-20): the cavity is
 cannot change, while the wall, floor and lid are the design's **own** allowances, so a design that
 does not fit **with** them fails today rather than after the box is drawn. What the undecided
 enclosure still does is keep the requirement from being final, which the report's first line says
-and the failure text names as a lever. Today the design requires **256.0 × 68.49 × 73.3 mm** and
+and the failure text names as a lever. Today the design requires **256.0 × 68.49 × 87.0 mm** and
 fits, with 4.00 mm along and 1.51 mm across to spare. The height is not in that list: `stack_height`
 already fails on it through the same gate. Both `board_fit` and `rules` (`HT-CAVITY`) relay it, so
 the two gates cannot give different answers.
@@ -303,7 +306,7 @@ to the record's manufacturer, the netlist **package** to the record's package, t
 **equality** after a stated suffix strip — never by substring, so `BSS127` does not accept
 `BSS127S-7` and `SMS05T1G` does not accept `TPSMS05T1G` — and each inter-board connector's contact
 count to the record's symbol-pin count. So a changed code that points at a different part (a 65 °C
-ESP32, a Diodes `BSS127S-7`, a clone TVS, a 1×9 socket ordered for a 10-contact table) fails
+ESP32, a Diodes `BSS127S-7`, a clone TVS, a 1×12 socket ordered for a 14-contact table) fails
 although the rules, which read the netlist's MPN, pass. Where the library is
 reachable, the same test holds the fixture to the live library, so a stale fixture fails too.
 ⛔ **Refresh it after changing any LCSC code.**
@@ -409,15 +412,17 @@ flag alone, and flag with wire name, which is what the build emits. `NAMING = "b
 
 - **Every placed item carries a footprint.** The build summary names any that does not, and the
   editor refuses a netlist export while one is missing (its DRC calls a missing footprint fatal).
-- **The generated project carries no layer for any part — SEVEN sit on a bottom face and every one
+- **The generated project carries no layer for any part — SIX sit on a bottom face and every one
   is flipped by hand in the editor**, against `side` in `netlist.py`: `U201` and `U202` under
   POWER (the brick's underside seat is what `FLOOR_SEAT` and the whole thermal design rest on) ·
-  `J314`, `J311` and `J312` under OUTPUTS · `J406` and `J407` under LOGIC. Each `…-UNDER` footprint
-  (`J406`, `J407`) is the upper half of a **mated** inter-board pair and is generated mirrored: after
+  `J311` under OUTPUTS · `J406` and `J407` under LOGIC · `J501` under CTRL. Each `…-UNDER` footprint
+  (`J406`, `J407`, `J501`) is the upper half of a **mated** inter-board pair and is generated
+  mirrored: after
   the flip, plus at most a 180° turn, every pad sits over its mate's. A same-numbered dual-row
   footprint cannot be aligned by any turn — STACK's signals would land on its ground row. The
-  **cabled** halves (`J311`, `J312`), the 5 V terminal `J314` and both converters are ordinary,
+  **cabled** half `J311` and both converters are ordinary,
   un-mirrored footprints — a cable has no mate to line up with; the loom carries the orientation.
+  ⚠️ The 5 V terminal `J314` is no longer one of them: since IO-26 2a it stands on CTRL's top face.
 - **Set up the HV net class before routing POWER, and J408's keep-out before routing LOGIC**
   (`layout_rules.py`, above).
 - ⬜ **Check the paste layer has no aperture over `J408`'s six pads** (Gerber viewer, top paste). The

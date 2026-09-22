@@ -5,12 +5,13 @@ Parent guidance: `../CLAUDE.md` — repo map, conventions, public-repo hygiene, 
 ## What this is
 
 Design stage — no firmware, no module hardware built. `docs/plan.md` is the architecture and the
-decision log (D1–D27, with D27's sub-decisions IO-1…IO-24); its header carries the critical path. `docs/bom.md` **owns procurement** of
+decision log (D1–D27, with D27's sub-decisions IO-1…IO-27); its header carries the critical path. `docs/bom.md` **owns procurement** of
 what the owner buys: the breadboard parts, the parts JLC cannot place (hand-soldered), and the parts
 ordered loose with the boards and fitted by the owner. Change a part there first, then the plan
 section that line's Notes names. The LCSC part JLC places for each part lives in `tools/netlist.py`.
 
-The custom build is **three stacked boards — POWER · OUTPUTS · LOGIC** (plan §9.2), each carrying one
+The custom build is **four stacked boards — POWER · OUTPUTS · LOGIC · CTRL** (plan §9.2,
+`board_params.STACK_ORDER`, bottom to top), each carrying one
 row of harness connectors on one face of the box. `tools/netlist.py`
 **is** that design: parts, nets, connectors, board assignment. The DevKitC-1 pin map in plan §3.1.3 is
 the **prototype's**; the custom board carries the pin *rules*, not those GPIO numbers.
@@ -54,10 +55,11 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only
   for the netlist it was taken from: after a netlist change, every board it touches is re-exported
-  and re-proven. ⛔ **No board is proven against the current netlist.** The audit fixes of 2026-09-21
-  changed the netlist on all three boards — STACK is 2 × 29 (LOGIC, OUTPUTS), the VH land drills 1.73
-  (POWER, OUTPUTS), `J303`/`J305` are 10- and 12-way (OUTPUTS), and the expanders' RESETs ride `EN`.
-  Every board must be re-exported and re-proven before its layout is trusted. ⛔ **A proof dies the
+  and re-proven. ⛔ **No board is proven against the current netlist.** IO-26 and IO-27 (2026-09-22)
+  re-partitioned the design: CTRL is a fourth board, the CTRL ribbon is deleted, the 5 V aux block
+  and `J314` are on CTRL, expander #3 is on LOGIC, `STACK` is 2 × 27, `PWR-LOGIC` 1 × 14 and the new
+  `CTRL-STACK` 2 × 22. **All four boards need one `tel_check` export before the boards are ordered.**
+  ⛔ **A proof dies the
   moment `netlist.py` changes.** Never carry a ✅ forward; state the commit it was taken against.
 
 - `tools.integrity` asks whether the netlist is a circuit at all — every pin of every part lands on a
@@ -115,43 +117,51 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   are each proven to fire on a mutation of the real netlist: `tests/test_rules_mutations.py`, and
   `tests/test_rules.py` for `BUS-ORDER`. A new rule is not a rule until a test shows it firing on
   the defect it names.
-- **Board-to-board: four interfaces on two junctions — two MATED PAIRS and two CABLES (D27/IO-20).**
-  OUTPUTS ↔ LOGIC carries the pairs, **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 29, every signal beside a ground, `EN` the 29th
-  beside a ground), stamped Hong Cheng / BOOMELE halves mating insulator-to-insulator at **11.0 mm**
-  (STACK's 11.04 is the hard stop): the lower half stands on OUTPUTS, the upper half hangs **under**
-  LOGIC, its footprint generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A
-  same-numbered dual-row footprint cannot be aligned by any turn — STACK's signals would land on
-  ground. POWER ↔ OUTPUTS carries the cables, because **no stocked connector spans that gap**:
-  **`PWR-OUT`**, four conductors in a keyed JST VH loom (`V12` + `GND` on 16 AWG at 8.47 A each,
-  `V5` + `KEY_SENSE` on 22 AWG), and **`CTRL`**, a 2 × 12 (24-way) shrouded IDC ribbon — 13 grounds,
-  11 signals each flanked on both sides, the CAN pair adjacent as `G CANH CANL G`. The cable halves
-  are ORDINARY, un-mirrored footprints — the POWER halves on POWER's top face, the OUTPUTS halves
-  hanging under OUTPUTS into the gap; the loom carries the orientation. **Keying replaces the
-  palindrome**: `BUS-ORDER` still demands that a mated pair read the same from both ends, and
-  demands of a cable a positively keyed shell instead. ⚠️ The VH's keying is the wafer's **lock
-  ramp**, not the omitted third post — a symmetric omission polarises nothing — ⬜ confirm on the
+- **Board-to-board: four interfaces on three junctions — three MATED PAIRS and one CABLE (D27/IO-20,
+  IO-27).** POWER ↔ OUTPUTS is the cable, because **no stocked connector spans that gap**:
+  **`PWR-OUT`**, **five conductors** in a keyed JST VH loom (`V12` on 16 AWG, **two** `GND` on
+  16 AWG, `V5` + `KEY_SENSE` on 22 AWG) on the plain five-circuit `B5P-VH` wafer, every cavity
+  loaded. Its two halves are ORDINARY, un-mirrored footprints — `J202` on POWER's top face, `J311`
+  hanging under OUTPUTS into the 30.0 mm gap; the loom carries the orientation. The other two
+  junctions are rigid, stamped Hong Cheng / BOOMELE halves mating insulator-to-insulator at
+  **11.0 mm** (the 2.54 mm strip's 11.04 is the hard stop in both): OUTPUTS ↔ LOGIC carries
+  **`PWR-LOGIC`** (1 × 14 — the rails' palindrome `V12 G V5 G V3P3 G KEY_SENSE KEY_SENSE G V3P3 G V5
+  G V12`, its centre doubled because the family has no 1 × 13) and **`STACK`** (2 × 27, every signal
+  beside a ground); LOGIC ↔ CTRL carries **`CTRL-STACK`** (2 × 22 — the eleven controller-row
+  signals, the four 5 V channels' enable and fault lines, and `V12` at each end for the aux buck,
+  a ground beside every one). In each pair the lower half stands on the lower board's top face and
+  the upper half hangs **under** the upper board, its footprint generated PRE-MIRRORED (`…-UNDER`),
+  placed on the bottom layer. A same-numbered dual-row footprint cannot be aligned by any turn —
+  STACK's signals would land on ground. **Keying replaces the
+  palindrome** for the cable: `BUS-ORDER` still demands that a mated pair read the same from both
+  ends, and demands of a cable a positively keyed shell instead. ⚠️ The VH's keying is the wafer's
+  **lock ramp**, not a post omission — a symmetric omission polarises nothing — ⬜ confirm on the
   first sample that a reversed housing will not seat. ⛔ **"VH" clones are rated 3 A**: CAX
   `VH-4A-HT` (C5453989) lists identically and is a 2.8× overload at 8.47 A — genuine JST only, the
   Blue Sea failure shape. ⚠️ **The brass M3×30 standoffs (C775781) SET the 30.0 mm POWER → OUTPUTS
   gap** — bonded to GND at the OUTPUTS end only (IO-21), on a copper-free pad at POWER, so a brass
-  post never becomes a *third*, unrated return. ⭐ **The 12 V return is SHARED (IO-23):** every load
-  is on OUTPUTS and returns to `U201` on POWER, and the 8.47 A divides by conductance between
-  `PWR-OUT`'s one 16 AWG GND contact and `CTRL`'s **13 ribbon grounds** in parallel — the ribbon
-  carries ~79 %, ~0.52 A per 28 AWG conductor against a 1.5 A contact rating. Both are rated for
-  their share, and the 13 grounds are what make an open loom crimp survivable (0.65 A per conductor
-  with the whole return on the ribbon; 4.24 A each if there were two). ⛔ Never thin CTRL's grounds
-  — and never write that the loom is the sole return. The nylon TP-11 beside PWR-LOGIC / STACK is
-  deliberately short of the 11.04 mm stop and fitted **by measured length (10.94–11.04 mm), with no
-  shim**, so the connectors keep setting that gap. `integrity`
+  post never becomes a *third*, unrated return. ⭐ **`PWR-OUT` is the SOLE 12 V return (IO-27
+  restating IO-23):** every load is on OUTPUTS and returns to `U201` on POWER, and until the CTRL
+  ribbon was deleted its 13 grounds carried ~79 % of the 8.47 A in parallel with the loom. They are
+  gone, so the loom carries all of it — **on TWO 16 AWG conductors in the VH's fifth cavity and its
+  neighbour**, ~4.24 A each in service, and with ONE crimp open the whole 8.47 A on the survivor and
+  its 10 A contact, which is inside the rating. ⛔ Never thin either conductor to one, and never
+  write that some other path shares the return. The nylon TP-11 stands beside **both** rigid
+  junctions — four at PWR-LOGIC / STACK and four more at CTRL-STACK, one part number and one
+  selection window — deliberately short of the 11.04 mm stop and fitted **by measured length
+  (10.94–11.04 mm), with no shim**, so the connectors keep setting those gaps. `integrity`
   checks each kind against what is true of it: a pair's halves face each other, mirrored; a cable's
   halves match contact for contact, unmirrored. ⛔ **HV-LINK is gone** — POWER is one board, so no
-  84 V crosses an interface. ⛔ **STACK's pinout is derived from `_STACK_SIGNALS`** and has been
-  renumbered twice: regenerate it from the netlist, never hand-patch a document's copy.
+  84 V crosses an interface. ⛔ **Every pair's pinout is derived from its signal tuple**
+  (`_STACK_SIGNALS`, `_CTRL_STACK_SIGNALS`, `_PWRLOGIC_NETS`) and all three have been renumbered:
+  regenerate a pinout from the netlist, never hand-patch a document's copy.
 - **Harness terminals come in families by job, and the families are the rows** (plan §9.2): **7.62 mm
-  Kefa** for pack voltage (`J101` only, the CTRL row) · **5.08 mm Kangnex** for the FarDriver leads
-  and nothing else (`J309`, `J404`, and the parked `J310` / `J405`, also CTRL) · **3.50 mm Kefa** for
-  the 5 V outputs and nothing else (`J314`, the 5 V row under OUTPUTS) · **3.81 mm Kangnex** for the
-  12 V row and the INPUTS row. **Each dangerous group owns its pitch**, because the three dangerous
+  Kefa** for pack voltage (`J101` only, alone on POWER's edge) · **5.08 mm Kangnex** for the
+  FarDriver leads and nothing else (`J309`, `J404`, and the parked `J310` / `J405` — the controller
+  row, on CTRL since IO-26) · **3.50 mm Kefa** for
+  the 5 V outputs and nothing else (`J314`, on CTRL's **top** face in line with the controller row
+  since IO-26 2a) · **3.81 mm Kangnex** for the
+  12 V row on OUTPUTS and the INPUTS row on LOGIC. **Each dangerous group owns its pitch**, because the three dangerous
   mismates are a 5 V device in a 12 V header, a FarDriver lead anywhere else, and the pack plug
   anywhere else. Within the shared 3.81 mm family a smaller plug seats offset in a larger header, so
   **no 12 V terminal may share a size with an input terminal** — and no two 12 V terminals may share a size either (IO-24): 2, 4, 5, 7, 10, 12 against 3, 6, 8, 8,
@@ -237,8 +247,9 @@ a 2.6× margin. ⛔ **This is the only place in the design where a firmware beha
 inside its rating — never write it as a feature, and never let a change lengthen the decay or raise
 the tap current without re-running `tools/soft_start.py`.**
 
-- **Every expander's `RESET` rides the S3's `EN` net (IO-22, 2026-09-21)**, expander #3's down a 29th
-  STACK signal. Whatever holds the S3 in reset **through `EN`** — the power-up RC, the programmer's
+- **Every expander's `RESET` rides the S3's `EN` net (IO-22, 2026-09-21)**, and since IO-26 2a moved
+  expander #3 to LOGIC **that net crosses no interface at all** — all three expanders sit on the
+  board the S3 is on. Whatever holds the S3 in reset **through `EN`** — the power-up RC, the programmer's
   pulse at `J408`, the supervisor `U406` if it is ever fitted — holds all three expanders with it, and
   they leave reset after the S3 does: no expander can come up driving, and every bit returns to an
   input with the drivers' own pull-downs taking over (D14). ⛔ Before IO-22 the resets were pull-ups
