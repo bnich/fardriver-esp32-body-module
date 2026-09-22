@@ -402,18 +402,43 @@ def _rebus(d, iface, nets):
 
 def test_m40_the_rigid_power_bus_passes_because_it_is_a_palindrome():
     """⚠️ Not by luck, and not because BUS-ORDER looked away. PWR-LOGIC carries
-    the 3.3 V rail back DOWN to OUTPUTS, on two contacts placed symmetrically;
-    swap the V3P3 at contact 3 with the ground beside it and the tuple stops
-    reading the same from both ends, so a half mated reversed — or mirrored by
-    hanging under LOGIC, which this one is — lands the 3.3 V rail on a ground.
-    The rule says so."""
+    FOUR rails on fourteen contacts, each pair placed symmetrically; swap the
+    V3P3 at contact 5 with the ground beside it and the tuple stops reading the
+    same from both ends, so a half mated reversed — or mirrored by hanging
+    under LOGIC, which this one is — lands the 3.3 V rail on a ground. The rule
+    says so.
+
+    ⭐ FOURTEEN SINCE IO-26 2a, not nine: V12 joined the bus for the 5 V buck
+    on CTRL, and the 13-contact palindrome that wants has no header in the
+    HC-PZ254-11.5L family, so the bus went up a size and KEY_SENSE takes the
+    doubled centre. ⚠️ The second mutation below is V12's: slid one contact
+    inward at ONE end -- the shape of "put the ground outermost so the rail is
+    not on the edge" -- it stops landing on itself and ends up beside V5.
+
+    ⛔ What the rule does NOT catch, checked here so nobody assumes it does:
+    breaking the doubled centre into one KEY_SENSE and one GND. That is a
+    SENSE line facing a return, which BUS-ORDER's own docstring calls a
+    misread and a loud one rather than a short. The thing that catches it is
+    the LCSC contact count (tests/test_lcsc_records.py), not this rule."""
     nets = [cp.net for cp in D.connector("J307").pins]
-    assert len(nets) == 9 and nets == nets[::-1]
+    assert len(nets) == 14 and nets == nets[::-1]
+    assert nets[0] == nets[-1] == "V12" and nets[6] == nets[7] == "KEY_SENSE"
     assert fired(D, "BUS-ORDER") == []
-    nets[2], nets[3] = nets[3], nets[2]
-    errs = fired(_rebus(D, "PWR-LOGIC", nets), "BUS-ORDER")
+    swapped = list(nets)
+    swapped[4], swapped[5] = swapped[5], swapped[4]
+    errs = fired(_rebus(D, "PWR-LOGIC", swapped), "BUS-ORDER")
     assert any("both ends" in e and "V3P3 is a supply rail" in e
                and "SHORTS it to GND" in e for e in errs), errs
+    # ⚠️ V12 slid one contact inward at ONE end.
+    slid = list(nets)
+    slid[0], slid[1] = slid[1], slid[0]
+    errs = fired(_rebus(D, "PWR-LOGIC", slid), "BUS-ORDER")
+    assert any("both ends" in e and "V12 is a supply rail" in e for e in errs), errs
+    assert any("puts V12 beside V5" in e for e in errs), errs
+    # ...and the centre "tidied" away is NOT caught here, deliberately:
+    tidied = list(nets)
+    tidied[7] = "GND"
+    assert fired(_rebus(D, "PWR-LOGIC", tidied), "BUS-ORDER") == []
 
 
 def test_m40b_the_real_cable_passes_because_both_ends_are_keyed():

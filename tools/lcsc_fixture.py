@@ -68,8 +68,9 @@ PACKAGE_IS = {
 #: count: the record's symbol has MORE pins than the connector, never fewer.
 #: Every other connector's contact count equals its record's (M14).
 CUT_TO_LENGTH = {
-    "C2333": "a 2×40 strip cut to STACK's 2×24 at J406 and to CTRL-STACK's "
-             "2×11 at J501 (netlist._FAB_CONN)",
+    "C2333": "a 2×40 strip cut to STACK's 2×27 at J406 and to CTRL-STACK's "
+             "2×22 at J501 (netlist._FAB_CONN). ⚠️ TWO strips since IO-26 2a: "
+             "27 + 22 = 49 columns, so one cannot be cut twice",
 }
 
 

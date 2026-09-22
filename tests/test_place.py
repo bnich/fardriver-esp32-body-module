@@ -38,20 +38,31 @@ PLACED_ARGS = ["--board", *PLACED_BOARDS]
 #: and why. ⛔ BOTH ARE PLACER GAPS, not netlist ones: each check is RIGHT to
 #: fire, and plan task 5 owns both. This tuple is what goes when it does.
 #:
-#:   11 V12 bus   `J311`'s four pins come up between the drivers and the
-#:                packer seats the loom 59 mm from their centroid. ⚠️ THIS IS
-#:                NEW BECAUSE THE PART IS NEW TO THE PLACEMENT: until IO-26
-#:                J311 had nowhere to go at all (it was in `NO_ROOM`), so the
-#:                check could not fire. POWER shedding the controller row is
-#:                what seated it. IO-26 decision 3a is the answer -- a
-#:                reserved slot in the driver line for the pad row.
+#:   8 antenna    `J411` grew from 2 x 11 to 2 x 22 at IO-26 2a -- 28.34 mm of
+#:                body to 56.28 -- because the 5 V block's eight enable and
+#:                fault lines cross LOGIC → CTRL. The packer seats that socket
+#:                on LOGIC's top face and no longer honours `U401`'s target of
+#:                the back edge, leaving the antenna 7.3 mm from it against a
+#:                2 mm rule. ⚠️ It is a PACKING failure and not a capacity
+#:                one: LOGIC's pack is 128 mm of 242 and its density 31 %,
+#:                so the room exists (tools/board_fit.py). Proven by probe
+#:                2026-09-22: shrink `J411` back and it fires anyway at 2 x 13,
+#:                so it is the socket's size, not the six parts expander #3
+#:                brought with it.
 #:   14 CAN       IO-27 took CANH/CANL off STACK and put them on the
 #:                CTRL-STACK pair, whose LOGIC half `J411` stands on the TOP
 #:                face and is seated by the PACKER -- after `_place_board` has
 #:                already looked round for a connector to stand `U404` over.
 #:                `J406` was fixed as `J308`'s mate before that look, so the
 #:                transceiver used to land on its CAN contacts.
-KNOWN_OPEN = ("11 V12 bus: OUTPUTS", "14 CAN: LOGIC U404 is")
+#:
+#: ⭐ `11 V12 bus` LEFT THIS TUPLE AT IO-26 2a and was not fixed by the placer:
+#: the 5 V buck was one of the V12 loads whose centroid `J311` was measured
+#: against, and it went to CTRL with the rest of the block, so the loom now
+#: sits inside the line it feeds. ⛔ That does NOT retire decision 3a -- the
+#: reserved slot in the driver line is still what task 5 owes check 11 -- it
+#: means this fixture no longer demonstrates the gap.
+KNOWN_OPEN = ("8 antenna: LOGIC U401", "14 CAN: LOGIC U404 is")
 
 
 def but_known_open(problems):
@@ -241,33 +252,36 @@ def placed(synthetic_project, ix):
     return project, place.stack(project, ix)
 
 
-#: The ONE part the engine cannot seat on the real design, and why it has
-#: nowhere to go.  `NO_ROOM` is not a list of awkward parts: it is this run's
-#: finding, proven by `test_the_engine_leaves_what_has_no_room_unplaced`.
+#: Parts the engine cannot seat on the real design, and why they have nowhere
+#: to go.  `NO_ROOM` is not a list of awkward parts: it is this run's finding,
+#: proven by `test_the_engine_seats_every_part_of_the_real_design`.
 #:
-#: ⭐ IT WAS FOUR UNTIL IO-26, and three of them were seated by the controller
-#: row leaving POWER rather than by anything the placer learnt: with J309,
-#: J404, J310, J405 and eighteen conditioning parts gone, POWER's 40 items sit
-#: behind J101 and the 37.2 mm quarter brick `U201` has room, which puts the
-#: `J311` / `J202` loom back on the boards with it. What is left is the row
-#: IO-26's second half closes.
-NO_ROOM = {
-    "J314": "OUTPUTS' face row is ONE strip for both faces -- a terminal's pins cross "
-            "the board -- and it is 259.7 mm of a 228 mm edge",
-}
+#: ⭐ EMPTY SINCE IO-26 2a, and it was four before IO-26 began. None of them
+#: was seated by anything the placer learnt:
+#:   J309/J404/J310/J405's board  the controller row left POWER (1d), so
+#:     POWER's 40 items sit behind J101 and the 37.2 mm quarter brick U201 has
+#:     room -- which put the J311 / J202 loom back on the boards with it.
+#:   J314  the 5 V row left OUTPUTS for CTRL (2a). OUTPUTS' one strip of
+#:     connector edge was 259.7 mm of a 228 mm edge with both rows on it, and
+#:     is 220.3 with the 12 V row alone.
+#: ⛔ Empty does not mean the placer is finished: `KNOWN_OPEN` above is what it
+#: still owes. It means every part of this design now has somewhere to stand.
+NO_ROOM: dict[str, str] = {}
 
 
 @pytest.fixture(scope="module")
 def placeable_project(tmp_path_factory, template, design, ix):
-    """The same synthetic project WITHOUT the three parts of `NO_ROOM`: a
-    board may carry fewer parts than the netlist, and the tool places what the
-    PCB has.
+    """The same synthetic project WITHOUT the parts of `NO_ROOM`: a board may
+    carry fewer parts than the netlist, and the tool places what the PCB has.
 
-    ⛔ A FIXTURE, and the omission is the finding: no complete placement of
-    this design exists today. It is here because "the engine leaves a CLEAN
-    placement" and "the engine refuses HONESTLY" are two different claims and
-    both have to be proven -- a suite with only the second would pass on an
-    engine that had stopped placing anything at all."""
+    ⚠️ `NO_ROOM` IS EMPTY SINCE IO-26 2a, so this project and
+    `synthetic_project` now hold the same components. The fixture stays
+    because the claim it carries is not "these two differ": it is that "the
+    engine leaves a CLEAN placement" and "the engine refuses HONESTLY" are
+    separate claims and both have to be proven. A suite with only the second
+    passes on an engine that had stopped placing anything at all; a suite with
+    only the first passes on one that seats parts illegally rather than
+    refusing. The refusal half is proven on `crowded_project` below."""
     path = tmp_path_factory.mktemp("fits") / "revv1-module.eprj2"
     eprj2.write(template, path, _stream(design, ix, omit=tuple(NO_ROOM)), {"boards": {}},
                 "revv1-module", owner=OWNER)
@@ -278,6 +292,36 @@ def placeable_project(tmp_path_factory, template, design, ix):
 def placeable_placed(placeable_project, ix):
     project = place.load(placeable_project)
     return project, place.stack(project, ix)
+
+
+#: ⭐ THE REFUSAL FIXTURE, and the defect it carries is the real one IO-26
+#: found rather than an invented awkward part: `J314` put back UNDER OUTPUTS,
+#: where the 5 V row sat until 2a. A harness terminal is through-hole, so its
+#: pins cross the board and the 12 V row on top and the 5 V row underneath are
+#: ONE strip of connector edge -- 259.7 mm of the 228 mm between the M3
+#: corners. The engine must leave it unplaced and say why.
+@pytest.fixture(scope="module")
+def crowded_design(design):
+    return design.replace_connector("J314", board="OUTPUTS", side="bottom")
+
+
+@pytest.fixture(scope="module")
+def crowded_ix(crowded_design):
+    return place.Index(crowded_design)
+
+
+@pytest.fixture(scope="module")
+def crowded_project(tmp_path_factory, template, crowded_design, crowded_ix):
+    path = tmp_path_factory.mktemp("crowd") / "revv1-module.eprj2"
+    eprj2.write(template, path, _stream(crowded_design, crowded_ix), {"boards": {}},
+                "revv1-module", owner=OWNER)
+    return path
+
+
+@pytest.fixture(scope="module")
+def crowded_placed(crowded_project, crowded_ix):
+    project = place.load(crowded_project)
+    return project, place.stack(project, crowded_ix)
 
 
 def clone(pl):
@@ -384,9 +428,16 @@ def test_bands_follow_the_copper(ix):
     assert b["U402"] == 3 and b["U403"] == 3          # the expanders, the second by part number
     assert b["U404"] == 4 and b["U405"] == 4          # the CAN transceiver and the LDO, with the S3
     o = place.bands(ix, "OUTPUTS")
-    assert o["J314"] == 1 and o["J311"] == 4 and o["U301"] == 3 and o["D307"] == 2
+    assert o["J311"] == 4 and o["U301"] == 3 and o["D307"] == 2
     p = place.bands(ix, "POWER")
     assert p["J101"] == 1 and p["U201"] == 3 and p["J202"] == 4 and p["D101"] == 2
+    # ⬜ CTRL is not placed yet (PLACED_BOARDS, plan task 5), but the bands are
+    # a pure function of the copper and already read it: J314 is a face-row
+    # terminal there since IO-26 2a, and the 5 V switch behind it is band 2.
+    c = place.bands(ix, "CTRL")
+    assert c["J314"] == 1 and c["J309"] == 1 and c["J501"] == 4
+    assert c["D331"] == 2                             # the clamp at J314
+    assert c["U305"] == 3 and c["U306"] == 3          # the buck and its switches
 
 
 def test_power_classes_come_from_driver_pins_not_names(design):
@@ -419,35 +470,41 @@ def test_the_engine_places_every_part_and_the_checks_pass(placeable_placed, ix):
     assert but_known_open(place.check(pl, ix)) == []
 
 
-def test_the_engine_leaves_what_has_no_room_unplaced(placed, ix):
-    """The whole design. Both faces share one strip of the connector edge, so
-    OUTPUTS' row is 259.7 mm of the 228 mm between the M3 corners and `J314`
-    has nowhere to stand. It is not squeezed into somewhere illegal: it keeps
-    the reason it could not be placed, every part is still accounted for, and
-    everything the engine DID place passes every check task 5 does not own.
+def test_the_engine_seats_every_part_of_the_real_design(placed, ix):
+    """⭐ THE WHOLE DESIGN SEATS, on every board the placer knows. It did not
+    until IO-26: POWER's 37.2 mm quarter brick could not stand behind a 9.5 mm
+    row on a 41.84 mm board and took the PWR-OUT loom's two halves down with
+    it (1d moved the controller row off POWER), and OUTPUTS' one strip of
+    connector edge was 259.7 mm of 228 with the 5 V row under the 12 V one
+    (2a moved it to CTRL). Nothing in the placer changed for either.
 
-    ⭐ POWER now seats EVERYTHING, brick included. Until IO-26 the 37.2 mm
-    quarter brick could not stand behind a 9.5 mm row on a 41.84 mm board and
-    took the PWR-OUT loom's two halves down with it; the controller row moving
-    to CTRL is what made room, and nothing in the placer changed."""
+    What is left is `KNOWN_OPEN`, which is about WHERE parts sit and not about
+    whether they fit."""
     project, pl = placed
+    assert NO_ROOM == {}
     for board in PLACED_BOARDS:
         assert set(pl.boards[board]) == set(project.pcbs[board].components)
-    assert not any(p.unplaced for p in pl.boards["LOGIC"].values())
-    assert {r for r, p in pl.boards["OUTPUTS"].items() if p.unplaced} == {"J314"}
-    assert not any(p.unplaced for p in pl.boards["POWER"].values())
-    assert "228.0 mm" in pl.get("J314").reason and "both faces" in pl.get("J314").reason
+        assert not any(p.unplaced for p in pl.boards[board].values()), board
     assert but_known_open(place.check(pl, ix)) == []
 
 
-def test_an_unplaced_part_is_reported_not_measured(placed, ix):
+def test_an_unplaced_part_is_reported_not_measured(crowded_placed, crowded_ix):
     """A part with no position is named once, with its reason. Measuring it
     where the file happened to leave it would report the import's coordinates
-    as if they were this run's proposal -- `J314` sits below the outline."""
-    _, pl = placed
+    as if they were this run's proposal -- `J314` sits below the outline.
+
+    ⚠️ On `crowded_project`, because the real design has nothing left unplaced
+    (`NO_ROOM`). The defect is the one IO-26 found: `J314` back under OUTPUTS,
+    so the 12 V row on top and the 5 V row underneath are one 259.7 mm strip
+    of a 228 mm edge."""
+    _, pl = crowded_placed
+    assert {r for r, p in pl.boards["OUTPUTS"].items() if p.unplaced} == {"J314"}
+    assert "228.0 mm" in pl.get("J314").reason and "both faces" in pl.get("J314").reason
     assert pl.get("J314").box.v1 > 41.84                      # where the import left it
-    assert not any("J314" in s for s in place.check(pl, ix))
+    assert not any("J314" in s for s in place.check(pl, crowded_ix))
     assert "J314" not in pl.placed("OUTPUTS")
+    assert not any(p.unplaced for p in pl.boards["LOGIC"].values())
+    assert not any(p.unplaced for p in pl.boards["POWER"].values())
 
 
 def test_bottom_parts_come_from_the_netlists_side(placed, ix):
@@ -456,7 +513,9 @@ def test_bottom_parts_come_from_the_netlists_side(placed, ix):
         under = {it.refdes for it in ix.on(board) if it.side == "bottom"}
         assert {r for r, p in pl.boards[board].items() if p.layer == 2} == under
     assert {r for b in pl.boards.values() for r, p in b.items() if p.layer == 2} == \
-        {"U201", "U202", "J314", "J311", "J406", "J407"}
+        {"U201", "U202", "J311", "J406", "J407"}
+    # ⬜ J314 is NOT in that set any more: it stands on CTRL's TOP face since
+    # IO-26 2a, so nothing harness-side hangs under a board at all.
     # ⬜ ...and J501, CTRL-STACK's upper half, is NOT in that set: the project
     # HAS a CTRL PCB and the placer seats nothing on it, because it does not
     # know the fourth board yet (PLACED_BOARDS, plan task 5).
@@ -623,10 +682,14 @@ def test_10_channel_between_bands(placed, ix):
 
 
 def test_11_v12_bus_line_and_feed(placed, ix):
+    """⚠️ THREE DRIVERS, NOT FOUR. `U305` was the fourth IC on OUTPUTS' V12
+    bus until IO-26 2a took the 5 V buck to CTRL, and a mutation aimed at a
+    part that is not on the board moves nothing and "passes"."""
     _, pl = placed
+    assert pl.get("U305") is None, "the buck is on CTRL; this bus is OUTPUTS'"
     j311 = pl.get("J311")
     far = pl
-    for r in ("U301", "U302", "U303", "U305"):
+    for r in ("U301", "U302", "U303"):
         far = moved(far, r, du=(j311.box.cu + 40.0) - pl.get(r).box.cu)
     assert any(s.startswith("11 V12 bus") and "over 15" in s for s in place.check(far, ix))
     turned = moved(pl, "U302", angle=(pl.get("U302").angle + 90) % 360)
@@ -789,17 +852,33 @@ def test_the_engine_never_lands_a_pin_in_a_body_on_the_other_face(placed, placea
 
 
 # --- a host stands where its satellite can follow ------------------------------------
+#: The one decoupler the packer no longer reaches to its IC, and why. ⛔ Like
+#: `KNOWN_OPEN` this is a PLACER gap that plan task 5 owns, and it is asserted
+#: to still be out of reach below so it cannot sit here once it is fixed.
+#: IO-26 2a put expander #3 and its 100 nF `C308` on LOGIC, and LOGIC's top
+#: face is fuller by six parts; `C436` decouples `U406`, the unfitted
+#: supervisor, and the packer now leaves it 4.8 mm away against a 3.0 mm
+#: reach. Probed 2026-09-22: put `C308` back on OUTPUTS and this pair is
+#: within reach again, so it is the FILL and not a rule that changed.
+DECOUPLE_OPEN = {("LOGIC", "C436", "U406")}
+
+
 def test_every_decoupler_sits_on_the_ic_it_decouples(placed, ix):
     """Stronger than check 15, which asks only for the NEAREST IC on the rail:
     every 100 nF is within `DECOUPLE_REACH` of the IC it was given."""
     _, pl = placed
+    out_of_reach = set()
     for board in PLACED_BOARDS:
         for cap, host in place.decoupler_hosts(ix, board).items():
             p, h = pl.get(cap), pl.get(host)
             if p is None or h is None or p.unplaced or h.unplaced:
                 continue
             sep = p.box.separation(h.box)
-            assert sep <= place.DECOUPLE_REACH + place.TOL, (board, cap, host, sep)
+            if sep > place.DECOUPLE_REACH + place.TOL:
+                out_of_reach.add((board, cap, host))
+    assert out_of_reach == DECOUPLE_OPEN, (
+        "a decoupler out of reach that DECOUPLE_OPEN does not name, or one it "
+        "names that is now in reach -- take it out")
 
 
 def test_room_beside_finds_a_free_side_and_refuses_a_pocket():
@@ -947,14 +1026,22 @@ def test_cli_check_reports_and_stack_writes(placeable_project, tmp_path, capsys,
     assert "fixed: mate of J308" in (docs / "LOGIC-placement.md").read_text()
 
 
-def test_cli_stack_refuses_and_names_what_had_nowhere_to_go(synthetic_project, tmp_path, capsys,
-                                                            monkeypatch):
-    """The real design: `--stack` writes the tables and the pictures, names
-    every unplaced part with its reason, and does NOT write the project."""
+def test_cli_stack_refuses_and_names_what_had_nowhere_to_go(crowded_project, crowded_design,
+                                                            tmp_path, capsys, monkeypatch):
+    """`--stack` writes the tables and the pictures, names every unplaced part
+    with its reason, and does NOT write the project.
+
+    ⚠️ On `crowded_project`: the real design leaves nothing unplaced since
+    IO-26 2a, so the refusal is shown on the defect IO-26 found -- `J314` back
+    under OUTPUTS, one strip of edge for two rows. ⚠️ `main` reads the netlist
+    itself, so the CROWDED design is what it has to be given -- otherwise it
+    refuses on the PCB carrying a part the netlist does not put there, which
+    is a different (and also correct) refusal."""
     monkeypatch.setattr(place, "editor_running", lambda: False)
+    monkeypatch.setattr(place.netlist, "checked", lambda: crowded_design)
     out = tmp_path / "stack.eprj2"
     pics = tmp_path / "pics"
-    assert place.main(["--stack", *PLACED_ARGS, "--file", str(synthetic_project),
+    assert place.main(["--stack", *PLACED_ARGS, "--file", str(crowded_project),
                        "--out", str(out), "--docs", str(tmp_path / "docs"),
                        "--draw", str(pics)]) == place.EXIT_PROBLEMS
     text = capsys.readouterr().out
@@ -997,7 +1084,8 @@ def test_board_writes_only_that_boards_records(synthetic_project, tmp_path, monk
     assert place.main(["--stack", "--board", "LOGIC", "--file", str(synthetic_project),
                        "--out", str(out), "--docs", str(docs)]) == place.EXIT_PROBLEMS
     text = capsys.readouterr().out
-    assert "writing LOGIC only: 1 failed check(s) and 0 unplaced part(s)" in text
+    assert f"writing LOGIC only: {len(KNOWN_OPEN)} failed check(s) and 0 " \
+           f"unplaced part(s)" in text
     assert not out.exists()
     # ...so POWER is the board that writes: it seats everything since the
     # controller row left it, and carries no open check of its own.
@@ -1024,22 +1112,27 @@ def test_board_writes_only_that_boards_records(synthetic_project, tmp_path, monk
                                                 "LOGIC-placement.md"}
 
 
-def test_board_refuses_when_the_board_it_names_cannot_be_placed(synthetic_project, tmp_path,
-                                                                monkeypatch, capsys):
-    """The gate is per selected board: OUTPUTS cannot seat `J314` -- its one
-    strip of connector edge is 259.7 mm of 228 -- so `--board OUTPUTS` refuses
-    and writes nothing, while the same run places POWER cleanly.
+def test_board_refuses_when_the_board_it_names_cannot_be_placed(crowded_project, crowded_design,
+                                                                tmp_path, monkeypatch, capsys):
+    """The gate is per selected board: on `crowded_project` OUTPUTS cannot seat
+    `J314` -- its one strip of connector edge is 259.7 mm of 228 -- so
+    `--board OUTPUTS` refuses and writes nothing.
 
-    ⬜ It was POWER until IO-26: the brick had nowhere to go behind the
-    controller row. The row moved to CTRL, the brick fits, and the board that
-    still cannot be written is the one IO-26's second half is for."""
+    ⬜ It was POWER until IO-26 and OUTPUTS on the real design until 2a; both
+    boards seat everything now, so the refusal is shown on the fixture that
+    still carries the defect."""
     monkeypatch.setattr(place, "editor_running", lambda: False)
+    monkeypatch.setattr(place.netlist, "checked", lambda: crowded_design)
     out = tmp_path / "p.eprj2"
-    assert place.main(["--stack", "--board", "OUTPUTS", "--file", str(synthetic_project),
+    assert place.main(["--stack", "--board", "OUTPUTS", "--file", str(crowded_project),
                        "--out", str(out), "--docs", str(tmp_path / "docs")]) == place.EXIT_PROBLEMS
     text = capsys.readouterr().out
     assert "OUTPUTS J314: UNPLACED" in text
-    assert "writing OUTPUTS only: 1 failed check(s) and 1 unplaced part(s)" in text
+    # ⚠️ 0 failed checks and 1 unplaced part: the gate is the UNPLACED part
+    # alone here (the 5 V buck left OUTPUTS with the block, and check 11's
+    # V12-bus complaint went with it), which is the case worth pinning -- a
+    # board with every check green and a part in the air must not be written.
+    assert "writing OUTPUTS only: 0 failed check(s) and 1 unplaced part(s)" in text
     assert not out.exists()
 
 

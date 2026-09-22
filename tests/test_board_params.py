@@ -114,19 +114,20 @@ def test_the_envelope_the_pcb_outline_is_cut_to():
 TWELVE_V_ROW_MM = 220.28
 
 
-def test_the_edges_are_stated_by_hand_and_one_of_them_overruns_the_board():
+def test_the_edges_are_stated_by_hand_and_every_one_of_them_fits():
     """The row is arithmetic, not a heuristic, so it is one of the two things
     BOARD_L answers to -- and since 2026-09-22 it is ONE strip per board edge,
     both faces, between the M3 corners (228.0 mm of the 242): a harness
-    terminal is through-hole, so the 5 V row under OUTPUTS takes the edge like
-    the 12 V row on top of it, and the quarter brick under POWER, 37.2 mm deep
-    on a 41.84 board, cannot sit behind POWER's row and takes its 58.3 mm too.
-    The first placement put J314's pins inside J303-J305's bodies and J101's
-    pins into U201's case, and every check passed; the picture showed it.
+    terminal is through-hole, so one under a board takes the edge like one on
+    top of it, and the quarter brick under POWER, 37.2 mm deep on a 41.84
+    board, cannot sit behind POWER's row and takes its 58.3 mm too. The first
+    placement put J314's pins inside J303-J305's bodies and J101's pins into
+    U201's case, and every check passed; the picture showed it.
 
-    ⭐ IO-26 SPLIT POWER'S ROW IN TWO, which is what the four-board stack was
-    for. POWER's edge was 256.34 mm and is 115.18; the controller row it lost
-    is CTRL's 140.16 mm, on a board of its own.
+    ⭐ IO-26 SPLIT TWO ROWS OFF, which is what the four-board stack was for.
+    POWER's edge was 256.34 mm and is 115.18, the controller row it lost being
+    CTRL's 140.16 (1d); OUTPUTS' was 259.68 and is 220.28, the 5 V row it lost
+    joining the controller row on CTRL's top face (2a).
 
     THE 12 V ROW (IO-24, amended 2026-09-21), header by header:
       J301  4 x 3.81 + 10.48 =  25.72
@@ -135,40 +136,47 @@ def test_the_edges_are_stated_by_hand_and_one_of_them_overruns_the_board():
       J304  2 x 3.81 + 10.48 =  18.10
       J305 12 x 3.81 + 10.48 =  56.20
       J313  7 x 3.81 + 10.48 =  37.15   bodies 215.28
-      five HEADER_GAPs of 1.0            +  5.00 = 220.28 mm
-    and the 5 V row J314, 8 x 3.50 + 10.40 = 38.40, one more gap: 259.68 mm on
-    a 228 mm edge, 31.68 over. ⚠️ THE ONE ROW STILL OVER, and it is the next
-    task's (IO-26 2a): the 5 V block leaves OUTPUTS and takes J314 with it.
+      five HEADER_GAPs of 1.0            +  5.00 = 220.28 mm, 96.6 %
+    ⚠️ IO-24's STATED EXCEPTION to the 90 % design margin, and now the only
+    one -- with the 5 V row gone this figure no longer moves for anything but
+    a 12 V terminal changing size.
     POWER: J101's 6 x 7.62 + 10.16 = 55.88, plus U201's 58.3 under it and a
     gap = 115.18 mm, 50.5 % of the edge. (U202 is 25.4 deep: 41.84 - 12.15 =
     29.69 mm stand behind J101's row, so it sits behind and costs nothing.)
-    CTRL: 25.40 + 35.56 + 20.32 + 55.88 = 137.16 of headers and three gaps =
-    140.16 mm, 61.5 %.
-    LOGIC: 185.94 mm, 81.6 % of the edge -- inside the 90 % design margin.
+    CTRL: the controller row 25.40 + 35.56 + 20.32 + 55.88 = 137.16 of headers
+    and three gaps = 140.16, plus one more gap and the 5 V row's J314 at
+    8 x 3.50 + 10.40 = 38.40: 179.56 mm, 78.8 %.
+    LOGIC: 185.94 mm, 81.6 % of the edge.
 
     Protects: that the edge arithmetic is stated where a person can check it,
-    and that the one overrun left cannot be forgotten."""
+    and that three of the four edges stay inside the 10 % of headroom IO-14's
+    envelope search paid for."""
     from tools import board_fit as bf, netlist
     edges = {e.board: e for e in bf.edge_budget(netlist.current())}
     assert bf.EDGE_USABLE == pytest.approx(228.0)
     assert list(edges) == ["POWER", "OUTPUTS", "LOGIC", "CTRL"]
     twelve_v = sum((25.72, 29.53, 48.58, 18.10, 56.20, 37.15)) + 5 * 1.0
     assert twelve_v == pytest.approx(TWELVE_V_ROW_MM, abs=0.01)
-    assert edges["OUTPUTS"].length_mm == pytest.approx(twelve_v + 1.0 + 38.40, abs=0.01)
-    assert edges["OUTPUTS"].headers[-1] == "J314" and edges["OUTPUTS"].blockers == ()
-    assert edges["OUTPUTS"].over_mm == pytest.approx(31.68, abs=0.01)
+    assert edges["OUTPUTS"].length_mm == pytest.approx(twelve_v, abs=0.01)
+    assert edges["OUTPUTS"].headers[-1] == "J313" and edges["OUTPUTS"].blockers == ()
     assert edges["POWER"].length_mm == pytest.approx(55.88 + 1.0 + 58.3, abs=0.01)
     assert edges["POWER"].blockers == ("U201",)
     assert edges["POWER"].headers == ("J101",)
     assert edges["CTRL"].length_mm == pytest.approx(
-        sum((25.40, 35.56, 20.32, 55.88)) + 3 * 1.0, abs=0.01)
-    assert edges["CTRL"].blockers == ()
+        sum((25.40, 35.56, 20.32, 55.88)) + 3 * 1.0 + 1.0 + 38.40, abs=0.01)
+    assert edges["CTRL"].length_mm == pytest.approx(179.56, abs=0.01)
+    assert edges["CTRL"].headers[-1] == "J314" and edges["CTRL"].blockers == ()
     assert edges["LOGIC"].length_mm == pytest.approx(185.94, abs=0.01)
-    # Three of the four are inside the 90 % design margin; the fourth is the
-    # 12 V + 5 V strip, and the 5 V row moving off it is what closes this.
-    for board in ("POWER", "LOGIC", "CTRL"):
-        assert edges[board].length_mm <= 0.90 * bf.EDGE_USABLE, board
-    assert edges["OUTPUTS"].length_mm - 38.40 - 1.0 <= bf.EDGE_USABLE
+    # ⛔ EVERY edge fits the board, which is board_fit's own gate...
+    for e in edges.values():
+        assert e.over_mm < 0, e.board
+    # ...and three of the four are inside the 90 % design margin. The fourth is
+    # the 12 V row at 96.6 %, IO-24's stated exception, and it is named here so
+    # a SECOND exception cannot arrive unnoticed.
+    over_margin = [b for b, e in edges.items()
+                   if e.length_mm > 0.90 * bf.EDGE_USABLE]
+    assert over_margin == ["OUTPUTS"]
+    assert edges["OUTPUTS"].length_mm / bf.EDGE_USABLE == pytest.approx(0.966, abs=0.001)
 
 
 def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
@@ -1414,12 +1422,19 @@ def test_an_unfitted_plug_does_not_set_the_face_room():
         == pytest.approx(50.0)
 
 
-def test_a_harness_header_hanging_under_outputs_sets_the_gap_below_it():
+def test_a_connector_hanging_under_a_board_is_counted_in_the_gap_below_it():
+    """The hang is read off whatever is on the board's BOTTOM face, and the
+    KIND of connector is never asked: J311 is a cabled half, J314 was a harness
+    terminal until IO-26 2a took it to CTRL's top face, and the model counted
+    both the same way. ⚠️ Nothing harness-side hangs under a board today, which
+    is exactly why this is a mutation and not an observation."""
     from tools import netlist
     d = netlist.current()
-    tall = d.replace_connector("J314", height_mm=20.0, height_confirmed=True)
+    assert not [c for c in d.connectors if c.side == "bottom" and c.leaves_box]
+    tall = d.replace_connector("J311", height_mm=20.0, height_confirmed=True)
     gap = next(g for g in bp.layer_gaps(tall) if (g.below, g.above) == ("POWER", "OUTPUTS"))
-    assert gap.hang_mm >= 20.0 and gap.gap_mm >= 20.0 + bp.CLEARANCE
+    assert (gap.hang_mm, gap.hang_ref) == (20.0, "J311")
+    assert gap.gap_mm >= 20.0 + bp.CLEARANCE
 
 
 def test_a_connector_under_a_board_gets_a_keep_out_like_a_part():
@@ -1428,13 +1443,13 @@ def test_a_connector_under_a_board_gets_a_keep_out_like_a_part():
     30.0 - 10.9 - 1.0 = 18.1 mm is the tallest thing that may stand under it,
     and the 22.0 mm chokes do not qualify.
 
-    ⚠️ It is the ONLY one left, and both of the others went for arithmetic
-    reasons rather than a change of heart. J314: 30.0 - 7.0 - 1.0 = 22.0, and
-    L101/L102 are 22.0 exactly, so the terminal and the chokes clear each other
-    by precisely CLEARANCE -- that note existed against the 25.1 mm gap the
-    obstructions used to set, and the standoff bought the 4.9 mm that retired
-    it. J312: the CTRL ribbon is DELETED (IO-27), and its 8.6 mm box header
-    under OUTPUTS with it."""
+    ⚠️ It is the ONLY one left, and none of the others went for a change of
+    heart. J314's note read 30.0 - 7.0 - 1.0 = 22.0 against L101/L102 at 22.0
+    exactly, so the terminal and the chokes cleared each other by precisely
+    CLEARANCE; it existed against the 25.1 mm gap the obstructions used to set,
+    the standoff bought the 4.9 mm that retired it, and IO-26 2a then moved the
+    terminal to CTRL's top face altogether. J312: the CTRL ribbon is DELETED
+    (IO-27), and its 8.6 mm box header under OUTPUTS with it."""
     from tools import netlist
     stack = bp.stack_height(netlist.current())
     note = next(n for n in stack.notes if n.startswith("keep-out: J311"))

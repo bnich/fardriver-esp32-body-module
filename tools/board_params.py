@@ -835,8 +835,10 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
         # BD-14: what hangs from above and what stands below must not overlap
         # in plan wherever together they are taller than the gap. A harness
         # terminal under a board hangs into the gap exactly as a part does --
-        # J314 hangs under OUTPUTS into the gap POWER's chokes stand in -- so
-        # connectors are iterated too. The inter-board halves are skipped:
+        # J314 hung under OUTPUTS into the gap POWER's chokes stand in until
+        # IO-26 2a moved it to CTRL's top face, and the next one to be put
+        # under a board will do the same -- so connectors are iterated too and
+        # the kind of connector is not asked. The inter-board halves are skipped:
         # their mated height IS the gap, and each one faces its own other half
         # by construction, so a keep-out under it would be four notes about
         # nothing.

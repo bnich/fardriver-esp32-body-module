@@ -142,6 +142,17 @@ BUCK_STANDING_A = 0.00025
 #: limit it sets. Every resistor in both limiter strings is a 1 % part.
 R_TOL = 0.01
 
+#: The rail the 5 V aux buck draws through the upper stack (IO-26 2a). The
+#: buck is on CTRL, `U201` makes V12 on POWER, and the only path between them
+#: runs POWER → OUTPUTS on the loom, OUTPUTS → LOGIC on PWR-LOGIC and LOGIC →
+#: CTRL on CTRL-STACK. The loom is already sized at 8.47 A for the whole
+#: module (tests/test_interconnect.py); the two PAIRS carry this one load and
+#: nothing else, and nothing else in the design derives what they carry.
+#: ⚠️ The contact rating is NOT typed here -- it is `Connector.contact_a`, read
+#: off Hong Cheng's own HC-PM254-8.5H / HC-PZ254-11.5L drawings (3 A, gold
+#: flash over brass, 20 mΩ, -40…+105 °C) and stated once in netlist.py.
+BUCK_RAIL = "V12"
+
 
 def _tps4h160_limit_a(r_ohm: float) -> float:
     """TPS4H160B, R_CL → the MOST one channel passes. TI SLVSCV8E p.29 eq. 10
@@ -218,6 +229,11 @@ class Result:
     choke: Part | None = None
     choke_rated_a: float | None = None
     limit: Limit = field(default_factory=Limit)
+    #: What the 5 V aux buck draws from V12 with every channel at its
+    #: limiter's upper threshold -- the current the two mated pairs between
+    #: U201 and the buck carry (IO-26 2a).
+    buck_in_a: float | None = None
+    contacts: list = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -248,6 +264,78 @@ class Result:
         """The B+ tap current at the LVC with the outputs shed -- the load
         `tools/soft_start.py` holds Q101's key-off SOA margin to."""
         return _tap_a(self.shed_conv_in_a)
+
+
+@dataclass
+class Contacts:
+    """One half of a mated pair, and what the 5 V buck's input asks of the
+    contacts on it. ⭐ TWO figures, because two different things can go wrong:
+
+      `shared_a`  the current each contact carries in normal service, with the
+                  rail's contacts in parallel. What the copper runs at.
+      `alone_a`   the WHOLE current on ONE contact -- the case where the other
+                  is open, cold or starved of solder. It is the figure this
+                  module GATES on, for the same reason IO-27 sizes PWR-OUT's
+                  two 16 AWG returns against the whole 8.47 A each: a contact
+                  that has stopped conducting does not announce itself, and a
+                  pair that only works with both contacts good is a pair with
+                  a silent failure in it.
+
+    ⛔ What the second contact buys is therefore NOT the rating -- one carries
+    it -- but half the drop and half the heating in service, and a design that
+    survives one open contact.
+    """
+    #: Both halves, so a rating stated on one and not the other cannot hide.
+    refdes: tuple[str, ...]
+    interface: str
+    net: str
+    n: int
+    rating_a: float | None
+    shared_a: float
+    alone_a: float
+
+    @property
+    def ok(self) -> bool:
+        return self.rating_a is not None and self.alone_a <= self.rating_a
+
+    @property
+    def where(self) -> str:
+        return f"{'+'.join(self.refdes)} ({self.interface})"
+
+
+def _pair_halves(d: Design):
+    """Every half of every MATED PAIR, in netlist order. A cable is skipped:
+    a loom sizes its CONDUCTOR and its one crimped contact (IO-20), which
+    tests/test_interconnect.py holds it to, and dividing a current over
+    contacts is exactly the mistake that rule replaced."""
+    from .model import is_cabled
+    return [c for c in d.connectors
+            if c.interface and not is_cabled(c.interface)]
+
+
+def buck_rail_contacts(d: Design, buck_in_a: float) -> list[Contacts]:
+    """The `BUCK_RAIL` contacts of every mated pair that carries it, and its
+    return on the same pair, against `buck_in_a`.
+
+    ⛔ Found BY NET, never by refdes: a pair that starts carrying the rail is
+    in this list the moment its pin table says so, and a renumbered connector
+    does not fall out of it."""
+    out = []
+    by_iface: dict[str, list] = {}
+    for c in _pair_halves(d):
+        if any(cp.net == BUCK_RAIL for cp in c.pins):
+            by_iface.setdefault(c.interface, []).append(c)
+    for iface, halves in by_iface.items():
+        refs = tuple(c.refdes for c in halves)
+        # The lowest rating either half states: a pair is as good as its
+        # weaker half, and `min` of one is that one.
+        rated = [c.contact_a for c in halves if c.contact_a is not None]
+        rating = min(rated) if len(rated) == len(halves) else None
+        for net in (BUCK_RAIL, "GND"):
+            n = min(sum(cp.net == net for cp in c.pins) for c in halves)
+            out.append(Contacts(refs, iface, net, n, rating,
+                                buck_in_a / n if n else buck_in_a, buck_in_a))
+    return out
 
 
 def _rated_a(value: str) -> float | None:
@@ -506,6 +594,36 @@ def budget(d: Design | None = None) -> Result:
     r.limit = limit_case(d)
     r.problems += [f"the limit case is not derivable: {p}"
                    for p in r.limit.problems]
+
+    # ── the two mated pairs the 5 V buck is fed through (IO-26 2a) ──────────
+    # The buck is on CTRL and U201 makes V12 on POWER, so the rail crosses
+    # PWR-LOGIC and CTRL-STACK. ⚠️ Sized at the LIMIT case, not the nominal
+    # one: the contacts carry whatever the four switches pass, and what they
+    # pass is set by their ILIM resistors, not by IO-2's 1 A design load.
+    if r.limit.per_5v_a is not None:
+        r.buck_in_a = (r.limit.n5 * r.limit.per_5v_a * V5 / BUCK_EFF / V12
+                       + (BUCK_STANDING_A if r.limit.n5 else 0.0))
+    else:
+        r.buck_in_a = aux5 + standing
+    on_ctrl = {p.refdes for p in d.parts
+               if p.board == "CTRL" and BUCK_RAIL in
+               {n.name for n in d.nets_of(p.refdes)}}
+    r.contacts = buck_rail_contacts(d, r.buck_in_a)
+    if on_ctrl and not r.contacts:
+        r.problems.append(
+            f"{sorted(on_ctrl)} draw {BUCK_RAIL} on CTRL and no mated pair "
+            f"carries it: the rail cannot reach that board")
+    for c in r.contacts:
+        if c.rating_a is None:
+            r.problems.append(
+                f"{c.where} carries {c.net} and states no "
+                f"per-contact rating: nothing here can size it")
+        elif not c.ok:
+            r.problems.append(
+                f"{c.where} {c.net}: {c.alone_a:.2f} A on "
+                f"ONE contact rated {c.rating_a:g} A -- {c.n} contact(s) "
+                f"share {c.shared_a:.2f} A in service, but one open contact "
+                f"puts the whole current on the survivor and says nothing")
     return r
 
 
@@ -562,6 +680,23 @@ def _render(r: Result) -> str:
             f"{hi / r.choke_rated_a:.0%} for that long. The tap fuse is a "
             f"short-circuit device for the 84 V side (~200 A prospective, "
             f"7.8 A²s, R211's source), not the bound on this case")
+    if r.contacts and r.buck_in_a is not None:
+        lines.append(
+            f"BUCK RAIL {r.buck_in_a:.2f} A of {BUCK_RAIL} into the 5 V aux "
+            f"buck on CTRL, every 5 V channel at its limiter's upper "
+            f"threshold -- across the two mated pairs between it and U201 "
+            f"(IO-26 2a). ⚠️ Each figure is graded on ONE contact carrying "
+            f"ALL of it: contacts in parallel share until one of them stops, "
+            f"and an open contact is silent")
+        for c in r.contacts:
+            rated = (f"{c.rating_a:g} A" if c.rating_a is not None
+                     else "NO RATING STATED")
+            share = (f"{c.alone_a / c.rating_a:.0%} of {rated} alone"
+                     if c.rating_a else rated)
+            lines.append(
+                f"  {c.where} {c.net} x{c.n}  "
+                f"{c.shared_a:.2f} A each shared, {c.alone_a:.2f} A alone = "
+                f"{share}")
     lines.append(
         f"SHED {r.shed_load_12v_a:.2f} A at 12 V -- every aux channel "
         f"RELEASED, which the firmware does on key-off (IO-16) · converter "

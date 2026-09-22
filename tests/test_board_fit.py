@@ -571,24 +571,40 @@ def test_the_density_verdict_word_on_the_area_line_agrees_with_the_exit(capsys):
     assert float(line.split()[4].rstrip("%")) > bf.DENSITY_LIMIT * 100
 
 
-def test_the_real_design_s_rows_are_one_short_of_fitting_and_the_report_says_which(capsys):
-    """2026-09-22, after IO-26's first half: the controller row is a board of
-    its own, so POWER's strip is J101 plus the quarter brick it cannot sit in
-    front of, and it FITS. ⛔ ONE row is left over -- OUTPUTS, where the 12 V
-    row on top and the 5 V row underneath are one 259.68 mm strip against a
-    228 mm edge -- and IO-26's second half is what closes it: the 5 V block
-    and J314 leave this board. This pins the honest state until that lands;
-    when it does, this test is rewritten to the new fact, not deleted."""
+def test_the_real_design_s_four_rows_all_fit_and_the_report_says_by_how_much(capsys):
+    """⭐ 2026-09-22, IO-26 END TO END. Both halves have landed: (1d) the
+    controller row is a board of its own, so POWER's strip is J101 plus the
+    quarter brick it cannot sit in front of; (2a) the 5 V block and J314 left
+    OUTPUTS for CTRL, so the 12 V row has the OUTPUTS edge to itself.
+
+    The four edges, against 228.0 mm between the M3 corners:
+      POWER    J101 55.88 + gap 1.0 + U201 58.30 (under it) = 115.18, 50.5 %
+      OUTPUTS  the 12 V row alone                           = 220.28, 96.6 %
+      LOGIC    the INPUTS row                               = 185.94, 81.6 %
+      CTRL     the controller row 140.16 + gap 1.0 + J314 38.40 = 179.56, 78.8 %
+
+    ⛔ It exited 1 on OUTPUTS' 259.68 mm strip from the day IO-26 found that a
+    through-hole terminal takes both faces until 2a landed. A 1 here again is a
+    real overrun, not a known one.
+
+    Protects: that this tool's verdict on the REAL design is asserted, not just
+    its verdict on a fixture -- which is what let 259.68 mm of row sit behind a
+    green gate until a picture showed it."""
     from tools import netlist
     over = {e.board: (e.over_mm, e.blockers) for e in bf.edge_budget(netlist.current())}
     assert set(over) == {"POWER", "OUTPUTS", "LOGIC", "CTRL"}
     assert over["POWER"][0] < 0 and over["POWER"][1] == ("U201",)
-    assert over["OUTPUTS"][0] > 0 and over["OUTPUTS"][1] == ()
+    assert over["OUTPUTS"][0] < 0 and over["OUTPUTS"][1] == ()
     assert over["LOGIC"][0] < 0 and over["CTRL"][0] < 0
+    assert all(b == () for k, (_, b) in over.items() if k != "POWER")
     code, out = run(capsys, netlist.current())
-    assert code == 1
-    assert "row: OUTPUTS's 7 harness headers take 260 mm of the edge" in out
-    # ...and it is the ONLY row verdict: exactly one problem, and it is that one.
-    assert [p for p in bf.problems(netlist.current()) if p.startswith("row:")] == \
-        bf.problems(netlist.current())
-    assert len(bf.problems(netlist.current())) == 1
+    assert code == 0
+    assert "⛔ DOES NOT FIT" not in out and "✅ PASS" in out
+    assert bf.problems(netlist.current()) == []
+    # ⚠️ Fires: put J314 back under OUTPUTS and the strip overruns again, on
+    # the one board that has no room for it.
+    bad = netlist.current().replace_connector("J314", board="OUTPUTS",
+                                              side="bottom")
+    errs = bf.problems(bad)
+    assert len(errs) == 1 and errs[0].startswith("row: OUTPUTS"), errs
+    assert "260 mm of the edge" in errs[0]

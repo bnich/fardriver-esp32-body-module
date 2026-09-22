@@ -338,14 +338,29 @@ def test_every_cabled_half_is_positively_keyed(d):
 
 
 def test_each_crossing_carries_what_the_boards_above_it_use(d):
+    """⭐ V12 CLIMBS THE WHOLE STACK SINCE IO-26 2a. It used to stop at
+    OUTPUTS, where every 12 V load was; the 5 V aux buck is on CTRL now, so
+    V12 rides PWR-LOGIC up to LOGIC and CTRL-STACK up to CTRL. Nothing ON
+    LOGIC draws from it -- it passes over that board on copper, the way the
+    telltales pass the other way."""
     up = Counter(_nets(_halves(d, "PWR-OUT")[0]))
     assert up["V12"] and up["V5"] and up["KEY_SENSE"]
     assert set(up) == {"V12", "V5", "KEY_SENSE", "GND"}
     brain = Counter(_nets(_halves(d, "PWR-LOGIC")[0]))
-    assert set(brain) == {"V5", "V3P3", "KEY_SENSE", "GND"}, "LOGIC uses no V12"
+    assert set(brain) == {"V12", "V5", "V3P3", "KEY_SENSE", "GND"}
     assert brain["V3P3"] == 2, (
         "the 3.3 V rail goes back DOWN to OUTPUTS on this bus, not on the "
         "signal spine, and a rail needs two contacts to stay a palindrome")
+    assert brain["V12"] == 2, (
+        "the buck's input is ~2.6 A against a 3 A contact: two contacts, "
+        "sized in tools/power_budget.py")
+    top = Counter(_nets(_halves(d, "CTRL-STACK")[0]))
+    assert top["V12"] == 2 and "V5" not in top and "V3P3" not in top, (
+        "the only rail CTRL needs is the buck's input; a rail nobody draws "
+        "on costs two contacts and a palindrome constraint for nothing")
+    # ...and no part on LOGIC is on V12: it only passes through.
+    assert "LOGIC" not in {d.board_of(r) for r, _ in d.net("V12").pins
+                           if not r.startswith("J")}
 
 
 def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):
@@ -363,28 +378,40 @@ def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):
 
 
 def test_the_spines_pinouts_are_derived_from_their_signal_lists(d):
-    """⛔ THE PINOUT IS NEVER TYPED, on either spine. Both are built by
+    """⛔ THE PINOUT IS NEVER TYPED, on either spine. STACK is built by
     `_signal_gnd_pins` from a list of signals -- contact 2i+1 the signal, 2i+2
-    the ground across the row from it -- so the contact a net lands on, the
-    contact count, the body length and the LCSC size all follow the list.
+    the ground across the row from it -- and CTRL-STACK by `_rail_pair_pins`,
+    which is the same thing with the V12 rail wrapped round it. The contact a
+    net lands on, the contact count, the body length and the LCSC size all
+    follow the list.
 
     THE MUTATION, and it is the whole test: reverse the signal list and rebuild
     the pinout. Every signal moves to a different contact, the grounds stay
     where they are, and the body is unchanged -- which is what "derived" means
     and what a typed table could not do. ⚠️ It is run on CTRL-STACK AND on
-    STACK, because CTRL-STACK is new and STACK is the one that has been
-    renumbered twice; a builder shared by two spines has to be proven on both.
+    STACK, because a builder shared by two spines has to be proven on both,
+    and because this is the check that would catch a hand-patched pin table.
     """
-    for iface, signals in (("CTRL-STACK", netlist._flat(netlist._CTRL_STACK_SIGNALS)),
-                           ("STACK", netlist._STACK_SIGNALS)):
+    def build(iface, signals):
+        if iface == "CTRL-STACK":
+            return [cp.net for cp in netlist._rail_pair_pins(
+                signals, netlist._CTRL_STACK_RAIL, netlist._CTRL_STACK_ROWS)]
+        return [cp.net for cp in netlist._signal_gnd_pins(signals)]
+
+    for iface, signals, pad in (
+            ("CTRL-STACK", netlist._flat(netlist._CTRL_STACK_SIGNALS), 3),
+            ("STACK", netlist._STACK_SIGNALS, 0)):
         live = [cp.net for cp in _halves(d, iface)[0].pins]
-        built = [cp.net for cp in netlist._signal_gnd_pins(signals)]
+        built = build(iface, signals)
         assert live == built, iface
-        assert built[0::2] == list(signals) and set(built[1::2]) == {"GND"}
-        turned = [cp.net for cp in netlist._signal_gnd_pins(signals[::-1])]
-        assert turned != built and turned[0::2] == list(signals)[::-1]
-        assert turned[1::2] == built[1::2], "the grounds do not move"
-        assert len(turned) == len(built) == 2 * len(signals)
+        body = built[pad:len(built) - pad] if pad else built
+        assert body[0::2] == list(signals) and set(body[1::2]) == {"GND"}
+        turned = build(iface, signals[::-1])
+        t_body = turned[pad:len(turned) - pad] if pad else turned
+        assert turned != built and t_body[0::2] == list(signals)[::-1]
+        assert t_body[1::2] == body[1::2], "the grounds do not move"
+        assert turned[:pad] == built[:pad], "nor does the rail's end block"
+        assert len(turned) == len(built) == 2 * len(signals) + 2 * pad
 
 
 def test_the_two_spines_take_the_same_family_across_the_same_stop(d):

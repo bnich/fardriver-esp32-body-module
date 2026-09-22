@@ -38,15 +38,36 @@ def test_expander_3_bit_map():
         ("GND", "V3P3", "GND")
 
 
-def test_expander_3_is_on_the_board_it_drives_and_shares_the_one_i2c_bus():
-    """It sits on OUTPUTS with the aux block (IO-7), so what crosses STACK is
-    two bus wires rather than fourteen commands."""
-    assert D.part("U304").board == "OUTPUTS"
+def test_expander_3_sits_where_its_lines_each_cross_one_pair():
+    """⭐ ON LOGIC SINCE IO-26 2a, and the board is arithmetic. The four 5 V
+    switches it enables went to CTRL with J314 and the three 12 V drivers it
+    commands stayed on OUTPUTS, so wherever this part sits, something crosses:
+
+      on LOGIC   eight 5 V lines cross CTRL-STACK, six 12 V commands cross
+                 STACK -- ONE pair each, and the I²C bus and the RESET stay on
+                 this board's own copper.
+      on OUTPUTS the eight cross STACK *and* CTRL-STACK, which wants 2 × 32
+                 contacts on a spine whose family stops at 2 × 30.
+      on CTRL    the six cross both pairs, and V3P3 has to follow the part up.
+
+    Protects: that the expander's board is the one where no line crosses
+    twice, and that all three expanders share one bus on one board."""
+    assert D.part("U304").board == "LOGIC"
     for bus, pin in (("SDA", "SDA"), ("SCL", "SCK")):
         assert _net("U304", pin) == bus
-        assert D.net(bus).interface == "STACK"
+        assert D.net(bus).interface is None, "one board's copper"
         assert {r for r, _ in D.net(bus).pins if r.startswith("U")} == \
             {"U401", "U402", "U403", "U304"}
+        assert {D.board_of(r) for r, _ in D.net(bus).pins} == {"LOGIC"}
+    assert _net("U304", "RESET") == "EN"
+    assert D.net("EN").interface is None
+    # Every line this part drives or reads crosses exactly one pair.
+    for n in range(1, 5):
+        for kind, iface in (("EN", "CTRL-STACK"), ("FAULT", "CTRL-STACK")):
+            assert D.net(f"AUX5V_{n}_{kind}").interface == iface
+        assert D.net(f"AUX12_{n}_CMD").interface == "STACK"
+    for name in ("DIAG3_CMD", "AUX12_CMD"):
+        assert D.net(name).interface == "STACK"
 
 
 #: TI SLVSCV8E eq. 10 (p.29): R_CL = V_CL(th) × K_CL / I_OUT, with 0.8 V and
@@ -102,13 +123,19 @@ def test_every_aux_output_reaches_its_terminal_with_a_clamp():
         v5 = {r for r, _ in D.net(f"AUX5V_{n}").pins}
         assert "J314" in v5 and any(D.part(r).kind == "TVS"
                                     for r in v5 if r.startswith("D"))
-    # ⛔ The 5 V row hangs UNDER the board, so its clamps must be on the board
-    # the terminal is on and not just "on OUTPUTS" -- PROT reads the board,
-    # and the side is what makes this a row of its own. The pitch is
-    # tests/test_rows.py's fact, and is not restated here.
-    assert D.connector("J314").side == "bottom"
+    # ⛔ A clamp is on the board its terminal is on, never "on OUTPUTS" --
+    # PROT reads the board, and J314 moved to CTRL's top face with the whole
+    # 5 V block (IO-26 2a). The pitch is tests/test_rows.py's fact and is not
+    # restated here.
+    assert (D.connector("J314").board, D.connector("J314").side) == ("CTRL", "top")
     assert all(D.part(f"D{330 + n}").board == D.connector("J314").board
                for n in range(1, 5))
+    # ...and the whole switched side of each channel is on that board too,
+    # while the flag's pull-up is on LOGIC at the bit that reads it.
+    for n in range(1, 5):
+        for ref in (f"U{305 + n}", f"R{364 + n}", f"R{372 + n}", f"C{325 + n}"):
+            assert D.part(ref).board == "CTRL", ref
+        assert D.part(f"R{368 + n}").board == "LOGIC"
 
 
 def test_the_12_v_terminal_shares_returns_so_it_can_be_seven_way():

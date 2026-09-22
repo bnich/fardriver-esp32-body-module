@@ -99,10 +99,14 @@ _DS_KF762 = ("Cixi Kefa KF2EDGRM-7.62 and KF2EDGKM-7.62 drawings rev A "
 _DS_KF350 = ("Cixi Kefa KF2EDGRM-3.5 and KF2EDGKM-3.5 drawings rev A "
              "(kefa_C441263.pdf, kefa_C441113.pdf)")
 _DS_VH = "JST VH connector series drawing (jst_vh_C160318.pdf)"
+#: ⚠️ The drawing is the FAMILY's: one sheet per series, with a PIN table of
+#: DIM A and DIM B per contact count, so the size in use does not change which
+#: sheet was read -- only which row of it. `hc_body` encodes the rule the table
+#: states, which is why a size change needs no new drawing.
 _DS_HC_PM = ("Hong Cheng HC-PM254-8.5H drawings rev A, 1 of 1 "
              "(hongcheng_pm254_C22373895.pdf, hongcheng_pm254_C27985239.pdf, "
              "hongcheng_pm254_C22373916.pdf)")
-_DS_HC_PZ = ("Hong Cheng HC-PZ254-11.5L-1x9PZ drawing rev A, 1 of 1 "
+_DS_HC_PZ = ("Hong Cheng HC-PZ254-11.5L drawing rev A, 1 of 1 "
              "(hongcheng_pz254_C27985193.pdf)")
 _DS_BOOM = "BOOMELE PZ2.54-2xNA-11.4MM drawing (boomele_pz254_C2333.pdf)"
 _BRK = "brake-circuit.md"
@@ -760,8 +764,11 @@ _CTRL_PARTS = (
 #   U301: IN1 AUX12 · IN2 HL_LOW · IN3 HL_HIGH · IN4 HL_DRL
 #   U302: IN1 TAIL_RUN · IN2 TURN_L · IN3 TURN_R · IN4 TAIL_STOP
 #   U303: IN1-4 the four 12 V aux outputs (IO-1), on expander #3
-# The 5 V row is here too, under the board: a buck of its own and four
-# current-limited load switches (IO-1, IO-2).
+# ⛔ The 5 V row is NOT here any more (IO-26 2a): its buck, its four
+# current-limited load switches, their clamps and J314 are on CTRL, because a
+# through-hole terminal takes its board's edge from either face and the 12 V
+# row and the 5 V row together wanted 259.68 mm of a 228 mm edge. Expander #3
+# went to LOGIC with their control, and its six commands come back down STACK.
 # ════════════════════════════════════════════════════════════════════════════
 _MCP_SOURCE = (
     f"{_DS_MCP} p.11 Table 2-1 (one column for SSOP, SOIC and SPDIP): GPB0-7 1-8 · VDD 9 · VSS 10 · NC 11 · "
@@ -816,9 +823,19 @@ def _aux5v_parts(n: int) -> tuple[Part, ...]:
     pull-down that holds its enable OFF, the pull-up on its open-drain fault
     flag, the resistor that sets its limit, its input capacitor and the clamp
     on the wire.  Typed once for all four, so no channel can quietly differ
-    from its neighbours."""
+    from its neighbours.
+
+    ⭐ THE CHANNEL IS ON CTRL SINCE IO-26 2a, AND ITS TWO CONTROL LINES ARE
+    NOT. The switch, its enable pull-down, its limit resistor, its input
+    capacitor and its clamp sit beside `J314` on CTRL; the FAULT pull-up sits
+    on LOGIC at expander #3's own pin, because that is where the flag is READ
+    and where `V3P3` is. Putting it at the switch instead would have put a
+    third rail on `CTRL-STACK` for four resistors. ⛔ The ENABLE pull-down
+    does NOT move with it: it is what holds the switch OFF when nothing drives
+    the line, and a pull-down on the far side of a connector is a guarantee a
+    bad contact can take away (the same reason R115 stays with Q106)."""
     return (
-        Part(f"U{305 + n}", "TPS2553DBVR", "SOT-23-6", "OUTPUTS", "IC",
+        Part(f"U{305 + n}", "TPS2553DBVR", "SOT-23-6", "CTRL", "IC",
              ("IN", "GND", "EN", "FAULT", "ILIM", "OUT"), 1.45,
              height_confirmed=True, footprint_mm=(3.05, 3.0), v_max=6.5,
              value=f"5 V aux {n}: 1.19-1.39 A limit, active-high EN",
@@ -836,27 +853,35 @@ def _aux5v_parts(n: int) -> tuple[Part, ...]:
                     f"thermal-cycles in current limit with FAULT low (p.15) "
                     f"and the firmware drops EN. p.41 DBV0006A: SOT-23-6, "
                     f"1.45 mm max, 2.6-3.0 mm over the leads"),
-        _r(f"R{364 + n}", "OUTPUTS", "100k",
+        _r(f"R{364 + n}", "CTRL", "100k",
            f"AUX5V_{n} enable pull-down: the switch is OFF from reset and "
            f"whenever firmware is not driving expander #3's bit (D14). "
            f"{_DS_TPS2553} p.7: I_EN is ±0.5 µA, so 100 kΩ holds the pin "
-           f"under 50 mV against a 0.66 V V_IL"),
-        _r(f"R{368 + n}", "OUTPUTS", "10k",
-           f"AUX5V_{n} FAULT pull-up to V3P3, at the pin. {_DS_TPS2553} p.5: "
+           f"under 50 mV against a 0.66 V V_IL. ⛔ On CTRL at the switch's own "
+           f"pin, never at the expander: the enable crosses CTRL-STACK now, "
+           f"and a pull-down behind a connector stops holding the moment a "
+           f"contact opens -- which is exactly when it is needed"),
+        _r(f"R{368 + n}", "LOGIC", "10k",
+           f"AUX5V_{n} FAULT pull-up to V3P3, at expander #3's pin. "
+           f"{_DS_TPS2553} p.5: "
            f"the flag is an open drain; p.7 gives V_OL ≤ 180 mV at 1 mA and "
            f"≤ 1 µA of leakage, so 0.33 mA reads a clean 0/1 on an expander "
-           f"bit. ⚠️ V3P3, never V5AUX: the bit belongs to a 3.3 V expander"),
-        _r(f"R{372 + n}", "OUTPUTS", "20k",
+           f"bit. ⚠️ V3P3, never V5AUX: the bit belongs to a 3.3 V expander -- "
+           f"and it is on LOGIC, the board that HAS V3P3 and reads the flag. "
+           f"An open drain is pulled up at whichever end of its line has the "
+           f"rail; putting these four on CTRL instead would have bought "
+           f"nothing and cost V3P3 two more contacts on CTRL-STACK"),
+        _r(f"R{372 + n}", "CTRL", "20k",
            f"AUX5V_{n} ILIM to GND, which sets the limit. {_DS_TPS2553} p.7: "
            f"20 kΩ gives 1200/1295/1375 mA over -40…125 °C, and 1190-1388 mA "
            f"once the resistor's own 1 % goes through eq. 1 (p.15, which "
            f"excludes it). Over the 1 A of IO-2 at every corner and under the "
            f"1.6 A a 1 A wire is sized for; p.6 allows 15-232 kΩ"),
-        _c(f"C{325 + n}", "OUTPUTS", "100nF", 50.0,
+        _c(f"C{325 + n}", "CTRL", "100nF", 50.0,
            f"AUX5V_{n} switch input decoupling, at the pin. {_DS_TPS2553} p.5: "
            f"'connect a 0.1 µF or greater ceramic capacitor from IN to GND as "
            f"close to the IC as possible'"),
-        _tvs6(f"D{330 + n}", "OUTPUTS", f"At J314: AUX5V_{n}"),
+        _tvs6(f"D{330 + n}", "CTRL", f"At J314: AUX5V_{n}"),
     )
 
 
@@ -1005,8 +1030,9 @@ _OUTPUTS_PARTS = (
     # ── the aux block (IO-1, IO-2): four 12 V and four 5 V outputs at 1 A ────
     # A third TPS4H160B gives the 12 V four, identical in hardware to the lamp
     # channels; a buck and four load switches give the 5 V four; expander #3
-    # commands all of it, and both terminals are in the rows on OUTPUTS' two
-    # faces (12 V on top, 5 V underneath).
+    # commands all of it from LOGIC. ⚠️ The block is SPLIT ACROSS TWO BOARDS
+    # since IO-26 2a: the 12 V four and their terminal J313 are here, in the
+    # 12 V row; the 5 V four and J314 are on CTRL, in the 5 V row.
     _tps4h160("U303", "12 V aux 1-4 (IO-1). Commanded by expander #3, and its "
               "CS and FAULT pins share U302's nodes: with DIAG_EN low a "
               "TPS4H160B's CS and FAULT are high-impedance while the current "
@@ -1045,36 +1071,32 @@ _OUTPUTS_PARTS = (
     _tvs18("D328", "OUTPUTS", "At J313: AUX12V_2"),
     _tvs18("D329", "OUTPUTS", "At J313: AUX12V_3"),
     _tvs18("D330", "OUTPUTS", "At J313: AUX12V_4"),
-    # ── expander #3: everything the aux block is commanded by ───────────────
-    Part("U304", "MCP23017T-E/SS", "SSOP-28", "OUTPUTS", "IC",
-         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET")
-         + tuple(f"GPA{i}" for i in range(7)) + tuple(f"GPB{i}" for i in range(7)),
-         2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
-         nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
-         value="I²C address 0x22 (A2..A0 = 010)",
-         source=f"Expander #3, on OUTPUTS with what it drives: the third "
-                f"TPS4H160B's four inputs and its own DIAG_EN, the AUX12 "
-                f"enable, the four 5 V switch enables and the four 5 V fault "
-                f"flags (IO-1). 14 of 16 bits. It shares the input expanders' "
-                f"I²C bus -- no native pin is free for a second -- so the "
-                f"module's two bus wires cross STACK to reach it. ⚠️ Its "
-                f"RESET is the S3's EN, down a third STACK contact (IO-22): "
-                f"out of reset every bit is an input ({_DS_MCP} register map, "
-                f"IODIR POR/RST = FFh) and every enable it drives has its own "
-                f"pull-down (the TPS4H160B's are internal), so every aux "
-                f"output is OFF whenever the S3 is held in reset -- at "
-                f"power-up behind the EN RC, with the programmer on J408, "
-                f"and under a fitted U406. ⛔ A watchdog or software restart "
-                f"does NOT reset it: EN is an input the chip cannot drive "
-                f"(ESP32-S3 datasheet v2.2 p.28), so after one it keeps "
-                f"driving what it last drove until the firmware's first "
-                f"write. nc INTA and INTB: it is polled every tick, and "
-                f"nothing here needs an interrupt. {_MCP_SOURCE}"),
-    _c("C308", "OUTPUTS", "100nF", 50.0, "U304 VDD decoupling"),
+    # ── expander #3 went to LOGIC with the 5 V block's control (IO-26 2a) ───
+    # It used to sit here, and `_LOGIC_PARTS` now holds it: the four 5 V
+    # switches it enables are on CTRL, two decks up, and the bus and reset it
+    # needs are on LOGIC, one deck up. See its own source string for the
+    # arithmetic that chose LOGIC over either of the other two boards.
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# PARTS — the 5 V AUX BLOCK, on CTRL since IO-26 2a (2026-09-22).
+# ⭐ WHY IT LEFT OUTPUTS: the 12 V row and the 5 V row cannot share one board
+# edge. A harness terminal is through-hole, so J314 under OUTPUTS took the
+# edge exactly as a terminal on top of it does, and OUTPUTS' one strip wanted
+# 259.68 mm of a 228 mm board. The block is the part of OUTPUTS that needs
+# neither a driver nor the 12 V loads' return path, so it is what moved; CTRL
+# had 88 mm of edge spare and takes J314 on its TOP face, in line with the
+# controller row.
+# V12 reaches it over PWR-LOGIC and then CTRL-STACK, two contacts of each
+# (tools/power_budget.py sizes them); its returns are those pairs' grounds.
+# The refdes hundreds are the boards these parts came from, and a refdes never
+# changes when a part moves board (see REFDES above).
+# ════════════════════════════════════════════════════════════════════════════
+_CTRL_AUX5V_PARTS = (
     # ── the 5 V aux supply: its OWN buck off V12 (spec §8.4) ────────────────
     # Separate from the logic's 5 V, which comes from the Cincon on POWER, so
     # a 5 V aux fault cannot brown out the S3.
-    Part("U305", "LM73605RNPR", "WQFN-30 (RNP), 0.5 mm", "OUTPUTS", "IC",
+    Part("U305", "LM73605RNPR", "WQFN-30 (RNP), 0.5 mm", "CTRL", "IC",
          ("SW", "CBOOT", "VCC", "BIAS", "SS/TRK", "FB", "NC", "PGOOD",
           "SYNC/MODE", "EN", "AGND", "PVIN", "PGND", "PAD"),
          0.8, height_confirmed=True, footprint_mm=(6.1, 4.1), nc=("RT",),
@@ -1097,7 +1119,7 @@ _OUTPUTS_PARTS = (
                 f"42 V absolute (p.5-6), over D315's 29.2 V clamp on V12; "
                 f"I_OUT 0-5 A (p.5). p.51 RNP0030A: WQFN 0.8 mm max height, "
                 f"3.9-4.1 × 5.9-6.1 mm"),
-    Part("L301", "IHLP2525CZER4R7M01", "SMD, 6.9 × 6.5 mm", "OUTPUTS", "L",
+    Part("L301", "IHLP2525CZER4R7M01", "SMD, 6.9 × 6.5 mm", "CTRL", "L",
          ("1", "2"), 3.0, height_confirmed=True, footprint_mm=(8.26, 6.9),
          v_max=75.0, value="4.7 µH ±20 % · 5.5 A at ΔT 40 °C · I_sat 10 A",
          source=f"U305's output inductor. {_DS_LM736} Table 3 p.27 asks 4.7 µH "
@@ -1109,30 +1131,30 @@ _OUTPUTS_PARTS = (
                 f"square over an 8.26 mm layout -- booked at the pad layout, "
                 f"not the body. The 4 A this rail can draw peaks at ~4.8 A "
                 f"with 25 % ripple, well inside both current figures"),
-    _c("C311", "OUTPUTS", "10uF", 35.0,
+    _c("C311", "CTRL", "10uF", 35.0,
        f"U305 PVIN bulk, one of two. {_DS_LM736} p.29 asks 2 × 10 µF 50 V "
        f"X7R (X5R accepted) at PVIN; 50 V is well over the 29.2 V D315 lets "
        f"onto V12, and TI's own rule is 'a voltage rating of twice the "
        f"maximum input voltage' to cover DC-bias derating (p.29)", pkg="1206"),
-    _c("C312", "OUTPUTS", "10uF", 35.0, "U305 PVIN bulk, the second", pkg="1206"),
-    _c("C313", "OUTPUTS", "470nF", 35.0,
+    _c("C312", "CTRL", "10uF", 35.0, "U305 PVIN bulk, the second", pkg="1206"),
+    _c("C313", "CTRL", "470nF", 35.0,
        f"U305 PVIN high-frequency bypass, right at the PVIN/PGND pins. "
        f"{_DS_LM736} p.29"),
-    _c("C314", "OUTPUTS", "470nF", 16.0,
+    _c("C314", "CTRL", "470nF", 16.0,
        f"U305 CBOOT to SW, the high-side driver's bootstrap. {_DS_LM736} p.3: "
        f"'Connect a high-quality 470-nF capacitor from this pin to the SW "
        f"pin'"),
-    _c("C315", "OUTPUTS", "2.2uF", 25.0,
+    _c("C315", "CTRL", "2.2uF", 25.0,
        f"U305 VCC to GND, the internal bias LDO's output. {_DS_LM736} p.31 "
        f"asks 2.2 µF X5R/X7R; ⛔ nothing else may load this pin (p.3)",
        pkg="1206"),
-    _c("C316", "OUTPUTS", "22nF", 50.0,
+    _c("C316", "CTRL", "22nF", 50.0,
        f"U305 SS/TRK to GND: 22 nF gives ~11 ms of soft start off the pin's "
        f"2 µA ({_DS_LM736} p.31), so the rail ramps rather than inrushing "
        f"into four load switches and their cables"),
-    _c("C317", "OUTPUTS", "470nF", 16.0,
+    _c("C317", "CTRL", "470nF", 16.0,
        f"V5AUX high-frequency bypass beside the bulk. {_DS_LM736} p.30"),
-    *(_c(f"C{317 + i}", "OUTPUTS", "22uF", 16.0,
+    *(_c(f"C{317 + i}", "CTRL", "22uF", 16.0,
          f"V5AUX bulk, {i} of 8. ⚠️ Sized on TI's TABLE, not TI's example: "
          f"{_DS_LM736} Table 3 p.27 asks 88 µF at 5 V and 500 kHz and its "
          f"footnote says 'All the COUT values are after derating. Add more "
@@ -1146,20 +1168,21 @@ _OUTPUTS_PARTS = (
          f"the catalogue on file, so confirm it on the part's own curve or "
          f"on the bench before the boards are ordered", pkg="1206")
       for i in range(1, 9)),
-    _r("R377", "OUTPUTS", "12k",
+    _r("R377", "CTRL", "12k",
        f"U305 feedback divider, top (FB to V5AUX). With R378 and V_FB "
        f"0.987/1.006/1.017 V ({_DS_LM736} p.6), V_OUT is 4.86/5.03/5.17 V -- "
        f"under the 5.25 V the 5 V clamp is chosen against and over the "
        f"TPS2553's 2.5 V floor. TI's own 100 k/24.9 k pair (p.28) has no JLC "
        f"Basic 24.9 kΩ; 12 k/3 k does, and p.31 needs no C_FF while R_FBT is "
        f"under 100 kΩ"),
-    _r("R378", "OUTPUTS", "3k", "U305 feedback divider, bottom (FB to GND), with R377"),
-    _r("R379", "OUTPUTS", "100k",
+    _r("R378", "CTRL", "3k", "U305 feedback divider, bottom (FB to GND), with R377"),
+    _r("R379", "CTRL", "100k",
        f"U305 PGOOD pull-up to V5AUX. {_DS_LM736} p.31: the flag is an open "
        f"drain and wants 'a suitable voltage supply through a current "
        f"limiting resistor'. ⚠️ Nothing reads it -- expander #3 has no input "
-       f"bit left and no native pin is free -- so it is a test point and a "
-       f"defined level, not a signal"),
+       f"bit left, no native pin is free, and reading it from LOGIC would "
+       f"cost a CTRL-STACK contact for a flag firmware cannot act on -- so it "
+       f"is a test point and a defined level, not a signal"),
     # ── the four 5 V channels ───────────────────────────────────────────────
     *(part for n in range(1, 5) for part in _aux5v_parts(n)),
 )
@@ -1284,6 +1307,45 @@ _LOGIC_PARTS = (
                 f"class-A conditioned on this board. "
                 f"nc INTA: nothing on #2 needs an interrupt; ACC_SENSE is "
                 f"polled. {_MCP_SOURCE}"),
+    # ── expander #3: everything the aux block is commanded by (IO-1) ────────
+    Part("U304", "MCP23017T-E/SS", "SSOP-28", "LOGIC", "IC",
+         ("VDD", "VSS", "SCK", "SDA", "A0", "A1", "A2", "RESET")
+         + tuple(f"GPA{i}" for i in range(7)) + tuple(f"GPB{i}" for i in range(7)),
+         2.0, height_confirmed=True, footprint_mm=(10.5, 8.2),
+         nc=("GPA7", "GPB7", "INTA", "INTB", "NC11", "NC14"),
+         value="I²C address 0x22 (A2..A0 = 010)",
+         source=f"Expander #3: the third TPS4H160B's four inputs and its own "
+                f"DIAG_EN, the AUX12 enable, the four 5 V switch enables and "
+                f"the four 5 V fault flags (IO-1). 14 of 16 bits. "
+                f"⭐ ON LOGIC SINCE IO-26 2a, and the board is arithmetic, not "
+                f"taste: the four 5 V switches it enables went to CTRL with "
+                f"J314 and the eight enable/fault lines have to reach them, "
+                f"while the six 12 V commands have to reach U301/U303 on "
+                f"OUTPUTS. From LOGIC each line crosses ONE pair -- eight up "
+                f"CTRL-STACK, six down STACK -- and the I²C bus and the RESET "
+                f"this part needs are already here. From OUTPUTS the eight "
+                f"would cross TWO pairs each and STACK would want 2 × 32, a "
+                f"size the Hong Cheng HC-PM254-8.5H family does not have (it "
+                f"stops at 2 × 30, checked 2026-09-22); from CTRL the six "
+                f"would cross two pairs each AND V3P3 would have to follow. "
+                f"⛔ The three expanders now share a board as well as a bus, "
+                f"so every command line on this module crosses a pair exactly "
+                f"once, the way the S3's own driver lines already do. ⚠️ Its "
+                f"RESET is the S3's EN on this board's own copper (IO-22), no "
+                f"longer down a STACK contact: "
+                f"out of reset every bit is an input ({_DS_MCP} register map, "
+                f"IODIR POR/RST = FFh) and every enable it drives has its own "
+                f"pull-down (the TPS4H160B's are internal, the TPS2553's are "
+                f"R365-R368 at the switch on CTRL), so every aux "
+                f"output is OFF whenever the S3 is held in reset -- at "
+                f"power-up behind the EN RC, with the programmer on J408, "
+                f"and under a fitted U406. ⛔ A watchdog or software restart "
+                f"does NOT reset it: EN is an input the chip cannot drive "
+                f"(ESP32-S3 datasheet v2.2 p.28), so after one it keeps "
+                f"driving what it last drove until the firmware's first "
+                f"write. nc INTA and INTB: it is polled every tick, and "
+                f"nothing here needs an interrupt. {_MCP_SOURCE}"),
+    _c("C308", "LOGIC", "100nF", 50.0, "U304 VDD decoupling"),
     *(part for bit, _, pull, series, cap, _ in _SPARE_LINES
       for part in _class_a_parts(pull, series, cap, f"SPARE_{bit[2:]}")),
     *(_tvs5(ref, "LOGIC", _array_where(ref)) for ref in _SPARE_TVS),
@@ -1406,12 +1468,12 @@ _LOGIC_PARTS = (
 )
 
 _PARTS = (_POWER_ENTRY_PARTS + _POWER_CONVERTER_PARTS + _CTRL_PARTS
-          + _OUTPUTS_PARTS + _LOGIC_PARTS)
+          + _OUTPUTS_PARTS + _CTRL_AUX5V_PARTS + _LOGIC_PARTS)
 
 # ════════════════════════════════════════════════════════════════════════════
 # INTERFACE PIN MAPS — the four inter-board crossings (BD-3, BD-4): one power
 # LOOM (PWR-OUT, five conductors in a keyed shell), one power PAIR (PWR-LOGIC,
-# nine contacts) and two signal spines, STACK and CTRL-STACK, both mated pairs
+# fourteen contacts) and two signal spines, STACK and CTRL-STACK, both mated pairs
 # of the same family across the same 11.04 mm stop, one deck apart.
 # ⭐ THREE of the four are mated pairs since IO-27: the CTRL ribbon was the
 # fourth, and the controller row becoming a board of its own deleted it.
@@ -1446,7 +1508,7 @@ def hc_body(per_row: int, *, rows: int, socket: bool,
     a typed figure goes wrong). The bodies are then:
 
       socket              B + 0.4   (HC-PM254-8.5H drawings, "(B+0.4)±0.3")
-      header, single row  B         (HC-PZ254-11.5L-1x9PZ, "B±0.3")
+      header, single row  B         (HC-PZ254-11.5L, "B±0.3")
       header, dual row    B − 0.2   (Hong Cheng's moulded dual-row bodies)
       header, cut to      B         (BOOMELE PZ2.54-2xNA-11.4MM, "A±0.5" =
         length from a strip          N × 2.54: the cut falls on the grid, so
@@ -1516,15 +1578,31 @@ _PWROUT_WAYS = 5
 PWROUT_HOUSING = ("VHR-5N", 5, ())
 
 #: PWR-LOGIC, J307 ↔ J407, OUTPUTS to LOGIC: the rails between those two
-#: boards, in both directions -- V5 and KEY_SENSE up, and 3.3 V back DOWN for
-#: the three pull-ups on OUTPUTS (R346, R349, R351). Its ground return is also
+#: boards, in both directions -- V12 and V5 and KEY_SENSE up, and 3.3 V back
+#: DOWN for the pull-ups on OUTPUTS (R349, R351). Its ground return is also
 #: every even STACK contact.
 #: ⚠️ V3P3 rides HERE, not on STACK, and it takes two contacts: a rail must land
 #: on ITSELF when a half is mated reversed or mirrored, which only a palindrome
 #: gives it (rule BUS-ORDER). On the spine it faced a ground, and reversed that
 #: is the 3.3 V rail shorted to ground. A power bus is where a rail belongs.
-_PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
-                  "GND", "V5")
+#: ⭐ V12 JOINED IT AT IO-26 2a, at the two ends. The 5 V aux buck is on CTRL
+#: now, and the only path from U201 to it runs POWER → OUTPUTS on the loom,
+#: OUTPUTS → LOGIC here, and LOGIC → CTRL on CTRL-STACK. It takes TWO contacts
+#: because one would carry the buck's whole 2.57 A input against a 3 A Hong
+#: Cheng contact (`tools/power_budget.py` derives both figures); paralleled
+#: they carry 1.29 A each. ⛔ Never on STACK: a rail opposite a ground is a
+#: short across the interface when a half is mated reversed, which is why
+#: V3P3 was moved off the spine in the first place.
+#: ⚠️ FOURTEEN CONTACTS, NOT THIRTEEN, and the reason is the catalogue and not
+#: the circuit. The palindrome the four rails need is odd -- `V12 G V5 G V3P3
+#: G KEY_SENSE G V3P3 G V5 G V12`, 13 -- and Hong Cheng's HC-PZ254-11.5L
+#: single-row header has no 1×13 (1×12 and 1×14 both exist; 11, 13 and 15 do
+#: not, checked at LCSC 2026-09-22). An even palindrome must have its centre
+#: contact DOUBLED, so KEY_SENSE takes two, which costs nothing and gains the
+#: sense line a second contact.
+_PWRLOGIC_NETS = ("V12", "GND", "V5", "GND", "V3P3", "GND",
+                  "KEY_SENSE", "KEY_SENSE",
+                  "GND", "V3P3", "GND", "V5", "GND", "V12")
 
 #: CTRL-STACK, J411 ↔ J501, LOGIC to CTRL: the controller row's ELEVEN signals,
 #: each with a ground across the row from it, in the same Hong Cheng / BOOMELE
@@ -1537,11 +1615,12 @@ _PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
 #: relaying for them.
 #:
 #: ⚠️ THE ORDER IS A LIST, AND THE CONNECTOR'S SIZE IS DERIVED FROM IT. The
-#: pinout is `_signal_gnd_pins`, exactly as STACK's is: contact 2i+1 the
-#: signal, 2i+2 the ground across the row from it, so every signal faces a
-#: ground and a half mated reversed or mirrored lands each signal on a return
-#: (rule BUS-ORDER). Add a signal here and the body, the LCSC size and both
-#: land patterns follow; ⛔ never type the pinout or the size.
+#: pinout is `_rail_pair_pins`, which is `_signal_gnd_pins` with a rail at each
+#: end: a signal takes an odd contact and the ground across the row from it the
+#: even one after, so every signal faces a ground and a half mated reversed or
+#: mirrored lands each signal on a return (rule BUS-ORDER). Add a signal here
+#: and the body, the LCSC size and both land patterns follow; ⛔ never type the
+#: pinout.
 #: ⚠️ A PAIR given as a tuple stays ADJACENT: CANH and CANL are a differential
 #: pair and must see the same neighbours. Flattened in place they take two
 #: neighbouring columns with a ground under each -- G above CANH, G above CANL,
@@ -1549,9 +1628,27 @@ _PWRLOGIC_NETS = ("V5", "GND", "V3P3", "GND", "KEY_SENSE", "GND", "V3P3",
 #: separate them, and never let one of them alone face a switched 12 V-class
 #: line (BOOST_CMD, TT_*): an unbalanced aggressor against one half of a pair
 #: injects DIFFERENTIALLY, the one coupling a pair cannot reject.
+#: ⭐ EIGHT MORE SINCE IO-26 2a: the four 5 V switches are on CTRL and expander
+#: #3 is on LOGIC, so each channel's enable goes up and each channel's fault
+#: flag comes back down, one contact each with a ground beside it. They sit
+#: AFTER the telltales and in channel order, enable then flag, so a channel is
+#: two neighbouring columns of the same connector and a mis-cut strip loses a
+#: whole channel rather than half of two. ⛔ They must not sit beside the CAN
+#: pair: an enable is a switched line, and `BOOST_CMD`/`TT_*` already stand
+#: between.
 _CTRL_STACK_SIGNALS = ("BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX",
                        "UART1_RX", ("CANH", "CANL"), "BOOST_CMD",
-                       "TT_L", "TT_R", "TT_HL")
+                       "TT_L", "TT_R", "TT_HL",
+                       "AUX5V_1_EN", "AUX5V_1_FAULT",
+                       "AUX5V_2_EN", "AUX5V_2_FAULT",
+                       "AUX5V_3_EN", "AUX5V_3_FAULT",
+                       "AUX5V_4_EN", "AUX5V_4_FAULT")
+
+#: The ONE rail CTRL-STACK carries, and the only thing on CTRL that needs one:
+#: the 5 V aux buck's input (IO-26 2a). ⛔ Not V3P3 and not V5 -- nothing on
+#: CTRL is fed from either, and a rail nobody draws on is two contacts and a
+#: palindrome constraint bought for nothing.
+_CTRL_STACK_RAIL = "V12"
 
 
 def _flat(signals: tuple) -> tuple[str, ...]:
@@ -1563,11 +1660,91 @@ def _flat(signals: tuple) -> tuple[str, ...]:
     return tuple(out)
 
 
-#: Contacts per row, DERIVED. 11 signals -> 2 × 11 = 22 contacts, which the
-#: family has (Hong Cheng HC-PM254-8.5H-2x11PZ). ⛔ If a size is ever missing
-#: from the family, go UP to the next even count and say so here -- never lose
-#: a signal's ground to fit the connector.
-_CTRL_STACK_ROWS = len(_flat(_CTRL_STACK_SIGNALS))
+def _signal_gnd_pins(signals: tuple[str, ...]) -> tuple[ConnPin, ...]:
+    """2 × len(signals): odd = signal, even = GND. One column per signal, so a
+    signal spine cannot silently run out of contacts or carry an empty one.
+
+    STACK's pin table IS this, and CTRL-STACK's is `_rail_pair_pins` -- which
+    is this with a rail wrapped round it -- so neither spine can drift from
+    its own signal list and the alternation is written once for both."""
+    pins = []
+    for i, net in enumerate(signals):
+        pins.append(ConnPin(str(2 * i + 1), net))
+        pins.append(ConnPin(str(2 * i + 2), "GND"))
+    return tuple(pins)
+
+
+def _rail_pair_pins(signals: tuple[str, ...], rail: str,
+                    per_row: int) -> tuple[ConnPin, ...]:
+    """`_signal_gnd_pins`, with `rail` on the first and last contact of a
+    2 × `per_row` body and grounds filling whatever the family's size leaves
+    over.
+
+      rail · GND × (k-1) · [signal, GND] per signal · GND × (k-1) · rail
+
+    ⭐ WHY THE RAIL GOES AT THE ENDS AND NOWHERE ELSE. Reversed -- or, the same
+    thing in copper, an upper half mirrored by being mounted under its board --
+    contact i meets contact n+1-i, and rule BUS-ORDER says a RAIL opposite
+    anything but itself is a short across the interface. The signal/ground
+    columns are self-mirroring (an odd contact always meets an even one, so a
+    signal always meets a return), and the two ends are the only pair of
+    contacts a rail can occupy and still land on itself.
+    ⛔ `k >= 2`, i.e. at least one ground between the rail and the first
+    signal: mated ONE CONTACT OFF the rail would otherwise sit on a signal,
+    and BUS-ORDER's adjacency test forbids two different nets side by side
+    unless one is a return. A body sized exactly `len(signals) + 1` per row
+    cannot carry a rail at all, and this raises rather than building it.
+
+    The spare contacts a family's missing size forces go to GROUND, not to a
+    second rail contact: an extra return costs nothing and is never wrong,
+    while a second rail contact would change what `power_budget` is sizing
+    without anybody saying so.
+    """
+    # `2 * per_row - 2 * len(signals)` is even for every integer input, so the
+    # leftover always splits evenly between the two ends and there is no odd
+    # case to guard -- only a case where there is not enough of it.
+    k = (2 * per_row - 2 * len(signals)) // 2
+    if k < 2:
+        raise ValueError(
+            f"a 2 x {per_row} body leaves {k} contact(s) at each end of "
+            f"{len(signals)} signals for {rail}: it needs 2 -- the rail and a "
+            f"ground between it and the first signal, or a half mated one "
+            f"contact off puts the rail on that signal (rule BUS-ORDER)")
+    nets = ([rail] + ["GND"] * (k - 1)
+            + [n for s in signals for n in (s, "GND")]
+            + ["GND"] * (k - 1) + [rail])
+    # The two things BUS-ORDER will ask of the finished connector, asked here
+    # of every caller instead of at one call site: a rail lands on itself when
+    # a half is reversed, and no two different live nets sit side by side.
+    n = len(nets)
+    for i in range(n // 2):
+        a, b = nets[i], nets[n - 1 - i]
+        assert a == b or "GND" in (a, b), (
+            f"{rail} pair: contacts {i + 1}/{n - i} carry {a} and {b}, so a "
+            f"reversed or mirrored half lands one on the other")
+        assert rail not in (a, b) or a == b, (
+            f"{rail} pair: contacts {i + 1}/{n - i} carry {a} and {b} -- a "
+            f"rail opposite anything but itself is a short across the pair")
+    for i, (a, b) in enumerate(zip(nets, nets[1:]), start=1):
+        assert a == b or "GND" in (a, b), (
+            f"{rail} pair: {a} beside {b} on contacts {i}/{i + 1}, so a half "
+            f"mated one contact off lands one on the other")
+    return tuple(ConnPin(str(i + 1), net) for i, net in enumerate(nets))
+
+
+#: Contacts per row. 19 signals want 19 + 2 = 21 -- and ⛔ Hong Cheng's
+#: HC-PM254-8.5H dual-row list HAS NO 2×21: it runs 2×2 to 2×20, then 2×22 to
+#: 2×30 (checked at LCSC 2026-09-22, and 2×30 is the largest in the family at
+#: any size). So the pair goes UP to 22, the next size that exists, and
+#: `_rail_pair_pins` spends the spare pair of contacts on ground.
+#: ⛔ Never go DOWN: a signal without its own ground, or a rail without a
+#: ground between it and the first signal, is what the size is protecting.
+#: ⚠️ 2×30 is the CEILING for both spines. STACK is 2×27 and this is 2×22; a
+#: change that pushes either past 30 needs a different connector family, and
+#: that is an owner decision, not an edit here.
+_CTRL_STACK_ROWS = 22
+_CTRL_STACK_PINS = _rail_pair_pins(_flat(_CTRL_STACK_SIGNALS),
+                                   _CTRL_STACK_RAIL, _CTRL_STACK_ROWS)
 _CTRL_STACK_SOCKET_FP = hc_body(_CTRL_STACK_ROWS, rows=2, socket=True)
 _CTRL_STACK_HEADER_FP = hc_body(_CTRL_STACK_ROWS, rows=2, socket=False, cut=True)
 
@@ -1580,6 +1757,17 @@ _CTRL_STACK_HEADER_FP = hc_body(_CTRL_STACK_ROWS, rows=2, socket=False, cut=True
 #: on the CTRL ribbon and carried on to LOGIC here. The controller row is a
 #: board of its own now and mates straight onto LOGIC, so they cross ONCE, on
 #: CTRL-STACK, and none of them touches this spine.
+#: ⭐ AND IT TRADED THREE FOR SIX AT IO-26 2a, 24 per row -> 27. Expander #3
+#: moved to LOGIC with the 5 V block's control, so `SDA`, `SCL` and `EN` no
+#: longer cross at all -- they are LOGIC's own copper now -- and the six
+#: commands that expander sends DOWN to the drivers on OUTPUTS take their
+#: place. ⚠️ That is the net cost of the move, and it is three contacts: the
+#: eight 5 V enable/fault lines would have crossed this spine AND CTRL-STACK
+#: had the expander stayed on OUTPUTS, which wants 2 × 32 here -- a size the
+#: family does not have.
+#: ⛔ The family's ceiling is 2 × 30 (HC-PM254-8.5H, checked 2026-09-22). This
+#: list has THREE contacts of headroom; a change that needs more is a different
+#: connector family, which is an owner decision.
 _STACK_SIGNALS = (
     "LGT_LOW", "LGT_HIGH", "LGT_DRL", "LGT_TAIL", "LGT_TURN_L", "LGT_TURN_R",
     "LGT_STOP",
@@ -1599,22 +1787,30 @@ _STACK_SIGNALS = (
     # into a 0-15 V telltale input, and it reports what firmware COMMANDED
     # rather than what the lamp is DOING -- which is the whole point of
     # tapping the feed. ⚠️ And there is no pin to do it with in any case:
-    # `gpio_budget` shows 32 of 32 native pins used and NOT ONE free GP bit on
-    # U402, U403 or U304. Three contacts is what the honest route costs.
+    # every input-capable GP bit on U402, U403 and U304 is spent, and
+    # `gpio_budget` shows 32 of 32 native pins used. The four `GPA7`/`GPB7`
+    # bits that are free on the input expanders are OUTPUT-ONLY
+    # (DS20001952 rev D, rule MCP-OUT7) and a telltale is an input, so they
+    # could not take these either. Three contacts is what the honest route
+    # costs.
     "TT_L", "TT_R", "TT_HL",
-    # The I²C bus comes DOWN to expander #3, which commands the aux block on
-    # OUTPUTS (IO-1). It is the input expanders' own bus: no native pin is
-    # free for a second one, and a fault that holds it stalls input reading
-    # until the driver's nine-clock recovery frees it (spec §6).
-    "SDA", "SCL",
-    # The S3's EN comes DOWN to expander #3's RESET (IO-22, owner 2026-09-21),
-    # so whatever holds the S3 in reset -- the RC at power-up, the programmer
-    # at J408, a fitted U406 -- holds every expander in reset with it and
-    # releases the aux outputs. ⚠️ EN is an INPUT the chip cannot drive
-    # (ESP32-S3 datasheet v2.2 p.28), so a watchdog or software restart never
-    # touches this line. It rides a stack contact beside a ground like every
-    # other signal; C412's 1 µF sits at the S3 end.
-    "EN",
+    # ── expander #3's six commands, DOWN to the drivers (IO-26 2a) ──────────
+    # The expander is on LOGIC and the parts it commands are here: U303's four
+    # inputs, U301's AUX12 input and U303's own DIAG_EN. Each lands on its 4k7
+    # series resistor AT THE DRIVER on OUTPUTS (R354-R358, R346), which is
+    # where TI puts it -- the resistor's job is to keep a driver pin's fault
+    # current out of the expander, so it belongs beside the driver whatever
+    # board the expander is on.
+    # ⚠️ This is the SAME SHAPE as LGT_LOW…LGT_STOP above: a 3.3 V command
+    # crossing one pair into a series resistor at a TPS4H160B input. The only
+    # difference is that an expander bit drives these and a native pin drives
+    # those.
+    "AUX12_1_CMD", "AUX12_2_CMD", "AUX12_3_CMD", "AUX12_4_CMD",
+    "DIAG3_CMD", "AUX12_CMD",
+    # ⛔ `SDA`, `SCL` and `EN` are NOT on this spine any more (IO-26 2a). They
+    # crossed it to reach expander #3 on OUTPUTS; that expander is on LOGIC
+    # now, beside the S3 and the other two, so the bus and the reset never
+    # leave that board. Nothing on OUTPUTS is on I²C.
 )
 #: Contacts per row, and each half's own body from its maker's drawing: the
 #: socket on OUTPUTS is 0.4 mm longer than the header that plugs into it.
@@ -1640,8 +1836,13 @@ def _pwrlogic(net: str) -> tuple[tuple[str, str], ...]:
 
 
 def _ctrlstack(net: str) -> tuple[tuple[str, str], ...]:
-    i = _flat(_CTRL_STACK_SIGNALS).index(net)
-    return (("J411", str(2 * i + 1)), ("J501", str(2 * i + 1)))
+    """Every CTRL-STACK contact `net` lands on, both halves. Read off the pin
+    table `_rail_pair_pins` built, never recomputed from an index: the rail
+    takes two contacts and the grounds take whatever the family's size left
+    over, so an arithmetic shortcut here would be a second, wrong copy of the
+    pinout the moment the size changed."""
+    return tuple((c, cp.pin) for cp in _CTRL_STACK_PINS if cp.net == net
+                 for c in ("J411", "J501"))
 
 
 def _stack(net: str) -> tuple[tuple[str, str], ...]:
@@ -1649,8 +1850,7 @@ def _stack(net: str) -> tuple[tuple[str, str], ...]:
     return (("J308", str(2 * i + 1)), ("J406", str(2 * i + 1)))
 
 
-_CTRL_STACK_GND = tuple((c, str(n)) for c in ("J411", "J501")
-                        for n in range(2, 2 * _CTRL_STACK_ROWS + 1, 2))
+_CTRL_STACK_GND = _ctrlstack("GND")
 
 _STACK_GND = tuple((c, str(n)) for c in ("J308", "J406")
                    for n in range(2, 2 * _STACK_ROWS + 1, 2))
@@ -1772,13 +1972,17 @@ _NETS_RAILS = (
         + _p("D413.K4 D413.K6") + _pwrout("GND") + _CTRL_STACK_GND + _pwrlogic("GND")
         + _STACK_GND,
         domain="GND", interface="PWR-OUT",
-        source="The star net, on all three boards and across all four "
-               "interfaces (one 16 AWG conductor of PWR-OUT, 13 of CTRL's 24 "
-               "contacts, PWR-LOGIC × 4, every even STACK contact); "
-               "`interface` names the lowest. Both converters' -Vout, every "
+        source="The star net, on all FOUR boards and across all three "
+               "interfaces (TWO 16 AWG conductors of PWR-OUT since IO-27, six "
+               "contacts of PWR-LOGIC, every even STACK contact, and "
+               "twenty-three of CTRL-STACK); `interface` names the lowest. "
+               "Both converters' -Vout, every "
                "lamp common (plan §6.0.2), both B− conductors of J101, and "
                "both anode pads of every TVS array land here. ⛔ Display pin 3 "
-               "(J405.3) is here and is NEVER switched"),
+               "(J405.3) is here and is NEVER switched. ⚠️ Only the loom's two "
+               "conductors carry the 12 V loads' return (IO-23/IO-27); the "
+               "two pairs' grounds above it carry the 5 V buck's own input "
+               "back down, which tools/power_budget.py sizes"),
     Net("BASEPLATE",
         _p("U201.BASEPLATE C203.2 C204.2 C205.2 C206.2 C209.2 C210.2 R211.1"),
         domain="GND",
@@ -1792,8 +1996,9 @@ _NETS_RAILS = (
         + _p("U301.VS U302.VS C303.1 C304.1 C305.1 C306.1 "
              "R301.2 R302.2 R303.2 R304.2 R305.2 R306.2 R345.2 "
              "D315.K R337.1")
-        + _p("U303.VS C309.1 C310.1 R360.2 R361.2 R362.2 R363.2 "
-             "U305.PVIN U305.EN C311.1 C312.1 C313.1"),
+        + _p("U303.VS C309.1 C310.1 R360.2 R361.2 R362.2 R363.2")
+        + _pwrlogic("V12") + _ctrlstack("V12")
+        + _p("U305.PVIN U305.EN C311.1 C312.1 C313.1"),
         domain="12V", interface="PWR-OUT",
         source="DC-DC #1's output, +S strapped to +V at the brick. 2.62 A "
                "measured (plan §3.2.3), and 8.47 A nominal now the aux block "
@@ -1802,7 +2007,14 @@ _NETS_RAILS = (
                "never leaves the box: every 12 V wire out is a TPS4H160B "
                "channel, aux 1-4 included, and "
                "the 5 V aux rail is a buck off it. D315 is its clamp, and "
-               "U305's 42 V absolute input rating clears that clamp's 29.2 V"),
+               "U305's 42 V absolute input rating clears that clamp's 29.2 V. "
+               "⭐ IT REACHES THREE BOARDS SINCE IO-26 2a: the buck is on CTRL "
+               "and the only way there is the loom to OUTPUTS, then PWR-LOGIC "
+               "up to LOGIC and CTRL-STACK up to CTRL, TWO contacts of each "
+               "because one would carry the buck's whole input against a 3 A "
+               "contact (tools/power_budget.py). ⛔ It is on the power BUS at "
+               "each hop and never on a signal spine: reversed, a rail "
+               "opposite a ground is a short across the interface"),
     Net("V5",
         _p("U202.+Vout C211.1 C212.1") + _pwrout("V5") + _pwrlogic("V5")
         + _p("U405.IN U405.EN C415.1"),
@@ -1820,13 +2032,16 @@ _NETS_RAILS = (
         + _p(" ".join(f"R{368 + n}.2" for n in range(1, 5))),
         domain="3V3", interface="PWR-LOGIC",
         source="LOGIC's 3.3 V rail. It goes DOWN to OUTPUTS for the two "
-               "TPS4H160B FAULT pull-ups (R349, R351), expander #3 and its "
-               "RESET pull-up, and the four 5 V FAULT pull-ups -- every "
-               "class-A pull-up, the levers' included, is on LOGIC with its own "
-               "terminal now -- and it goes on the POWER BUS, two contacts of "
-               "it, never on the signal spine: a rail has to land on itself "
-               "when a half is mated reversed (BUS-ORDER). U403.A0 is strapped "
-               "here (address 001) and U304.A1 is (address 010)"),
+               "TPS4H160B FAULT pull-ups (R349, R351) and nothing else -- "
+               "every other user is on this board, expander #3 and the four "
+               "5 V FAULT pull-ups included since IO-26 2a, and every class-A "
+               "pull-up sits with its own terminal here. ⛔ It does NOT reach "
+               "CTRL: nothing there is fed from 3.3 V, so the CTRL-STACK pair "
+               "carries V12 and no other rail. It goes on the POWER BUS, two "
+               "contacts of it, never on the signal spine: a rail has to land "
+               "on itself when a half is mated reversed (BUS-ORDER). "
+               "U403.A0 is strapped here (address 001) and U304.A1 is "
+               "(address 010)"),
 )
 
 #: Said once for every channel expander #3 commands: what holds it off, and
@@ -1857,8 +2072,10 @@ _NETS_12V = (
         source="U301 OUT1, the current-limited feed to horn +, fan + and "
                "buzzer +: 0.10 + ~0.50 A + a few mA against its 2 A limit. ⛔ "
                "J304.1 is BLUE and it is the POSITIVE — red is not"),
-    Net("AUX12_CMD", _p("U304.GPA5 R346.1"), domain="3V3",
-        source="The AUX12 feed's command, expander #3's GPA5 (IO-1). ⚠️ An "
+    Net("AUX12_CMD", _p("U304.GPA5") + _stack("AUX12_CMD") + _p("R346.1"),
+        domain="3V3", interface="STACK",
+        source="The AUX12 feed's command, expander #3's GPA5 (IO-1), down "
+               "STACK from LOGIC to R346 at U301. ⚠️ An "
                "ordinary output: nothing holds the channel on, so horn, fan "
                "and buzzer have no + until firmware asks for it"),
     Net("AUX12_EN", _p("R346.2 U301.IN1"), domain="3V3",
@@ -2162,13 +2379,13 @@ _NETS_LOGIC = (
         source="KEY_SENSE at the ADC pin, behind its 1 kΩ, with the HDG's "
                "0.1 µF at the pin"),
     Net("EN", _p("U401.EN R438.1 C412.1 J408.1 U406.RESET "
-                 "U402.RESET U403.RESET U304.RESET") + _stack("EN"), domain="3V3",
-        interface="STACK",
+                 "U402.RESET U403.RESET U304.RESET"), domain="3V3",
         source=f"Module enable AND every expander's RESET (IO-22): the 10 kΩ / "
                f"1 µF reset RC, the unfitted supervisor's open drain, the "
-               f"service pad the programmer pulses to reset the module, the two "
-               f"input expanders' RESET on this board and expander #3's down a "
-               f"STACK contact. Whatever holds the S3 in reset holds all three "
+               f"service pad the programmer pulses to reset the module, and "
+               f"all THREE expanders' RESET -- every one of them on this "
+               f"board since IO-26 2a, so this net never crosses an "
+               f"interface. Whatever holds the S3 in reset holds all three "
                f"in reset with it, and they leave it AFTER the S3 does: the "
                f"MCP23017's RESET releases at 0.8 × VDD ({_DS_MCP} p.4 D041, "
                f"Schmitt) and the S3 at 0.75 × VDD (ESP32-S3 datasheet v2.2 "
@@ -2197,19 +2414,21 @@ _NETS_LOGIC = (
                "listen-only tap, exists; every native pin is now in service, so "
                "it costs a pin move (the horn command to an expander) and no "
                "harness connector carries it"),
-    Net("SDA", _p("U401.IO13 U402.SDA U403.SDA R434.1") + _stack("SDA")
-        + _p("U304.SDA"), domain="3V3", gpio="GPIO13", interface="STACK",
-        source="I²C data. The two input expanders are on LOGIC and expander "
-               "#3 is on OUTPUTS with the aux block it drives (IO-1), so the "
-               "bus crosses STACK, a ground beside it. ⚠️ ONE bus for all "
+    Net("SDA", _p("U401.IO13 U402.SDA U403.SDA R434.1 U304.SDA"),
+        domain="3V3", gpio="GPIO13",
+        source="I²C data. ⭐ ALL THREE EXPANDERS ARE ON LOGIC since IO-26 2a, "
+               "so the bus is one board's copper and crosses no interface at "
+               "all: it used to run down STACK to expander #3 on OUTPUTS, and "
+               "expander #3 moved here when the 5 V switches it enables went "
+               "up to CTRL. ⚠️ ONE bus for all "
                "three: no native pin is free for a second, so a device that "
                "holds SDA down stalls input reading as well as the aux "
                "outputs until the driver's nine-clock recovery frees it. "
                "⛔ Still no lamp on it: lighting stays native (BD-5)"),
-    Net("SCL", _p("U401.IO14 U402.SCK U403.SCK R435.1") + _stack("SCL")
-        + _p("U304.SCK"), domain="3V3", gpio="GPIO14", interface="STACK",
-        source="I²C clock, onto the MCP23017's pin 12 'SCK'. Crosses STACK to "
-               "expander #3, as SDA does"),
+    Net("SCL", _p("U401.IO14 U402.SCK U403.SCK R435.1 U304.SCK"),
+        domain="3V3", gpio="GPIO14",
+        source="I²C clock, onto the MCP23017's pin 12 'SCK'. On LOGIC only, "
+               "as SDA is"),
     Net("MCP_INT", _p("U402.INTA U401.IO35"), domain="3V3", gpio="GPIO35",
         source="Interrupt from expander #1, IOCON.MIRROR = 1. GPIO35 is free "
                "because the module is an -N8 (no octal PSRAM)"),
@@ -2315,9 +2534,11 @@ _NETS_CLASS_A = (
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# NETS — the aux block on OUTPUTS (IO-1, IO-2): four 12 V outputs on a third
-# TPS4H160B, four 5 V outputs on a buck and four load switches, all commanded
-# by expander #3.  ⚠️ Every one of them is OFF until firmware drives the
+# NETS — the aux block (IO-1, IO-2): four 12 V outputs on a third TPS4H160B on
+# OUTPUTS, four 5 V outputs on a buck and four load switches on CTRL, all
+# commanded by expander #3 on LOGIC (IO-26 2a) -- which is the board from
+# which every one of the fourteen lines crosses exactly ONE mated pair.
+# ⚠️ Every one of them is OFF until firmware drives the
 # expander: its bits come out of reset as inputs, each TPS4H160B channel input
 # has its own 100-250 kΩ pull-down, and each load switch's enable has R365-R368
 # to ground (D14).  Nothing here is a hardware function.
@@ -2333,9 +2554,16 @@ def _aux12_nets(n: int) -> tuple[Net, ...]:
     """One 12 V aux channel: the command from expander #3, the device side of
     its series resistor, and the output on its way to the terminal."""
     return (
-        Net(f"AUX12_{n}_CMD", _p(f"U304.GPA{n - 1} R{353 + n}.1"), domain="3V3",
+        Net(f"AUX12_{n}_CMD",
+            _p(f"U304.GPA{n - 1}") + _stack(f"AUX12_{n}_CMD")
+            + _p(f"R{353 + n}.1"),
+            domain="3V3", interface="STACK",
             source=f"12 V aux {n}, commanded on expander #3's GPA{n - 1} "
-                   f"(IO-1). {_AUX_OFF}"),
+                   f"(IO-1). Expander #3 is on LOGIC and U303 is on OUTPUTS "
+                   f"since IO-26 2a, so this crosses STACK on a contact of "
+                   f"its own beside a ground, exactly as the S3's own lamp "
+                   f"commands do, and lands on R{353 + n} at the driver. "
+                   f"{_AUX_OFF}"),
         Net(f"AUX12_{n}_IN", _p(f"R{353 + n}.2 U303.IN{n}"), domain="3V3",
             source=f"Device side of R{353 + n}"),
         Net(f"AUX12V_{n}", _p(f"U303.OUT{n} R{359 + n}.1 J313.{2 * n - 1} "
@@ -2360,21 +2588,30 @@ def _aux5v_nets(n: int) -> tuple[Net, ...]:
                    f"contact beside it on J314. ⚠️ What D{330 + n} does and "
                    f"does not protect is IO-12, stated once in that part's "
                    f"own source"),
-        Net(f"AUX5V_{n}_EN", _p(f"U304.{_AUX5V_EN_BITS[n - 1]} "
-                                f"U{305 + n}.EN R{364 + n}.1"), domain="3V3",
+        Net(f"AUX5V_{n}_EN",
+            _p(f"U304.{_AUX5V_EN_BITS[n - 1]}") + _ctrlstack(f"AUX5V_{n}_EN")
+            + _p(f"U{305 + n}.EN R{364 + n}.1"),
+            domain="3V3", interface="CTRL-STACK",
             source=f"5 V aux {n} enable, expander #3's "
                    f"{_AUX5V_EN_BITS[n - 1]}. Active high, and R{364 + n} "
                    f"holds it down: the switch is OFF from reset and stays "
                    f"off through any window where nothing drives the "
-                   f"expander (D14)"),
-        Net(f"AUX5V_{n}_FAULT", _p(f"U304.{_AUX5V_FAULT_BITS[n - 1]} "
-                                   f"U{305 + n}.FAULT R{368 + n}.1"),
-            domain="3V3",
+                   f"expander (D14). ⭐ It crosses CTRL-STACK, a ground beside "
+                   f"it: the expander is on LOGIC and the switch on CTRL "
+                   f"(IO-26 2a). ⛔ R{364 + n} is on CTRL at the switch's own "
+                   f"pin, so an open contact on this crossing leaves the "
+                   f"switch held OFF and not floating"),
+        Net(f"AUX5V_{n}_FAULT",
+            _p(f"U{305 + n}.FAULT") + _ctrlstack(f"AUX5V_{n}_FAULT")
+            + _p(f"U304.{_AUX5V_FAULT_BITS[n - 1]} R{368 + n}.1"),
+            domain="3V3", interface="CTRL-STACK",
             source=f"5 V aux {n} fault flag, read on expander #3's "
                    f"{_AUX5V_FAULT_BITS[n - 1]}: LOW means over-current, "
                    f"over-temperature or reverse voltage on that channel, "
-                   f"after the part's 5-10 ms deglitch. Pulled up by "
-                   f"R{368 + n}"),
+                   f"after the part's 5-10 ms deglitch. An open drain on "
+                   f"CTRL, down CTRL-STACK beside a ground, pulled up by "
+                   f"R{368 + n} on LOGIC at the bit that reads it -- which is "
+                   f"the end that has V3P3"),
         Net(f"AUX5V_{n}_ILIM", _p(f"U{305 + n}.ILIM R{372 + n}.1"),
             domain="3V3",
             source=f"5 V aux {n}: the node R{372 + n} sets the current limit "
@@ -2385,8 +2622,10 @@ def _aux5v_nets(n: int) -> tuple[Net, ...]:
 
 _NETS_AUX = (
     *(net for n in range(1, 5) for net in _aux12_nets(n)),
-    Net("DIAG3_CMD", _p("U304.GPA4 R358.1"), domain="3V3",
-        source="Expander #3's GPA4: U303's own diagnostics enable. It is "
+    Net("DIAG3_CMD", _p("U304.GPA4") + _stack("DIAG3_CMD") + _p("R358.1"),
+        domain="3V3", interface="STACK",
+        source="Expander #3's GPA4: U303's own diagnostics enable, down STACK "
+               "from LOGIC to R358 at the device. It is "
                "separate from U301/U302's DIAG_EN precisely so the three "
                "devices can share CS2_RAW and FAULT2_DEV -- the firmware "
                "raises one at a time"),
@@ -2606,17 +2845,6 @@ def pwrout_loom_ends() -> tuple[tuple[str, int, str], ...]:
     return tuple(ends)
 
 
-def _signal_gnd_pins(signals: tuple[str, ...]) -> tuple[ConnPin, ...]:
-    """2 × len(signals): odd = signal, even = GND. One column per signal, so a
-    signal spine cannot silently run out of contacts or carry an empty one.
-    Both signal spines are built from it, so neither can drift from its list."""
-    pins = []
-    for i, net in enumerate(signals):
-        pins.append(ConnPin(str(2 * i + 1), net))
-        pins.append(ConnPin(str(2 * i + 2), "GND"))
-    return tuple(pins)
-
-
 #: Said once for both general-input terminals: the INPUTS row's spare capacity.
 _INPUTS_NOTE = (
     "The INPUTS row's general terminals (IO-4): 13 free class-A inputs and the "
@@ -2641,7 +2869,7 @@ _INPUTS_NOTE = (
 #: stops, not the pin. ⭐ The two gaps are the SAME height on purpose: one
 #: standoff part number (HIWA TP-11) and one selection window serve both.
 _INTERBOARD = ("Hong Cheng 2.54 mm, gold flash over brass, 3 A, 1000 V AC "
-               "withstanding, 20 mΩ, -40…+105 °C, PA6T (HC-PZ254-11.5L-1x9PZ "
+               "withstanding, 20 mΩ, -40…+105 °C, PA6T (HC-PZ254-11.5L "
                "and HC-PM254-8.5H-*PZ drawings, 1 of 1 each; the BOOMELE strip "
                "PZ2.54-2xNA-11.4MM). Body sizes come from `hc_body`, each "
                "half's own rule. The two bodies BUTT, and their sum is the "
@@ -2852,35 +3080,21 @@ _CONNECTORS = (
              "ground contact beside its own feed, and since every ground is "
              "between two feeds no contact can carry more than two loads -- "
              "2 A against this family's 8 A rating"),
-    replace(
-        _tb("J314", "OUTPUTS", "5 V aux 1-4 (IO-1): each output with its own "
-            "return, in the 5 V row UNDER the board", tuple(
-                cp for n in range(1, 5)
-                for cp in (_cp(str(2 * n - 1), f"AUX5V_{n}",
-                               f"aux {n} +, 1 A, limited at 1.19-1.39 A"),
-                           _cp(str(2 * n), "GND", f"aux {n} return"))),
-            pitch=3.50,
-            note="3.50 mm is the 5 V row's pitch and nothing else's (IO-6): "
-                 "no 12 V plug can seat here, which is what keeps 12 V out of "
-                 "a 5 V device. It hangs under OUTPUTS because the 5 V row is "
-                 "the underside of that board (IO-7), so its plugs come off "
-                 "the same face of the box as every other row's, one row "
-                 "below the 12 V terminals"),
-        side="bottom"),
     Connector("J311", "OUTPUTS", "PWR-OUT, OUTPUTS side, under the board: "
-              "V12 for the drivers and the 5 V buck, GND back, V5 and "
-              "KEY_SENSE on up to J307", _keyed_bus(_PWROUT_CONTACTS), _VH_H,
+              "V12 for the drivers and on up to the 5 V buck, GND back, V5 "
+              "and KEY_SENSE on up to J307", _keyed_bus(_PWROUT_CONTACTS), _VH_H,
               footprint_mm=vh_body(_PWROUT_WAYS), pitch_mm=3.96, hole_mm=_VH_HOLE,
               contact_a=10.0, keyed=_VH_KEY, leaves_box=False,
               interface="PWR-OUT", lead_mm=_VH_LEAD, side="bottom",
               source=f"{_CABLED}. {_VH}. {_VHR}. {_MATED_UNKNOWN}"),
-    Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V5 and KEY_SENSE up "
-              "to LOGIC, 3.3 V back down, ground on every other contact",
+    Connector("J307", "OUTPUTS", "PWR-LOGIC, OUTPUTS side: V12, V5 and "
+              "KEY_SENSE up to LOGIC, 3.3 V back down, ground between",
               _bus(_PWRLOGIC_NETS), 8.5, height_confirmed=True,
               footprint_mm=hc_body(len(_PWRLOGIC_NETS), rows=1, socket=True),
               leaves_box=False, contact_a=3.0, lead_mm=3.0,
               interface="PWR-LOGIC",
-              source=f"The SOCKET, LCSC C22373895: HC-PM254-8.5H-1x9PZ, body "
+              source=f"The SOCKET, LCSC C22373900: "
+                     f"HC-PM254-8.5H-1x{len(_PWRLOGIC_NETS)}PZ, body "
                      f"8.5 ±0.15 tall over the board and (B+0.4)±0.3 long, "
                      f"2.4 ±0.15 wide, tails 3.0 ±0.2, ø1.02 holes ({_DS_HC_PM} p.1). "
                      f"{_INTERBOARD}"),
@@ -2889,12 +3103,15 @@ _CONNECTORS = (
               _signal_gnd_pins(_STACK_SIGNALS), 8.5, height_confirmed=True,
               footprint_mm=_STACK_SOCKET_FP, contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="STACK",
-              source=f"The SOCKET, LCSC C41376169: HC-PM254-8.5H-2x{_STACK_ROWS}PZ, body "
+              source=f"The SOCKET, LCSC C42163142: HC-PM254-8.5H-2x{_STACK_ROWS}PZ, body "
                      f"8.5 ±0.15 tall and (B+0.4)±0.3 long by 5.0 ±0.15 — ⛔ "
                      f"5.0, not the 5.08 the pitch suggests. Tails 3.0 ±0.2, "
                      f"ø1.02 holes ({_DS_HC_PM} p.1). This is the pair that STOPS: 8.5 + 2.54 = "
                      f"11.04 mm, 0.04 mm more than PWR-LOGIC's 11.00, so "
-                     f"J307's insulators sit that far apart. {_INTERBOARD}"),
+                     f"J307's insulators sit that far apart. ⚠️ 2 × 27 since "
+                     f"IO-26 2a, and the family's largest is 2 × 30: three "
+                     f"contacts of headroom, checked at LCSC 2026-09-22. "
+                     f"{_INTERBOARD}"),
     # ── LOGIC ───────────────────────────────────────────────────────────────
     _tb("J402", "LOGIC", "Left pod: 9-way shell, 8 conductors. The module "
         "carries the MALE half", (
@@ -2959,7 +3176,8 @@ _CONNECTORS = (
               footprint_mm=hc_body(len(_PWRLOGIC_NETS), rows=1, socket=False),
               contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="PWR-LOGIC", side="bottom",
-              source=f"The HEADER, LCSC C27985193: HC-PZ254-11.5L-1x9PZ, "
+              source=f"The HEADER, LCSC C41375937: "
+                     f"HC-PZ254-11.5L-1x{len(_PWRLOGIC_NETS)}PZ, "
                      f"insulator 2.5 (its H) with 6.0 mm of pin into the "
                      f"socket and 3.0 ±0.2 below the board, body B ±0.3 long "
                      f"by 2.50 wide, ø1.02 holes ({_DS_HC_PZ} p.1). 2.5 + 8.5 = 11.00 mm, "
@@ -2968,19 +3186,22 @@ _CONNECTORS = (
                      f"{_INTERBOARD}"),
     Connector("J411", "LOGIC",
               f"CTRL-STACK, LOGIC side, on top of the board: 2 × "
-              f"{_CTRL_STACK_ROWS}, alternating grounds",
-              _signal_gnd_pins(_flat(_CTRL_STACK_SIGNALS)), 8.5,
+              f"{_CTRL_STACK_ROWS}, alternating grounds, V12 at both ends",
+              _CTRL_STACK_PINS, 8.5,
               height_confirmed=True, footprint_mm=_CTRL_STACK_SOCKET_FP,
               contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="CTRL-STACK",
-              source=f"The SOCKET, LCSC C22373916: "
+              source=f"The SOCKET, LCSC C27985237: "
                      f"HC-PM254-8.5H-2x{_CTRL_STACK_ROWS}PZ, body 8.5 ±0.15 "
                      f"tall and (B+0.4)±0.3 long by 5.0 ±0.15 — ⛔ 5.0, not "
                      f"the 5.08 the pitch suggests. Tails 3.0 ±0.2, ø1.02 "
                      f"holes ({_DS_HC_PM} p.1). It is the LOWER half: the "
                      f"controller board mates straight DOWN onto this face, "
                      f"and 8.5 + 2.54 = 11.04 mm is the same stop STACK sets "
-                     f"one deck below. {_INTERBOARD}"),
+                     f"one deck below. ⚠️ 2 × 22 for 19 signals and a rail: "
+                     f"the family has no 2 × 21, so the pair went UP and the "
+                     f"spare pair of contacts is ground "
+                     f"(`_rail_pair_pins`). {_INTERBOARD}"),
     Connector("J408", "LOGIC", "Service pads, INTERNAL: a Tag-Connect TC2030-NL "
               "land on UART0 — first flash, the console, and recovery when OTA "
               "fails (hold IO0 low, pulse EN, flash over UART0)", (
@@ -3071,10 +3292,27 @@ _CONNECTORS = (
         note="In the controller row with the rest of the dash wiring (IO-5), at "
              "the FarDriver pitch: the panel's CAN pair and its one-line share "
              "the controller's grounds"),
+    _tb("J314", "CTRL", "5 V aux 1-4 (IO-1): each output with its own "
+        "return, the 5 V row", tuple(
+            cp for n in range(1, 5)
+            for cp in (_cp(str(2 * n - 1), f"AUX5V_{n}",
+                           f"aux {n} +, 1 A, limited at 1.19-1.39 A"),
+                       _cp(str(2 * n), "GND", f"aux {n} return"))),
+        pitch=3.50,
+        note="3.50 mm is the 5 V row's pitch and nothing else's (IO-6): "
+             "no 12 V plug can seat here, which is what keeps 12 V out of "
+             "a 5 V device. ⭐ THE PITCH RULE IS BY HAZARD CLASS, NOT BY "
+             "BOARD: this terminal sat under OUTPUTS while the 5 V block did "
+             "(IO-7) and stands on top of CTRL now that the block has moved "
+             "(IO-26 2a), and the rule that keeps a 12 V plug out of it has "
+             "not changed by a word. It is on the TOP face here, in line with "
+             "the controller row, because CTRL's underside is where the pair "
+             "hangs and because a through-hole terminal takes its board's "
+             "edge from whichever face it stands on"),
     Connector("J501", "CTRL",
               f"CTRL-STACK, CTRL side, under the board: 2 × "
-              f"{_CTRL_STACK_ROWS}, alternating grounds",
-              _signal_gnd_pins(_flat(_CTRL_STACK_SIGNALS)), 2.54,
+              f"{_CTRL_STACK_ROWS}, alternating grounds, V12 at both ends",
+              _CTRL_STACK_PINS, 2.54,
               height_confirmed=True, footprint_mm=_CTRL_STACK_HEADER_FP,
               contact_a=3.0, lead_mm=3.0,
               leaves_box=False, interface="CTRL-STACK", side="bottom",
@@ -3338,27 +3576,42 @@ _FAB_CONN: dict[str, tuple[str, ...]] = {
              "its third post omitted: cavity 3 carries the second GND"),
     "J311": ("C160318", "JST B5P-VH(LF)(SN)", "loose",
              "the keyed 10 A power header at each end of the loom"),
-    "J307": ("C22373895", "Hong Cheng HC-PM254-8.5H-1x9PZ", "jlc",
-             "the 8.5 mm socket half of the 11.00 mm pair"),
-    "J407": ("C27985193", "Hong Cheng HC-PZ254-11.5L-1x9PZ", "jlc",
-             "the 2.5 mm header half, under LOGIC"),
-    "J308": ("C27985239", f"Hong Cheng HC-PM254-8.5H-2x{_STACK_ROWS}PZ", "jlc",
+    "J307": ("C22373900",
+             f"Hong Cheng HC-PM254-8.5H-1x{len(_PWRLOGIC_NETS)}PZ", "jlc",
+             "the 8.5 mm socket half of the 11.00 mm pair. ⚠️ 1×14 since "
+             "IO-26 2a put V12 on this bus: the palindrome the four rails "
+             "need is 13 long and the HEADER family has no 1×13, so both "
+             "halves go up a size and KEY_SENSE takes the doubled centre"),
+    "J407": ("C41375937",
+             f"Hong Cheng HC-PZ254-11.5L-1x{len(_PWRLOGIC_NETS)}PZ", "jlc",
+             "the 2.5 mm header half, under LOGIC. ⛔ It is the half that "
+             "fixes the size: HC-PZ254-11.5L has 1×12 and 1×14 and no odd "
+             "size between 9 and 17 (checked at LCSC 2026-09-22)"),
+    "J308": ("C42163142", f"Hong Cheng HC-PM254-8.5H-2x{_STACK_ROWS}PZ", "jlc",
              "the 8.5 mm socket half of the 11.04 mm STACK pair. ⚠️ The SIZE "
-             "follows _STACK_SIGNALS: 2×24 since IO-27 took the eight relayed "
-             "signals off the spine and gave it the three telltales"),
+             "follows _STACK_SIGNALS: 2×27 since IO-26 2a took the I²C bus "
+             "and the reset off the spine and put expander #3's six commands "
+             "on it. The family stops at 2×30"),
     "J406": ("C2333", "BOOMELE(Boom Precision Elec) 2.54-2*40P", "loose",
              f"ONE STRIP PER PAIR -- a 2×40 cut to 2×{_STACK_ROWS} and soldered "
              f"into LOGIC's underside here, and to 2×{_CTRL_STACK_ROWS} under "
-             f"CTRL at J501. The cutting is why JLC cannot place it. ⚠️ Two are "
-             f"ordered rather than one cut twice: 2×40 less 2×{_STACK_ROWS} "
-             f"leaves 2×{40 - _STACK_ROWS}, which would do, but a mis-cut then "
-             f"costs both pairs and the part is cents"),
-    "J411": ("C22373916", f"Hong Cheng HC-PM254-8.5H-2x{_CTRL_STACK_ROWS}PZ",
+             f"CTRL at J501. The cutting is why JLC cannot place it. ⛔ TWO are "
+             f"REQUIRED since IO-26 2a, not merely prudent: "
+             f"{_STACK_ROWS} + {_CTRL_STACK_ROWS} = "
+             f"{_STACK_ROWS + _CTRL_STACK_ROWS} columns against a strip's 40, "
+             f"so 2×40 less 2×{_STACK_ROWS} leaves 2×{40 - _STACK_ROWS} and "
+             f"the second pair does not come out of it. It was already two "
+             f"because a mis-cut would otherwise cost both pairs and the part "
+             f"is cents"),
+    "J411": ("C27985237", f"Hong Cheng HC-PM254-8.5H-2x{_CTRL_STACK_ROWS}PZ",
              "jlc", "the 8.5 mm socket half of the 11.04 mm CTRL-STACK pair, "
-             "on LOGIC's top face"),
+             "on LOGIC's top face. ⚠️ 2×22 for 19 signals and the V12 rail: "
+             "the family has no 2×21"),
     "J501": ("C2333", "BOOMELE(Boom Precision Elec) 2.54-2*40P", "loose",
              f"the second of the two strips: cut to 2×{_CTRL_STACK_ROWS} and "
              f"soldered into CTRL's underside (see J406 for why two)"),
+    # ⚠️ ⛔ The two cuts together are longer than one strip since IO-26 2a --
+    # see J406's note, which derives it.
 }
 
 

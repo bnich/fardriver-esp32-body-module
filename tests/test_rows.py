@@ -3,8 +3,9 @@ the box, one row per board edge, and each dangerous group has a pitch nothing
 else uses (design spec §5).
 
 The rows, bottom to top: the PACK plug alone on POWER, 12 V on OUTPUTS' top
-face, 5 V under OUTPUTS, INPUTS on LOGIC, and the CONTROLLER row on CTRL --
-every FarDriver and display lead, on a board of its own since IO-26.
+face, INPUTS on LOGIC, and on CTRL both the CONTROLLER row -- every FarDriver
+and display lead, on a board of its own since IO-26 -- and the 5 V row, which
+followed its block up there at IO-26 2a.
 A mismate is dangerous in only three ways once the brake is
 plain I/O -- a 5 V device in a 12 V header, a FarDriver lead in any other
 header, and the pack plug anywhere but its own -- so those three groups own a
@@ -17,8 +18,10 @@ from tools.model import ConnPin
 
 D = netlist.current()
 
-#: Which FACE each harness connector's row is: (board, side).  The 5 V row is
-#: the underside of OUTPUTS (IO-7), which is why this is a face and not a board.
+#: Which FACE each harness connector's row is: (board, side).  It is a FACE and
+#: not a board because the 5 V row spent IO-7 on the underside of OUTPUTS; it
+#: stands on CTRL's top face now (IO-26 2a), and the face is still what the
+#: pitch rule and the edge budget are read against.
 ROW_FACE = {
     # PACK: the 84 V plug, alone on POWER since the controller row left (IO-26)
     "J101": ("POWER", "top"),
@@ -26,8 +29,6 @@ ROW_FACE = {
     "J301": ("OUTPUTS", "top"), "J302": ("OUTPUTS", "top"),
     "J303": ("OUTPUTS", "top"), "J304": ("OUTPUTS", "top"),
     "J305": ("OUTPUTS", "top"), "J313": ("OUTPUTS", "top"),
-    # 5 V: the four 5 V aux outputs, under OUTPUTS
-    "J314": ("OUTPUTS", "bottom"),
     # INPUTS: the pods, the levers and the general inputs
     "J402": ("LOGIC", "top"), "J403": ("LOGIC", "top"),
     "J306": ("LOGIC", "top"), "J409": ("LOGIC", "top"),
@@ -35,6 +36,9 @@ ROW_FACE = {
     # CONTROLLER: every FarDriver and display lead, on the fourth board (IO-26)
     "J309": ("CTRL", "top"), "J404": ("CTRL", "top"),
     "J310": ("CTRL", "top"), "J405": ("CTRL", "top"),
+    # 5 V: the four 5 V aux outputs, in line with the controller row on CTRL's
+    # top face since the block moved there (IO-26 2a)
+    "J314": ("CTRL", "top"),
 }
 #: The 3.81 mm pitch is shared by two rows on purpose, so the SIZES must not
 #: be: a plug of one row seats in any header of its pitch at least its size.
@@ -120,9 +124,13 @@ def test_the_pack_plug_is_the_only_wire_that_leaves_power():
     have moved with it (BD-2: pack voltage stays on POWER)."""
     assert {c.refdes for c in harness() if c.board == "POWER"} == {"J101"}
     assert {c.refdes for c in harness() if c.board == "CTRL"} == \
-        {r for r, (b, _) in ROW_FACE.items() if b == "CTRL"}
+        {r for r, (b, _) in ROW_FACE.items() if b == "CTRL"} == \
+        {"J309", "J404", "J405", "J310", "J314"}
     for ref in ("J309", "J404", "J405", "J310"):
         assert D.connector(ref).pitch_mm == 5.08, ref
+    # ⚠️ J314 shares the board and not the pitch: two rows, two hazard
+    # classes, one edge.
+    assert D.connector("J314").pitch_mm == FIVE_VOLT_PITCH
     # ...and nothing on the controller board touches pack voltage.
     for n in D.nets:
         if n.domain == "84V":
@@ -153,16 +161,19 @@ def test_each_row_is_one_edge_of_one_board():
     """IO-6: the rows stack on ONE face of the box, each row the edge of one
     board -- so the edge budget is grouped by board, and every harness
     connector belongs to exactly one edge. Read off the design, not restated.
-    The 5 V row hangs UNDER OUTPUTS (its connector's `side`), and since
-    2026-09-22 it is in OUTPUTS' one edge beside the 12 V row, not an edge of
-    its own: a through-hole terminal takes the edge from either face."""
+    ⭐ A ROW IS NOT A BOARD, and CTRL is where that shows: it carries TWO rows
+    on one edge, the controller row at 5.08 mm and the 5 V row at 3.50 mm,
+    because a row is a hazard class and an edge is a piece of board. The 5 V
+    row spent IO-7 under OUTPUTS and IO-26 2a on top of CTRL, and neither
+    move changed a word of the pitch rule."""
     rows = bf.edge_budget(D)
     assert [e.board for e in rows] == ["POWER", "OUTPUTS", "LOGIC", "CTRL"]
     placed = [r for e in rows for r in e.headers]
     assert sorted(placed) == sorted(ROW_FACE), "a header in two edges or none"
     for e in rows:
         assert set(e.headers) == {r for r, (b, _) in ROW_FACE.items() if b == e.board}
-    assert D.connector("J314").side == "bottom" and "J314" in rows[1].headers
+    assert D.connector("J314").side == "top" and "J314" in rows[3].headers
+    assert {D.connector(r).pitch_mm for r in rows[3].headers} == {5.08, 3.50}
 
 
 def test_every_class_a_network_sits_at_its_own_terminal():
@@ -244,11 +255,13 @@ def test_a_12_v_terminal_the_size_of_an_input_terminal_is_caught():
 
 def test_a_terminal_is_in_the_size_check_the_moment_it_is_in_the_row():
     """The rows are read off `edge_budget`, so there is no list a new 12 V
-    terminal can be left out of. J314 is the 5 V terminal UNDER OUTPUTS, in no
-    row this file ever named: stood on top of the board at the 3.81 mm pitch
-    and eight ways, it is in the 12 V row and shares J409's and J410's size."""
+    terminal can be left out of. J314 is the 5 V terminal, on CTRL: moved to
+    OUTPUTS' top face at the 3.81 mm pitch and eight ways, it is in the 12 V
+    row and shares J409's and J410's size, and this file did not have to be
+    told about it."""
     j = D.connector("J314")
-    bad = D.replace_connector("J314", side="top", pitch_mm=3.81)
+    bad = D.replace_connector("J314", board="OUTPUTS", side="top",
+                              pitch_mm=3.81)
     assert "J314" in row_sizes(bad, TWELVE_VOLT_FACE)
     assert shared_sizes(bad) == {(3.81, len(j.pins))} == {(3.81, 8)}
 

@@ -18,7 +18,7 @@ from dataclasses import replace
 import pytest
 
 from tools import integrity, netlist
-from tools.model import DOMAIN_VOLTS
+from tools.model import DOMAIN_VOLTS, ConnPin
 from tools.netlist import BOARDS
 
 #: Supply and return nets. A walk may ARRIVE at one but never passes THROUGH:
@@ -765,35 +765,45 @@ STACK_CONTRACT = {
     # above LOGIC, so each one rides this spine up and CTRL-STACK up again,
     # crossing LOGIC on copper with no part on it.
     "TT_L", "TT_R", "TT_HL",
-    # the I²C bus, DOWN to expander #3, which commands the aux block on
-    # OUTPUTS (IO-1). One bus for all three expanders: no native pin is free
-    # for a second.
-    "SDA", "SCL",
-    # the S3's EN, DOWN to expander #3's RESET (IO-22, 2026-09-21): an S3
-    # reset now resets the chip that commands every aux output, so a restart
-    # inside Q101's key-off hold sheds the load instead of leaving it driven
-    # (audit H1). A 29th signal, a 58th contact -- not a rail: EN rests at
-    # V3P3 through R438 but is the S3's reset input, and a reversed half lands
-    # it on GND, which holds the whole module in reset rather than shorting a
-    # supply.
-    "EN",
+    # ⭐ expander #3's SIX commands, DOWN to the drivers on OUTPUTS (IO-26 2a).
+    # The expander moved to LOGIC when the four 5 V switches it enables moved
+    # to CTRL, so what crosses here is what it sends DOWN: U303's four inputs,
+    # U301's AUX12 input and U303's own DIAG_EN, each landing on its 4k7
+    # series resistor at the driver. Same shape as LGT_LOW…LGT_STOP above.
+    "AUX12_1_CMD", "AUX12_2_CMD", "AUX12_3_CMD", "AUX12_4_CMD",
+    "DIAG3_CMD", "AUX12_CMD",
+    # ⛔ NOT the I²C bus and NOT the S3's EN, which rode this spine down to
+    # expander #3 while that expander was on OUTPUTS. All three expanders are
+    # on LOGIC now, so SDA, SCL and EN are one board's copper and cross
+    # nothing; nothing on OUTPUTS is on I²C.
     # ⛔ NOT the brake levers: J306 is in the INPUTS row on LOGIC (IO-6), so
     # IN05_BRAKE_L and IN06_BRAKE_R reach their pins without a crossing.
     # ⛔ And NOT V3P3, or any other rail: a rail lands on itself when a half is
     # mated reversed, which only a palindrome gives it, so it rides PWR-LOGIC
-    # (rule BUS-ORDER). The spine carries signals and grounds.
+    # (rule BUS-ORDER). This spine carries signals and grounds and nothing else.
 }
 
-#: CTRL-STACK, LOGIC ↔ CTRL: the controller row's signals, every one facing a
-#: ground across the row. ⭐ Eight of them used to take TWO crossings each --
-#: the CTRL ribbon up to OUTPUTS and STACK on to LOGIC -- and take ONE now that
-#: the row is a board of its own (IO-27). The three telltales are the other way
-#: round: their lamp feeds are on OUTPUTS, so they are the only members that
-#: also ride STACK.
+#: CTRL-STACK, LOGIC ↔ CTRL: the controller row's signals and the 5 V block's
+#: eight control lines, every one facing a ground across the row. ⭐ Eight of
+#: the first eleven used to take TWO crossings each -- the CTRL ribbon up to
+#: OUTPUTS and STACK on to LOGIC -- and take ONE now that the row is a board of
+#: its own (IO-27). The three telltales are the other way round: their lamp
+#: feeds are on OUTPUTS, so they are the only members that also ride STACK.
+#: ⭐ The EIGHT are IO-26 2a: the four TPS2553 switches are on CTRL and
+#: expander #3 on LOGIC, so an enable goes up and a fault flag comes down.
 CTRL_STACK_CONTRACT = {
     "BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX", "BOOST_CMD",
     "CANH", "CANL", "TT_L", "TT_R", "TT_HL",
+    "AUX5V_1_EN", "AUX5V_1_FAULT", "AUX5V_2_EN", "AUX5V_2_FAULT",
+    "AUX5V_3_EN", "AUX5V_3_FAULT", "AUX5V_4_EN", "AUX5V_4_FAULT",
 }
+#: The one RAIL CTRL-STACK carries, on its first and last contact: the 5 V aux
+#: buck's input (IO-26 2a). ⛔ The only rail either spine may carry, and only
+#: at the two ends, where it lands on itself when a half is mated reversed.
+CTRL_STACK_RAIL = "V12"
+#: Contacts per row. 19 signals + the rail want 21, and the Hong Cheng
+#: HC-PM254-8.5H family has no 2×21 (2-20, then 22-30), so the pair goes UP.
+CTRL_STACK_ROWS = 22
 
 
 def _interface(d, name):
@@ -805,7 +815,10 @@ def test_stack_is_one_row_per_signal_and_carries_exactly_the_contracted_nets(d):
     every even one a ground, and no empty contact to grow a signal into by
     accident."""
     ends = _interface(d, "STACK")
-    assert len(STACK_CONTRACT) == 24, "IO-27: 29 per row less eight, plus three"
+    assert len(STACK_CONTRACT) == 27, \
+        "IO-26 2a: 24 per row less the bus and the reset, plus six commands"
+    assert len(STACK_CONTRACT) <= 30, \
+        "HC-PM254-8.5H stops at 2x30: past that is a new connector family"
     assert {c.board for c in ends} == {"OUTPUTS", "LOGIC"}
     for c in ends:
         assert len(c.pins) == 2 * len(STACK_CONTRACT)
@@ -879,35 +892,87 @@ def test_the_vh_wafer_body_is_the_rule_its_series_drawing_tabulates(ways, length
     assert netlist.vh_body(ways) == pytest.approx((length, 8.5))
 
 
-def test_ctrl_stack_is_one_row_per_signal_and_carries_the_controller_row(d):
-    """2 × 11 for eleven signals, every one facing a ground across the row, and
-    the CAN pair on two ADJACENT columns.
+def test_ctrl_stack_is_one_row_per_signal_plus_a_rail_at_each_end(d):
+    """2 × 22: nineteen signals each facing a ground across the row, the CAN
+    pair on two ADJACENT columns, and the V12 rail on the FIRST and LAST
+    contact with a ground between it and the nearest signal.
 
     Protects: the pinout is DERIVED from `_CTRL_STACK_SIGNALS` the way STACK's
-    is from `_STACK_SIGNALS` -- same builder, same rule -- so the connector
-    cannot grow a contact a signal does not have, and cannot lose the ground
-    that faces one. ⚠️ It replaced a 24-way IDC ribbon whose 13 grounds were a
-    rated RETURN (IO-23); nothing here carries current, because the return
-    moved to PWR-OUT's second 16 AWG conductor (IO-27)."""
+    is from `_STACK_SIGNALS` -- same builder with a rail wrapped round it -- so
+    the connector cannot grow a contact a signal does not have, and cannot lose
+    the ground that faces one. ⚠️ It replaced a 24-way IDC ribbon whose 13
+    grounds were a rated RETURN (IO-23); the 12 V return moved to PWR-OUT's
+    second 16 AWG conductor (IO-27), and what this pair's grounds now carry is
+    the 5 V buck's own input current back down, which `power_budget` sizes.
+
+    ⚠️ 22 AND NOT 21. 19 signals and a rail want 21 columns and Hong Cheng's
+    HC-PM254-8.5H has no 2×21, so the pair went up a size; the spare pair of
+    contacts is GROUND, because an extra return is never wrong and a second
+    rail contact would silently change what power_budget is sizing."""
     ends = _interface(d, "CTRL-STACK")
     assert {c.board for c in ends} == {"LOGIC", "CTRL"}
+    assert len(CTRL_STACK_CONTRACT) == 19
+    assert CTRL_STACK_ROWS == 22 <= 30, \
+        "HC-PM254-8.5H stops at 2x30: past that is a new connector family"
     for c in ends:
-        assert len(c.pins) == 2 * len(CTRL_STACK_CONTRACT)
-        assert {cp.net for cp in c.pins} - {"GND"} == CTRL_STACK_CONTRACT
-        grounds = [cp for cp in c.pins if cp.net == "GND"]
-        assert len(grounds) == len(CTRL_STACK_CONTRACT), "alternating grounds"
         nets = [cp.net for cp in c.pins]
-        for i in range(0, len(nets), 2):
-            assert nets[i] != "GND" and nets[i + 1] == "GND", (c.refdes, i)
+        assert len(nets) == 2 * CTRL_STACK_ROWS
+        assert set(nets) - {"GND", CTRL_STACK_RAIL} == CTRL_STACK_CONTRACT
+        # The rail is at the two ends and nowhere else, so a reversed or
+        # mirrored half lands it on ITSELF (rule BUS-ORDER).
+        assert [i for i, n in enumerate(nets) if n == CTRL_STACK_RAIL] == \
+            [0, len(nets) - 1], c.refdes
+        # The rail's end block: the rail, then grounds, for however many
+        # contacts the family's size left over (three here, because 2x21 does
+        # not exist and 2x22 does).
+        k = (len(nets) - 2 * len(CTRL_STACK_CONTRACT)) // 2
+        assert k == 3, "2x22 for 19 signals: one spare column, spent on ground"
+        assert nets[1:k] == ["GND"] * (k - 1), "a ground between rail and signal"
+        assert nets[-k:-1] == ["GND"] * (k - 1)
+        # Every signal faces a ground: signals on the odd contacts of the
+        # signal block, grounds on the even ones.
+        body = nets[k:-k]
+        assert len(body) == 2 * len(CTRL_STACK_CONTRACT)
+        for i in range(0, len(body), 2):
+            assert body[i] != "GND" and body[i + 1] == "GND", (c.refdes, i)
+        assert nets.count("GND") == len(CTRL_STACK_CONTRACT) + 2 * (k - 1)
         # The differential pair takes two NEIGHBOURING columns, so both halves
-        # see the same neighbours: contacts 2i+1 and 2i+3, grounds under each.
+        # see the same neighbours, each with a ground under it.
         h, l = nets.index("CANH"), nets.index("CANL")
         assert l == h + 2, (h, l)
         socket = c.board == "LOGIC"          # the header is the cut strip
-        want = netlist.hc_body(len(CTRL_STACK_CONTRACT), rows=2, socket=socket,
+        want = netlist.hc_body(CTRL_STACK_ROWS, rows=2, socket=socket,
                                cut=not socket)
         assert c.footprint_mm == pytest.approx(want), c.refdes
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
+
+
+def test_a_pair_that_cannot_hold_its_rail_is_refused_at_construction(d):
+    """⭐ THE GUARD IS IN THE BUILDER, NOT AT THE CALL SITE. `_rail_pair_pins`
+    is what every rail-carrying pair will be built from, so the two things
+    BUS-ORDER would catch on the finished connector are asked of it there:
+    a size with no room for a ground between the rail and the first signal,
+    and a size that cannot make a palindrome at all.
+
+    Both mutations are real mistakes: "the family has no 2×21, so use 2×20"
+    and "19 signals plus a rail is 19 columns"."""
+    signals = tuple(f"S{i}" for i in range(19))
+    # One column too few: the rail would sit beside the first signal, so a half
+    # mated ONE CONTACT OFF puts 12 V on it.
+    with pytest.raises(ValueError, match="mated one contact off"):
+        netlist._rail_pair_pins(signals, "V12", 20)
+    # No room at all: the rail would land ON a signal when a half is reversed.
+    with pytest.raises(ValueError, match="it needs 2"):
+        netlist._rail_pair_pins(signals, "V12", 19)
+    # ...and the size the design actually uses builds, with the spare pair of
+    # contacts on ground rather than on a second rail contact.
+    pins = netlist._rail_pair_pins(signals, "V12", 22)
+    assert len(pins) == 44
+    assert [cp.net for cp in pins].count("V12") == 2
+    # ⚠️ The parity branch a reader might expect is not there because it cannot
+    # happen: 2*per_row - 2*len(signals) is even for every integer input.
+    for per_row in range(21, 41):
+        assert (2 * per_row - 2 * len(signals)) % 2 == 0
 
 
 def test_what_crosses_both_spines_is_relayed_not_duplicated(d):
@@ -931,15 +996,37 @@ def test_what_crosses_both_spines_is_relayed_not_duplicated(d):
         assert d.net(name).interface == "CTRL-STACK", name
 
 
-def test_no_rail_rides_a_signal_spine(d):
+def test_the_only_rail_on_a_spine_is_v12_at_ctrl_stacks_two_ends(d):
     """Derived from the design's own statement of what a rail is (rules.rails,
-    which reads SUPPLY_PINS): reversed or mirrored, a spine lands every contact
-    on a ground, so a rail on one is a short across the interface."""
+    which reads SUPPLY_PINS). Reversed or mirrored, contact i meets contact
+    n+1-i: a spine's signal always meets a ground, so a rail anywhere but the
+    two END contacts is a short across the interface.
+
+    ⭐ STACK carries NO rail, and CTRL-STACK carries exactly one -- V12, for
+    the 5 V buck on CTRL, which has no other way to be fed (IO-26 2a). It is
+    the ends or nowhere, and that is what this asserts.
+
+    The mutation: put V12 on a middle contact instead, which is what "the
+    rail can go anywhere, it is only 12 V" looks like in a diff."""
     from tools import rules
-    spines = {"STACK", "CTRL-STACK"}
+    rails = rules.rails(d)
     for c in d.connectors:
-        if c.interface in spines:
-            assert not (rules.rails(d) & {cp.net for cp in c.pins}), c.refdes
+        if c.interface == "STACK":
+            assert not (rails & {cp.net for cp in c.pins}), c.refdes
+        elif c.interface == "CTRL-STACK":
+            nets = [cp.net for cp in c.pins]
+            assert rails & set(nets) == {CTRL_STACK_RAIL}, c.refdes
+            assert [i for i, n in enumerate(nets) if n == CTRL_STACK_RAIL] == \
+                [0, len(nets) - 1], c.refdes
+    assert rules.bus_order(d) == []
+    # ⚠️ Fires: V12 moved off the end onto a signal column.
+    j = d.connector("J411")
+    moved = list(j.pins)
+    moved[0] = ConnPin("1", "GND")
+    moved[10] = ConnPin("11", "V12")
+    bad = d.replace_connector("J411", pins=tuple(moved))
+    errs = rules.bus_order(bad)
+    assert any("BUS-ORDER" in e and "V12" in e for e in errs), errs
 
 
 def test_pwr_out_is_five_conductors_numbered_as_the_maker_numbers_them(d):

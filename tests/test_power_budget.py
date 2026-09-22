@@ -437,3 +437,112 @@ def test_nothing_in_the_module_is_named_after_a_manufacturer():
     assert not [n for n in names if "tdk" in n.lower()]
     assert "conv_in_a" in pb.Result.__dataclass_fields__
     assert pb.CONV_EFF == 0.90
+
+
+# --- the two mated pairs the 5 V buck is fed through (IO-26 2a) ------------------------
+def test_the_buck_rail_contacts_are_sized_on_both_pairs():
+    """⭐ The 5 V aux buck is on CTRL and `U201` makes V12 on POWER, so the
+    rail crosses PWR-LOGIC and then CTRL-STACK. Nothing else in the design
+    derives what those contacts carry.
+
+    The arithmetic, all of it from the copper: four channels at their ILIM
+    resistors' upper threshold (1.39 A each, `limit_case`), 5 V out, 90 %
+    efficient, off 12 V -> 2.57 A. Two V12 contacts on each pair carry 1.29 A
+    each in service.
+
+    ⛔ THE GATE IS THE ONE-CONTACT CASE, not the shared one -- 2.57 A against
+    the 3 A Hong Cheng contact, 86 %. Contacts in parallel share until one of
+    them stops, and an open contact is silent, which is the same reasoning
+    IO-27 used for PWR-OUT's two 16 AWG returns. The 3 A is
+    `Connector.contact_a`, read off Hong Cheng's HC-PM254-8.5H /
+    HC-PZ254-11.5L drawings and stated once, in netlist.py."""
+    r = pb.budget(D)
+    assert r.problems == []
+    assert r.buck_in_a == pytest.approx(4 * 1.39 * 5.0 / 0.90 / 12.0, abs=0.02)
+    by = {(c.interface, c.net): c for c in r.contacts}
+    assert set(by) == {("PWR-LOGIC", "V12"), ("PWR-LOGIC", "GND"),
+                       ("CTRL-STACK", "V12"), ("CTRL-STACK", "GND")}
+    for iface in ("PWR-LOGIC", "CTRL-STACK"):
+        rail = by[(iface, "V12")]
+        assert rail.refdes == (("J307", "J407") if iface == "PWR-LOGIC"
+                               else ("J411", "J501"))
+        assert rail.n == 2 and rail.rating_a == 3.0
+        assert rail.shared_a == pytest.approx(r.buck_in_a / 2, abs=0.01)
+        assert rail.alone_a == pytest.approx(r.buck_in_a, abs=0.01)
+        assert rail.ok and rail.alone_a / rail.rating_a < 0.90
+        # ...and the return it goes out and comes back through, on the same
+        # pair: more contacts, the same one-contact gate.
+        gnd = by[(iface, "GND")]
+        assert gnd.n >= 6 and gnd.ok
+
+
+def test_the_buck_rail_check_fires_on_a_clone_contact_and_on_a_bigger_buck():
+    """A check nothing can fail is not a check, and both mutations are real:
+
+    ⛔ THE CLONE. A 2.54 mm header that lists the same body at 2 A instead of
+    Hong Cheng's 3 A -- the Blue Sea and the CAX 'VH' failure again, a right
+    family with a wrong rating line. ⚠️ 2 A is chosen because it PASSES the
+    shared figure: 1.29 A a contact looks comfortable, and only the
+    one-contact case says the pair has a silent failure in it.
+    ⛔ MORE 5 V CHANNELS. IO-1 says more aux outputs are acceptable; eight of
+    them put 5.15 A through the same two contacts, and the pair has to say so
+    rather than the buck quietly out-growing its feed."""
+    clone = D.replace_connector("J411", contact_a=2.0)
+    errs = pb.budget(clone).problems
+    assert any("J411+J501 (CTRL-STACK) V12" in e and "ONE contact rated 2 A" in e
+               for e in errs), errs
+    assert all("PWR-LOGIC" not in e for e in errs), "only the clone half fails"
+    # ...and 1.29 A each is what makes the shared figure look fine:
+    rail = next(c for c in pb.budget(clone).contacts
+                if (c.interface, c.net) == ("CTRL-STACK", "V12"))
+    assert rail.shared_a < rail.rating_a < rail.alone_a
+
+    big = D
+    for n in range(5, 9):
+        big = (big.with_part(replace(D.part("U306"), refdes=f"U{305 + n}"))
+                  .with_part(replace(D.part("R373"), refdes=f"R{372 + n}"))
+                  .with_net(Net(f"AUX5V_{n}", (("R901", "1"),
+                                               (f"U{305 + n}", "OUT")), "5V"))
+                  .with_net(Net(f"AUX5V_{n}_ILIM", ((f"U{305 + n}", "ILIM"),
+                                                    (f"R{372 + n}", "1")), "3V3")))
+    r = pb.budget(big)
+    assert r.buck_in_a > 5.0
+    assert any("V12" in e and "ONE contact rated 3 A" in e for e in r.problems), \
+        r.problems
+
+
+def test_a_pair_with_no_rating_cannot_be_sized():
+    """⚠️ `contact_a=None` means the maker's drawing states none, so nothing
+    may be assumed -- and the un-sizeable case is a PROBLEM, never a skip."""
+    blank = D.replace_connector("J307", contact_a=None)
+    errs = pb.budget(blank).problems
+    assert any("J307+J407 (PWR-LOGIC)" in e and "no per-contact rating" in e
+               for e in errs), errs
+
+
+def test_a_rail_that_never_reaches_the_board_that_draws_it_is_a_problem():
+    """⛔ The other half of the check: parts on CTRL draw V12, so a pair must
+    carry it. Take V12 off both pairs' pin tables and the rail no longer
+    reaches the buck -- which `integrity` also catches, and which this states
+    in the language of the thing that is sized."""
+    stripped = D
+    for ref in ("J307", "J407", "J411", "J501"):
+        j = stripped.connector(ref)
+        stripped = stripped.replace_connector(ref, pins=tuple(
+            replace(cp, net="GND") if cp.net == "V12" else cp for cp in j.pins))
+    errs = pb.budget(stripped).problems
+    assert any("draw V12 on CTRL and no mated pair carries it" in e
+               for e in errs), errs
+
+
+def test_a_cable_is_not_sized_by_dividing_its_current_over_contacts():
+    """⛔ PWR-OUT carries V12 too and is deliberately NOT in this list: a loom
+    sizes its CONDUCTOR and the one crimped contact it lands on (IO-20), which
+    tests/test_interconnect.py holds it to at the full 8.47 A. Dividing a
+    cable's current over contacts is the mistake that rule replaced, and a
+    check that did it here would report the loom as four times safer than it
+    is."""
+    r = pb.budget(D)
+    assert {c.interface for c in r.contacts} == {"PWR-LOGIC", "CTRL-STACK"}
+    assert "PWR-OUT" not in {c.interface for c in r.contacts}
+    assert "V12" in {cp.net for cp in D.connector("J202").pins}

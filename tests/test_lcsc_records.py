@@ -109,22 +109,25 @@ def test_a_terminal_from_another_maker_is_caught(fixture):
                     "Kangnex's, whose drawing the height model reads for that pitch"]
 
 
-def test_a_tenth_contact_on_the_nine_way_pwr_logic_is_caught(fixture):
-    """M14: a connector's contact count is held to its part's symbol."""
+def test_a_fifteenth_contact_on_the_fourteen_way_pwr_logic_is_caught(fixture):
+    """M14: a connector's contact count is held to its part's symbol.
+    PWR-LOGIC is 1×14 since IO-26 2a put V12 on it (the 13-way palindrome the
+    rails want has no header in the HC-PZ254-11.5L family)."""
     d = netlist.current()
     j = d.connector("J307")
-    bad = d.replace_connector("J307", pins=j.pins + (ConnPin("10", "GND"),))
+    bad = d.replace_connector("J307", pins=j.pins + (ConnPin("15", "GND"),))
     errs = lcsc_fixture.check(bad, fixture)
-    assert errs == ["J307: 10 contacts in the netlist, but C22373895 "
-                    "(HC-PM254-8.5H-1x9PZ) has 9"]
+    assert errs == ["J307: 15 contacts in the netlist, but C22373900 "
+                    "(HC-PM254-8.5H-1x14PZ) has 14"]
 
 
 def test_the_cut_strip_may_be_longer_than_stack_but_not_shorter(fixture):
-    """⚠️ ONE strip part number, cut to TWO lengths since IO-27: 2×24 for
-    STACK at J406 and 2×11 for CTRL-STACK at J501. Both are checked, because
-    the exemption is the strip's, not one refdes's."""
+    """⚠️ ONE strip part number, cut to TWO lengths: 2×27 for STACK at J406
+    and 2×22 for CTRL-STACK at J501 (IO-26 2a). Both are checked, because the
+    exemption is the strip's, not one refdes's -- and 27 + 22 = 49 columns is
+    why two strips are ordered rather than one cut twice."""
     d = netlist.current()
-    for ref, want in (("J406", 48), ("J501", 22)):
+    for ref, want in (("J406", 54), ("J501", 44)):
         j = d.connector(ref)
         assert j.lcsc in lcsc_fixture.CUT_TO_LENGTH, ref
         assert len(fixture[j.lcsc]["symbol_pins"]) == 80 > len(j.pins) == want
@@ -132,9 +135,13 @@ def test_the_cut_strip_may_be_longer_than_stack_but_not_shorter(fixture):
     too_many = d.replace_connector("J406", pins=j.pins + tuple(
         ConnPin(str(n), "GND") for n in range(len(j.pins) + 1, 82)))
     errs = lcsc_fixture.check(too_many, fixture)
-    assert errs == ["J406: 81 contacts cut from C2333, whose strip has 80 (a 2×40 "
-                    "strip cut to STACK's 2×24 at J406 and to CTRL-STACK's "
-                    "2×11 at J501 (netlist._FAB_CONN))"]
+    assert len(errs) == 1
+    assert errs[0].startswith("J406: 81 contacts cut from C2333, whose strip "
+                              "has 80 (a 2×40 strip cut to STACK's 2×27 at "
+                              "J406 and to CTRL-STACK's 2×22 at J501")
+    # ⛔ 27 + 22 = 49 against a strip's 40: two strips are REQUIRED, and the
+    # exemption's own note is where that is said.
+    assert "TWO strips" in errs[0] and "cannot be cut twice" in errs[0]
 
 
 @pytest.mark.parametrize("ours, theirs, same", [

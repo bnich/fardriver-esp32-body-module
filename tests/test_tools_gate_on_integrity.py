@@ -120,10 +120,14 @@ def test_tel_check_refuses_before_reading_the_export(broken_netlist, capsys, tmp
 
 # --- and the same entry points on the real design still run -------------------------
 def test_the_real_design_still_reaches_every_report(capsys):
-    # board_fit reaches its report and exits 1 on the ROWS verdict alone (IO-26,
-    # open since 2026-09-22): rewrite to 0 when the owner's row decision lands
-    assert board_fit.main([]) == 1
-    assert "⛔ DOES NOT FIT" in capsys.readouterr().out
+    # ⭐ board_fit is back to 0 (IO-26 2a, 2026-09-22): the 5 V block and J314
+    # left OUTPUTS for CTRL, and all four edges fit. It exited 1 on the ROWS
+    # verdict alone from the day IO-26 found the two-face error until that
+    # landed; ⛔ if it ever returns 1 again, the row is a real overrun and not
+    # a known one.
+    assert board_fit.main([]) == 0
+    out = capsys.readouterr().out
+    assert "⛔ DOES NOT FIT" not in out and "✅ PASS" in out
     assert gpio_budget.main([]) == 0
     assert power_budget.main() == 0
     assert soft_start.main([]) == 0
