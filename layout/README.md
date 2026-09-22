@@ -4,8 +4,14 @@
 overwrites it, `tools/gate.sh` renames it `.stale`, and `.gitignore` excludes it. A layout saved there
 is one build away from being lost. Save here instead.
 
-**How:** in EasyEDA Pro, *File → Save As* → `layout/revv1-module.eprj2`. Then every later session
-opens **this** file, never `build-eprj3/revv1-module.eprj2`.
+**How:** `layout/revv1-module.eprj2` is seeded as a byte-identical copy of the generated project at
+the netlist commit named below. **Open THIS file** in EasyEDA Pro, do the Import Changes here, place
+and route here, save here. Never open `build-eprj3/revv1-module.eprj2` for layout — it is the
+build's, and the build will replace it.
+
+| Seeded from | Netlist commit | Date |
+|---|---|---|
+| `build-eprj3/revv1-module.eprj2`, fresh build | `d48f148` | 2026-09-22 |
 
 **The rule:** `build-eprj3/` is generated FROM the netlist and holds an EMPTY PCB (outline, holes,
 rules). `layout/` holds the netlist PLUS placement and routing. When the netlist changes, the fix is
