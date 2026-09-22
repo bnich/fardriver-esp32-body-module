@@ -109,9 +109,33 @@ HV_GAP = 2 * COURTYARD + HV_STRIP
 #: the board there), and nothing in a zone this wide x deep beyond it.
 ANTENNA_EDGE = 2.0
 ANTENNA_ZONE_W, ANTENNA_ZONE_D = 18.0, 8.0
-#: The V12 bus on OUTPUTS: the centroid of the V12-fed ICs within this of the
-#: contact that feeds them (J311), so 8.47 A is one short wide bus, not a tree.
-BUS_REACH = 15.0
+#: (check 11, AMENDED for the clustering objective) The LENGTH of the layer-3
+#: `V12` pour on OUTPUTS -- the u-extent from the first driver's `VS` pads to
+#: the last, the feed's own contacts included.  It REPLACES the 15 mm reach
+#: from the driver's centroid to the feed, which was a TRACE-era figure: with
+#: the drivers clustered behind the terminals they feed they span the board,
+#: and PROCESS.md R1 makes the pour the bus rather than a trace.
+#:
+#: THE ARITHMETIC, from the copper: the pour is a strip **20 mm** wide -- what
+#: band 3 has between the face row's through-hole pads and the back-edge
+#: connectors (`BAND_FRONT[3]` 19.0 mm to the 41.84 mm back edge is 22.84, less
+#: a courtyard each side, rounded down) -- in **35 um** (1 oz) copper, whose
+#: resistivity is 1.724e-8 ohm-m.  Twenty millimetres of that is
+#: 1.724e-8 x 0.020 / (0.020 x 35e-6) = **0.493 mOhm**, so the LIMITED case's
+#: **11.39 A** (`power_budget.limit_case`, not the 8.47 A nominal) drops
+#: **5.61 mV per 20 mm** of length.  A **50 mV** budget -- 0.42 % of the 12 V
+#: rail, so the farthest driver's channels see their limiter's ceiling and not
+#: a sagged rail -- buys 50 / 5.61 x 20 = **178 mm**.
+#: ⚠️ That model puts the WHOLE current down the WHOLE length, which is the
+#: worst case and not the real one: 3a seats the feed inside the line, so the
+#: 11.39 A splits at `J311` and each driver draws its own share over half the
+#: pour at most.  The cap is therefore deliberately conservative, and what it
+#: stands between is geometric: the clustered placement measures **122.5 mm**
+#: (31 % of headroom) where the old single mid-board line measured 38.0, and
+#: the strip between the M3 corners is 228 mm, so a driver banished to each
+#: end of the board scores **221 mm** and fails.  ⛔ The pour length is NOT
+#: what keeps a channel short -- check 20(a) is; this is the drop.
+V12_POUR_MM = 178.0
 #: (IO-26 3a) The driver line leaves a SLOT for the 12 V loom's four pins: the
 #: feed's own through-hole pad row plus this much at each end, and a driver may
 #: then stand right up to it.  The slot is `pad row + 2 x DRIVER_SLOT_MARGIN`,
@@ -181,6 +205,84 @@ DECOUPLE_REACH = 3.0
 #: end: the cable plug's body and its exit.  The entry end is not in the
 #: drawing, so both ends are kept.
 SERVICE_CLEAR = 5.0
+# --- check 20, ROUTABILITY: how far a net has to run ------------------------------
+#: (check 20a) A CHANNEL net -- a `TPS4H160B` `OUTx` or a `TPS2553` `OUT` and
+#: everything on it, the clamp and the terminal contact it ends at -- may span
+#: its terminal's OWN u-extent plus this.  The terminal's body is in the budget
+#: because the driver stands BEHIND the row: its channels land on pins spread
+#: over the whole header, so even a driver standing at the header's middle is a
+#: body-length from the far one.  This is what is left for the placement.
+#:
+#: DERIVED from this design, the good case and the defects all real and all
+#: measured on 2026-09-22, as an EXCESS over the terminal's own width:
+#:   the clustered placement needs **36.2** (`HL_HIGH`, 62.1 mm to `J301`'s
+#:     26.0 -- `U301` drives the headlight on `J301` at one end of the row AND
+#:     `AUX12` on `J304`/`J305` at the other, so it stands at their weighted
+#:     centroid and cannot be close to both);
+#:   the placement before it ran nine channels long, by **84.1** (`AUX12V_3`),
+#:     71.2, 61.5, 60.6, 59.9, 54.7, 46.8, 41.2 and **40.8** (`TAIL_STOP`).
+#: So the figure has to live in (36.2, 40.8] and 40.0 is in it: 10.5 % of
+#: headroom above what the board needs, and it still fails every one of the
+#: nine, the narrowest by 0.8 mm.  ⚠️ That is a NARROW band, and the narrowness
+#: IS the finding -- a driver that feeds terminals at both ends of the row
+#: cannot be near all of them, and the next part that does it will have to be
+#: split across two drivers rather than have this number raised.
+CHANNEL_REACH = 40.0
+#: (check 20a) A SIGNAL net that ends at a HARNESS TERMINAL -- an IC or the
+#: module at one end, a terminal contact at the other -- may span that
+#: terminal's own u-extent plus this.  Same budget shape as a channel and the
+#: same reason, with a smaller reach because a signal is 0.2 mm of copper and
+#: has no current to keep short: it is here so that the part that reads an
+#: input stands behind the terminal the input arrives on.
+#:
+#: DERIVED (2026-09-22) as an excess over the terminal's width: the clustered
+#: placement needs **12.0** (`SPARE_B6_WIRE`, 53.2 mm to `J410`'s 41.2), and
+#: the placement before it ran seven long, by **62.1** (`SPARE_B4_WIRE`), 52.0,
+#: 40.2, 23.1, 22.6, 20.0 and **19.5** (`SPARE_B1_WIRE`).  16.0 sits in the
+#: (12.0, 19.5] that leaves, a third of headroom above what the board needs and
+#: 3.5 mm inside the narrowest defect.
+SIGNAL_REACH = 16.0
+#: (check 20b) The programming land stands this far from the module at most,
+#: measured pin to pin on the nets they share -- `EN`, `BOOT_IO0` and the two
+#: UART0 lines are the S3's OWN pins (D25), so this is four traces from one
+#: 18 mm module to one 3 mm land and nothing else needs to be near either.
+#:
+#: DERIVED (2026-09-22): with `J408` made the module's satellite the worst of
+#: the four measures **21.4 mm** (on `EN`); before it, with the land placed by
+#: its own adjacency at the far end of the board from the S3, it was
+#: **38.4 mm**.  25.0 is the shipped measurement with ~17 % of headroom, and it
+#: fails the old placement by 13.4 mm.  ⚠️ Pin to pin on the shared nets, NOT
+#: the nets' own spans: `BOOT_IO0` also carries a pull-up and `EN` is every
+#: expander's RESET since IO-22, so those spans say where the expanders are,
+#: not where the programmer is.
+PROG_REACH = 25.0
+#: (check 20c) The routing capacity of a 1 mm cut across (or along) the board:
+#: TWO signal layers -- 1 and 4, since layer 2 is the ground plane and layer 3
+#: a pour or a second plane on every board (PROCESS.md R1) -- at one 0.2 mm
+#: track per 0.4 mm of cut, which is the 0.2 mm trace with 0.2 mm of clearance
+#: that `TRACE_ROOM` budgets and JLC's 4-layer capability allows.
+TRACK_PITCH = 0.4
+SIGNAL_LAYERS = 2
+#: (check 20c) The worst cut may load this much of that capacity.  It is a
+#: BACKSTOP, not a target: the four boards measure 6 % (POWER), 7 % (CTRL),
+#: 16 % (OUTPUTS) and 24 % (LOGIC) of it today, so congestion is not what makes
+#: this stack hard to route -- the net LENGTHS are, which is 20(a) and 20(b).
+#: Half is where a hand-routable board stops being one: past it every track in
+#: the cut is a track that cannot move, and the autorouter has no room to go
+#: round anything.
+CUT_LOAD = 0.5
+#: The cut is scanned in steps of this, in both axes.  A millimetre is finer
+#: than any pad pitch on these boards (2.54 mm is the smallest), so a narrower
+#: step finds the same worst cut.
+CUT_STEP = 1.0
+#: How hard a connector contact pulls its host, by the width of the copper the
+#: net needs (the R0 class table in `layout/PROCESS.md`): a `CH12` channel is a
+#: 1.0 mm trace at 1.55 A and a `CH5` 0.8 mm at 1.39 A, against 0.2 mm for a
+#: signal.  A driver is therefore pulled to the terminals its CHANNELS feed and
+#: only nudged by the nine control lines it shares with the `STACK` socket --
+#: which is what "cluster by circuit" means in numbers rather than in a list of
+#: refdes.  Anything not named here pulls 1.
+CLASS_PULL = {"CH12": 5.0, "CH5": 4.0}
 #: Every board's Band 2 starts one channel behind its face row; Band 3 and 4
 #: START where PROCESS.md's table puts them.  These are the fronts the packer
 #: pulls toward, not walls: a part goes where it fits and is charged for the
@@ -875,6 +977,120 @@ def v12_bus(ix, board):
     return ics, (chosen[0] if chosen else None)
 
 
+#: The parts the CLUSTERING objective steers as HOSTS: an active part a
+#: circuit is built around, which is what "a host stands at the u-centroid of
+#: the connectors it serves" is about.  A passive is steered too, but by a
+#: narrower rule -- the terminal it is directly on, Band 2's own rule -- and a
+#: connector is what both are steered TOWARD.
+HOST_KINDS = frozenset({"IC", "MODULE", "CONVERTER"})
+
+
+def net_pull(ix, net):
+    """How hard a contact on `net` pulls its host: `CLASS_PULL` by the routing
+    class the copper puts it in, 1 for anything else."""
+    for name, pull in CLASS_PULL.items():
+        if net in ix.classes[name]:
+            return pull
+    return 1.0
+
+
+def served_contacts(ix, board, ref):
+    """[(net, connector, pin, pull)] -- the connector contacts `ref` SERVES on
+    its own board.  The clustering objective's input, and all of it from the
+    copper.  Two parts read it, and they read it differently:
+
+    * a HOST -- an IC, the module, a converter -- serves the connectors on its
+      own SIGNAL nets (a `TPS4H160B`'s `OUTx` lands on the terminal its channel
+      feeds; the S3's lamp commands on the `STACK` socket's contacts), and
+      where a signal net reaches no connector, the ones ONE hop away through a
+      SERIES passive: a part with exactly two nets, one in and one out.  That
+      is how an expander reaches the input terminals it reads, through each
+      input's series resistor.  ⚠️ The hop is taken only when the net itself
+      has no connector, so a channel that already ends at its terminal is never
+      also credited to whatever else hangs off it, and never more than one
+      hop: two hops reach the whole board and say nothing about which circuit
+      a part belongs to.
+    ⚠️ A PASSIVE is NOT steered this way -- `Placer.circuit_u` has the other
+    half of the objective for it.  A passive is a link in a chain and belongs
+    BETWEEN the two things it links; pinned to the connector on its net it
+    drags the other end instead, which is what the `AUX5V_n_EN` series
+    resistors did when they were (`R368` on `J501`'s contact, `U309` 82 mm
+    away, 2026-09-22).
+    """
+    it = ix.items.get(ref)
+    if it is None or it.kind not in HOST_KINDS:
+        return []
+    host = True
+
+    def here(r):
+        o = ix.items.get(r)
+        return o is not None and o.kind == "CONN" and o.board == board
+
+    out, seen = [], set()
+
+    def take(net, r, pin):
+        if (r, pin) not in seen:
+            seen.add((r, pin))
+            out.append((net, r, pin, net_pull(ix, net)))
+    for net in sorted(it.nets):
+        if not ix.signal(net):
+            continue
+        direct = sorted((r, pin) for r, pin in ix.members[net] if r != ref and here(r))
+        if direct:
+            for r, pin in direct:
+                take(net, r, pin)
+            continue
+        if not host:
+            continue
+        for r, _ in sorted(ix.members[net]):
+            o = ix.items.get(r)
+            if r == ref or o is None or o.kind not in PASSIVE_KINDS or o.board != board:
+                continue
+            if len(o.nets) != 2:
+                continue            # a series element: one net in, one out
+            for m in sorted(o.nets):
+                if m == net or not ix.signal(m):
+                    continue
+                for rr, pin in sorted(ix.members[m]):
+                    if here(rr):
+                        take(m, rr, pin)
+    return out
+
+
+def v12_pour(pl, ix, board):
+    """The layer-3 `V12` pour of `board` (PROCESS.md R1) as the rectangle
+    `--rules` draws over the driver line, or None where the board has no
+    12 V bus: `(the pour Box, the drivers, the feed, the reference driver)`.
+
+    ⭐ THE POUR IS THE BUS (amended check 11).  Its u-extent runs from the
+    first driver's `VS` pads to the last, the feed's own `V12` contacts
+    included -- that is the copper the 11.39 A travels.  Its v-extent is the
+    strip the line stands in, taken from the driver NEAREST THE FEED: the pour
+    is one sheet under the line, so a driver pushed off the line in v has its
+    `VS` pads off the sheet and a neck to the pour instead of vias into it.
+    Which pads are `VS` is read off the copper (the pads on the `PWR12` net),
+    never off TI's pin name.
+    """
+    names, feed_ref = v12_bus(ix, board)
+    items = pl.placed(board)
+    drivers = [items[r] for r in names if r in items]
+    feed = items.get(feed_ref)
+    if not drivers or feed is None:
+        return None
+    frame, pwr12 = pl.frame(board), ix.classes["PWR12"]
+
+    def bus_pads(p):
+        return [(u, v) for num, u, v in p.pads(frame)
+                if ix.items[p.refdes].pin_net.get(num) in pwr12]
+    feed_pads = bus_pads(feed)
+    if not feed_pads or not all(bus_pads(p) for p in drivers):
+        return None
+    fu = sum(u for u, _ in feed_pads) / len(feed_pads)
+    ref = min(drivers, key=lambda p: (abs(p.box.cu - fu), _ref_key(p.refdes)))
+    us = [u for p in drivers for u, _ in bus_pads(p)] + [u for u, _ in feed_pads]
+    return (Box(min(us), ref.box.v0, max(us), ref.box.v1), drivers, feed, ref)
+
+
 def row_blocking_brick(ix, board):
     """The underside through-hole body too deep to sit behind the face row
     (`board_fit.row_blockers`): its pins would land in the row's plastic, so
@@ -1130,6 +1346,160 @@ def bulk_reach(pl, ix, cap, brick):
         blocked = max(0.0, min(hi, b.box.u1) - max(lo, b.box.u0))
         worst = max(worst, (hi - lo) - blocked)
     return worst
+
+
+# --- check 20: routability, measured on the copper --------------------------------
+@dataclass(frozen=True)
+class NetRun:
+    """One net of one board as check 20 measures it: how far it has to run,
+    and what it is allowed."""
+    net: str
+    span: float                 # u-extent of its placed pins, mm
+    pins: int
+    limit: float | None         # None: check 20 does not bind this net
+    why: str                    # what the limit is made of, or why there is none
+
+
+@dataclass(frozen=True)
+class Routability:
+    """Check 20's figures for one board.  Reported on every run, passing or
+    failing, because a number nobody looks at is not a check."""
+    board: str
+    star: float                 # mm of star wire over every measured net
+    runs: tuple                 # NetRun, longest span first
+    across: tuple               # (nets crossing, at u, tracks the cut holds)
+    along: tuple                # (nets crossing, at v, tracks the cut holds)
+
+    @property
+    def load(self):
+        """The worst cut's share of its capacity, 0..1 -- the higher of the
+        two axes."""
+        return max(self.across[0] / self.across[2], self.along[0] / self.along[2])
+
+
+def routed_nets(ix, board):
+    """The nets check 20 measures on `board`: every net that is copper the
+    placement leaves to be THREADED, which is everything except the planes and
+    the pours.
+
+    ⛔ The exclusion is derived (`ix.gnd`, `ix.rails`), never a table of names:
+    layer 2 is a ground plane on all four boards and layer 3 a pour or a second
+    ground (`layout/PROCESS.md` R1), and the rails that get neither -- CTRL's
+    `V5AUX`, POWER's `V12` -- are R0's wide traces, laid by hand in R2 before
+    the autorouter sees the board.  ⚠️ It is a superset of "the ground plane
+    and the board's own layer-3 pour" by the handful of pass-through rail pins:
+    on OUTPUTS and LOGIC, the two boards that HAVE a pour, the two give the
+    same worst cut (33 and 50 nets); on POWER and CTRL it is one or two nets
+    smaller, against a backstop at half the capacity."""
+    return frozenset(n for n in ix.members if n not in ix.gnd and n not in ix.rails)
+
+
+def net_limit(pl, ix, board, net):
+    """(limit mm, what it is made of) for check 20(a) on `net`, or
+    (None, why check 20 does not bind it).
+
+    The budget has ONE shape: **the connector's own u-extent plus a reach**.
+    The connector's body is in it because which contact of a header or a socket
+    a net lands on is the pinout's choice, not the placement's -- a driver
+    standing at the middle of `J313` is still half a header from its outermost
+    channel pin, and which column of a 68.6 mm `STACK` socket a signal comes up
+    in is `_STACK_SIGNALS`' choice.  What is left is the reach, and that is the
+    placement's to answer for."""
+    items = pl.placed(board)
+    conns = [items[r] for r, _ in ix.members[net]
+             if r in items and ix.items[r].kind == "CONN"]
+    terms = [p for p in conns if ix.items[p.refdes].harness]
+    if net in ix.classes["SENSE"] and any(ix.items[r].kind == "MODULE" for r, _ in ix.members[net]):
+        return None, "a SENSE net on the module: check 14 holds it to the pin it filters"
+    if net in ix.hv.get(board, ()):
+        return None, ("pack voltage: the 84 V parts are placed as a REGION and checks 7, 13, 18 and "
+                      "19 decide where each one stands; check 20 does not get a second vote")
+    straddler = sorted((r for r, _ in ix.members[net]
+                        if r in items and straddles(ix, r)), key=_ref_key)
+    if straddler:
+        return None, (f"a net on {straddler[0]}, which STRADDLES POWER's partition: 4a puts its "
+                      f"pack-voltage pins in the 84 V end and turns its low-voltage pins the other "
+                      f"way, so the net crosses the board by construction (checks 18 and 19 own it)")
+    if len({p.refdes for p in terms}) > 1:
+        names = " ".join(sorted({p.refdes for p in terms}, key=_ref_key))
+        return None, (f"a face-row net: it lands on {names}, and the ORDER of the row is "
+                      f"edge_budget's, not the placement's")
+    hosts = sorted({r for r, _ in ix.members[net]
+                    if r in items and ix.items[r].kind in HOST_KINDS}, key=_ref_key)
+    if len(hosts) > 1:
+        return None, (f"a BUS, not a run: it lands on {' '.join(hosts)}, so its span is where those "
+                      f"parts stand and each of them answers for its own circuit "
+                      f"(`EN` is every expander's RESET since IO-22, `SCL`/`SDA` the whole I2C bus)")
+    pairs = sorted({p.refdes for p in conns if ix.items[p.refdes].interface}, key=_ref_key)
+    if pairs:
+        return None, (f"a net on {' '.join(pairs)}, an INTER-BOARD half: which contact column it "
+                      f"comes up in is the pinout's choice, and that half lies flush to the back "
+                      f"edge (check 12) where the module's antenna must also be (check 8) -- on "
+                      f"LOGIC those three halves and the module want 180 mm of a 228 mm strip and "
+                      f"two of the three have their u fixed on the board below.  Reported, not "
+                      f"bound: this board's placement does not decide it")
+    land = sorted({p.refdes for p in conns if ix.items[p.refdes].land}, key=_ref_key)
+    if land:
+        return None, (f"a net on {' '.join(land)}, the programming land: check 20(b) owns it and "
+                      f"measures what matters, the land's pads to the module's own pins")
+    if not conns:
+        return None, "no connector on it: there is no terminal for it to stand behind"
+    widest = max(conns, key=lambda p: (p.box.w, _ref_key(p.refdes)))
+    channel = net in ix.classes["CH12"] or net in ix.classes["CH5"]
+    reach = CHANNEL_REACH if channel else SIGNAL_REACH
+    kind = "channel" if channel else "signal"
+    return widest.box.w + reach, (f"a {kind} to {widest.refdes}: that connector's own "
+                                  f"{widest.box.w:.1f} mm and {reach:g} mm of reach")
+
+
+def routability(pl, ix, board):
+    """Check 20's figures for `board` -- the measurement the owner's
+    routing-difficulty finding was made with, inside the tool.
+
+    * the u-SPAN of every measured net, against `net_limit`;
+    * the STAR length, the MST proxy: each net's pins to their own centroid,
+      summed.  It is not a wire length, it is a number that goes DOWN when
+      related parts are placed together and up when they are not;
+    * the worst 1 mm CUT in each axis, against what two signal layers at
+      `TRACK_PITCH` hold.
+    """
+    items = pl.placed(board)
+    frame = pl.frame(board)
+    measured = routed_nets(ix, board)
+    runs, star = [], 0.0
+    boxes = []
+    for net in sorted(measured):
+        pts = [items[r].pin_point(frame, pin) for r, pin in ix.members[net] if r in items]
+        if len(pts) < 2:
+            continue
+        us = [u for u, _ in pts]
+        vs = [v for _, v in pts]
+        cu, cv = sum(us) / len(us), sum(vs) / len(vs)
+        star += sum(math.hypot(u - cu, v - cv) for u, v in pts)
+        limit, why = net_limit(pl, ix, board, net)
+        runs.append(NetRun(net, max(us) - min(us), len(pts), limit, why))
+        boxes.append((min(us), max(us), min(vs), max(vs)))
+    runs.sort(key=lambda r: (-r.span, r.net))
+    across = _worst_cut([(u0, u1) for u0, u1, _, _ in boxes], frame.length,
+                        SIGNAL_LAYERS * frame.width / TRACK_PITCH)
+    along = _worst_cut([(v0, v1) for _, _, v0, v1 in boxes], frame.width,
+                       SIGNAL_LAYERS * frame.length / TRACK_PITCH)
+    return Routability(board, star, tuple(runs), across, along)
+
+
+def _worst_cut(spans, extent, capacity):
+    """(nets crossing, where, capacity) at the worst 1 mm cut along `extent`.
+    A net crosses a cut when its pins straddle it -- the cheapest honest proxy
+    for "a track has to pass here", and the one the measurement that found this
+    problem used."""
+    best = (0, 0.0)
+    x = 0.0
+    while x <= extent + TOL:
+        n = sum(1 for lo, hi in spans if lo < x < hi)
+        if n > best[0]:
+            best = (n, x)
+        x += CUT_STEP
+    return best + (capacity,)
 
 
 class Placement:
@@ -1429,6 +1799,67 @@ class Placer:
             v0 += V_STEP
         return None if best is None else (best[1], best[2], best[0])
 
+    def circuit_u(self, ref):
+        """(u, why) -- CLUSTER BY CIRCUIT, the objective the owner asked for
+        after looking at the four placed boards.  None where nothing `ref`
+        belongs with is placed yet.  It has two halves, and they are different
+        because a host and a passive are different things:
+
+        * a HOST stands at the u-centroid of the CONNECTORS IT SERVES
+          (`served_contacts`), each contact weighted by the width of the copper
+          its net needs (`net_pull`) -- so a driver is pulled by the four
+          channels it drives and only nudged by the nine control lines it
+          shares with a socket;
+        * a PASSIVE stands at the weighted centroid of everything already
+          placed on its SIGNAL nets.  It is a link in a chain and belongs
+          BETWEEN the two things it links.
+
+        ⭐ What both fix is the same thing: `centroid_u` counts every partner
+        on every net and the RAILS win.  `V12` weighs 10 a pin and lands on
+        every driver, so the three `TPS4H160B` were pulled onto the contact
+        that feeds them and stood in one line in the middle of OUTPUTS while
+        the terminals they drive were at the ends of the row (`AUX12V_3`,
+        121 mm); `R362`, whose whole job is to sit on `J313`'s channel, was
+        placed 119 mm from it by the same pull, with two dozen sibling
+        resistors voting with `J311` and `J307` (2026-09-22).  Here the rails
+        are DROPPED, not discounted: where a part's power comes from says
+        nothing about which circuit it belongs to.  The bands still hold the
+        v, and the satellites still follow their host."""
+        it = self.item(ref)
+        placed = self.pl.boards[self.board]
+        num = den = 0.0
+        per = {}
+        if it.kind in HOST_KINDS:
+            for net, conn, pin, pull in served_contacts(self.ix, self.board, ref):
+                p = placed.get(conn)
+                if p is None or p.unplaced:
+                    continue
+                num += pull * p.pin_point(self.frame, pin)[0]
+                den += pull
+                per[conn] = per.get(conn, 0.0) + pull
+            what = "the connectors it serves"
+        elif it.kind in PASSIVE_KINDS:
+            for net in sorted(it.nets):
+                if not self.ix.signal(net):
+                    continue
+                pull = net_pull(self.ix, net)
+                for r, pin in self.ix.members[net]:
+                    p = placed.get(r) if r != ref else None
+                    if p is None or p.unplaced:
+                        continue
+                    num += pull * p.pin_point(self.frame, pin)[0]
+                    den += pull
+                    per[r] = per.get(r, 0.0) + pull
+            what = "the signal partners it links"
+        else:
+            return None, ""
+        if den <= 0:
+            return None, ""
+        order = sorted(per, key=lambda r: (-per[r], _ref_key(r)))
+        lead = "behind" if it.kind in HOST_KINDS else "between"
+        return num / den, (f"{lead} " + ", ".join(order[:4]) + (", …" if len(order) > 4 else "")
+                           + f" — {what} (u {num / den:.1f})")
+
     def centroid_u(self, ref):
         """Pin-weighted centroid (u) of the placed items sharing `ref`'s nets;
         None when nothing it touches is placed yet."""
@@ -1558,8 +1989,19 @@ class Placer:
 
     def place_one(self, ref, band):
         cu, partners = self.centroid_u(ref)
+        # ⛔ The clustering objective does NOT steer POWER's 84 V parts.  They
+        # are placed as a REGION and three rules already answer "where does
+        # this part belong": one group at `HV_STRIP` (check 13), the partition
+        # (4a, check 18) and the order inside it (check 19).  A second
+        # objective pulled the 84 V passives out of the blob toward the signal
+        # partners they link and split the region in two (2026-09-22).
+        hu, host_why = (None, "") if self.is_hv(ref) else self.circuit_u(ref)
         if ref in self.target_u:
             target, why = self.target_u[ref]
+        elif hu is not None:
+            # cluster by circuit: a host stands at the u-centroid of the
+            # connectors it serves, ahead of the plain adjacency centroid
+            target, why = hu, host_why
         elif cu is not None:
             target = cu
             why = "centroid of " + ", ".join(partners[:6]) + (", …" if len(partners) > 6 else "")
@@ -1872,6 +2314,21 @@ def _seat_pairs(pl, pr, board, keep):
             pl.notes.append(f"{board}: {upper} lands pin for pin on {lower} at no quarter "
                             f"turn; placed at {lower}'s angle")
         pr.place_fixed(upper, lo.u, lo.v, ang, 4, f"fixed: mate of {lower}")
+    # ⭐ THE MODULE BETWEEN THE TWO, and this is the clustering objective's
+    # doing.  An UPPER half's position is inherited and cannot move; a LOWER
+    # half chooses its own u; and the module is the HOST every signal on this
+    # board is clustered around.  Seated after the lowers, it found LOGIC's
+    # back edge already full -- `J406` u 21.9..90.5, `J411` 91.7..148, `J407`
+    # 103..139 -- and its antenna floor makes it 25.5 mm deep on a 41.84 mm
+    # board, so the only position left was u 149.6, 100 mm from the socket it
+    # talks to: every `LGT_*` command ran 127-145 mm (2026-09-22).  The thing
+    # everything clusters around chooses BEFORE the things that cluster around
+    # it, and the lower half -- which is free to choose -- then stands beside
+    # it and shortens its own signals too.
+    mod = next((it.refdes for it in ix.on(board) if it.kind == "MODULE"
+                and it.refdes in pr.doc.components and it.refdes not in keep), None)
+    if mod is not None and mod in pr.pending():
+        pr.place_with_satellites(mod, pr.band.get(mod, 4))
     for lower, _ in ix.pairs:
         if ix.items[lower].board != board or lower not in pr.doc.components or lower in keep:
             continue
@@ -1917,6 +2374,17 @@ def _reserve_driver_slot(pl, pr, keep):
     ics = [r for r in ics if r in pr.doc.components]
     if feed is None or feed not in pr.doc.components or feed in keep or len(ics) < 2:
         return
+    # ⚠️ The MEAN OF THE SIGNAL CENTROIDS, not of the clustering objective's
+    # targets, and deliberately: 3a's own sentence is "the middle of the
+    # terminals they serve", and the two answers put the feed 20 mm apart
+    # (u 119.3 against 99.9) with no electrical difference -- the feed's own
+    # pads barely move the pour, whose length the drivers set, and check 11
+    # asks only that the pin row come up INSIDE the pour with a driver each
+    # side, which both satisfy.  What the 20 mm does move is POWER: `J311`
+    # hangs into the 30 mm gap and nothing on POWER's top taller than 18.1 mm
+    # may stand under it (check 5), so the feed's u decides where POWER's
+    # 22 mm chokes and 18.5 mm cans pack, and on the test fixture's oversized
+    # bodies the 84 V region cannot absorb the shift (2026-09-22).
     wants = [u for u in (_signal_centroid(pr, r) for r in ics) if u is not None]
     if not wants:
         return
@@ -2073,31 +2541,44 @@ def _place_board(pl, board, anchor, keep, relaxed=False, partition=None, grown=0
             pr.hv_low = anchor != "right"
         pr.keep_saved()
         pr.row()
+        s3 = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
+        if s3 is not None and s3.refdes in pr.doc.components and s3.refdes not in keep:
+            # ⚠️ EVERYTHING THE MODULE CARRIES IS SET BEFORE `_seat_pairs`,
+            # because that is where the module is now seated -- between the
+            # pairs' inherited upper halves and their free lower ones.
+            box = placed_box(pr.env(s3.refdes), pr.frame, 0, 0, 0, False)
+            pr.target_v[s3.refdes] = (W - ANTENNA_EDGE / 2 - box.d,
+                                      "antenna end (local +Y, the padless end) at the back edge")
+            # check 8 is a RULE, not a preference: the module may only be
+            # offered positions that keep its antenna end at the back edge,
+            # so a 56 mm socket on the same edge is something it stands
+            # BESIDE rather than something that outbids it.
+            pr.floor_v[s3.refdes] = (W - ANTENNA_EDGE - box.d,
+                                     "the antenna end within "
+                                     f"{ANTENNA_EDGE:g} mm of the back edge")
+            # (check 20b) the programming land stands BESIDE the module.
+            # `EN`, `BOOT_IO0` and the two UART0 lines are the S3's own
+            # pins (D25), so the land is four traces to one part and
+            # nothing else needs to be near either: it is the module's
+            # satellite and follows it wherever the clustering puts it.
+            for it in ix.on(board):
+                if it.kind == "CONN" and it.land and it.refdes in pr.doc.components:
+                    pr.near[it.refdes] = s3.refdes
+                    pr.near_why[it.refdes] = (f"the programming land: {it.land} carries the "
+                                              f"module's own EN, IO0 and UART0 pins (check 20b)")
+            # an ADC input's RC filter sits against the S3 (check 14)
+            for n in ix.classes["SENSE"]:
+                if not any(r == s3.refdes for r, _ in ix.members[n]):
+                    continue
+                for r, _ in ix.members[n]:
+                    it = ix.items.get(r)
+                    if it and it.board == board and it.kind in ("R", "C") and r in pr.doc.components:
+                        pr.near[r], pr.near_why[r] = s3.refdes, f"RC filter on {n}, an ADC1 input"
         _seat_pairs(pl, pr, board, keep)
         if board == "OUTPUTS":
             _reserve_driver_slot(pl, pr, keep)
         if board == "LOGIC":
-            if "U401" in pr.doc.components and "U401" not in keep:
-                box = placed_box(pr.env("U401"), pr.frame, 0, 0, 0, False)
-                pr.target_v["U401"] = (W - ANTENNA_EDGE / 2 - box.d,
-                                       "antenna end (local +Y, the padless end) at the back edge")
-                # check 8 is a RULE, not a preference: the module may only be
-                # offered positions that keep its antenna end at the back edge,
-                # so a 56 mm socket on the same edge is something it stands
-                # BESIDE rather than something that outbids it.
-                pr.floor_v["U401"] = (W - ANTENNA_EDGE - box.d,
-                                      "the antenna end within "
-                                      f"{ANTENNA_EDGE:g} mm of the back edge")
-            s3 = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
             if s3 is not None:
-                # an ADC input's RC filter sits against the S3 (check 14)
-                for n in ix.classes["SENSE"]:
-                    if not any(r == s3.refdes for r, _ in ix.members[n]):
-                        continue
-                    for r, _ in ix.members[n]:
-                        it = ix.items.get(r)
-                        if it and it.board == board and it.kind in ("R", "C") and r in pr.doc.components:
-                            pr.near[r], pr.near_why[r] = s3.refdes, f"RC filter on {n}, an ADC1 input"
                 # the CAN transceiver over the pair contacts that carry its bus
                 for it in ix.on(board):
                     if it.kind != "IC" or not any(n.startswith("CAN") for n in it.nets):
@@ -2389,6 +2870,7 @@ def check(pl, ix=None, boards=None):
     out += _check_partition(pl, ix, boards)
     out += _check_heavy_path(pl, ix, boards)
     out += _check_sensitive(pl, ix, boards)
+    out += _check_routability(pl, ix, boards)
     return out
 
 
@@ -2600,39 +3082,143 @@ def _check_antenna(pl, ix, boards=None):
 
 
 def _check_bus(pl, ix, boards=None):
-    """11 -- the V12 bus on OUTPUTS: its ICs one way, the loom's contact under
-    their middle, and (IO-26 3a) the feed INSIDE the line rather than off its
-    end -- a driver each side of the slot its pin row stands in."""
+    """11 -- THE 12 V POUR on OUTPUTS, amended for the clustering objective.
+
+    Until the drivers were clustered behind the terminals they feed, this check
+    asked that their centroid stand within 15 mm of the contact that feeds them
+    -- a TRACE-era figure, and one that FORCED the single mid-board driver line
+    the owner could not route out of (`AUX12V_3`, 121 mm to a terminal at the
+    end of the row).  Clustering spreads the drivers along the board, and what
+    carries the bus between them is the layer-3 `V12` POUR (PROCESS.md R1), so
+    the pour is what this now measures:
+
+    (a) every V12 IC faces one way -- one pour, one orientation, so every
+        `VS` pad row presents to the same edge of it;
+    (b) every driver's `VS` pads are ON the pour: the sheet is a strip under
+        the line, and a driver off the line in v needs a neck instead of vias;
+    (c) the feed's pin row stands INSIDE the pour's span with a driver on each
+        side of the slot it leaves (IO-26 3a, unchanged in substance and now
+        said about the pour rather than about a line: the 11.39 A enters where
+        the load is, not off the end);
+    (d) the pour is no longer than `V12_POUR_MM`, which is the drop the copper
+        allows -- the reach 15 mm used to be, re-derived from a pour.
+    """
     out = []
     board = "OUTPUTS"
     if not pl.boards.get(board) or (boards is not None and board not in boards):
         return out
-    items = pl.placed(board)
-    names, feed_ref = v12_bus(ix, board)
-    ics = [items[r] for r in names if r in items]
-    feed = items.get(feed_ref)
-    if not ics or feed is None:
+    got = v12_pour(pl, ix, board)
+    if got is None:
         return out
-    cu = sum(p.box.cu for p in ics) / len(ics)
-    if abs(cu - feed.box.cu) > BUS_REACH + TOL:
-        out.append(f"11 V12 bus: OUTPUTS {' '.join(sorted(p.refdes for p in ics))} centre on u "
-                   f"{cu:.1f} but {feed.refdes} feeds them from u {feed.box.cu:.1f}: "
-                   f"{abs(cu - feed.box.cu):.1f} mm apart, over {BUS_REACH:g}")
+    pour, ics, feed, ref = got
+    frame, pwr12 = pl.frame(board), ix.classes["PWR12"]
     if len({p.angle for p in ics}) > 1:
-        out.append(f"11 V12 bus: OUTPUTS the V12 ICs face {len({p.angle for p in ics})} ways "
-                   f"({', '.join(f'{p.refdes}@{p.angle}' for p in ics)}); one bus wants one way")
-    pads = feed.tht_boxes(pl.frame(board))
+        out.append(f"11 V12 pour: OUTPUTS the V12 ICs face {len({p.angle for p in ics})} ways "
+                   f"({', '.join(f'{p.refdes}@{p.angle}' for p in ics)}); one pour wants one way")
+    for p in sorted(ics, key=lambda q: _ref_key(q.refdes)):
+        vs = [(num, u, v) for num, u, v in p.pads(frame)
+              if ix.items[p.refdes].pin_net.get(num) in pwr12]
+        off = [(num, u, v) for num, u, v in vs
+               if v < pour.v0 - TOL or v > pour.v1 + TOL]
+        if off:
+            out.append(f"11 V12 pour: OUTPUTS {p.refdes}'s {' '.join(sorted({n for n, _, _ in off}))} "
+                       f"pads stand at v {min(v for _, _, v in off):.1f}..{max(v for _, _, v in off):.1f}, "
+                       f"off the pour's strip (v {pour.v0:.1f}..{pour.v1:.1f}, taken from {ref.refdes} "
+                       f"beside the feed); the pour is one sheet under the line and those pads drop "
+                       f"into it by vias, not by a neck")
+    pads = feed.tht_boxes(frame)
     if pads and len(ics) > 1:
         s0, s1 = driver_slot(pads)
         before = [p.refdes for p in ics if p.box.u1 <= s0 + TOL]
         after = [p.refdes for p in ics if p.box.u0 >= s1 - TOL]
-        if not (before and after):
-            out.append(f"11 V12 bus: OUTPUTS {feed.refdes}'s pin row stands at u {s0:.1f}..{s1:.1f} "
-                       f"with {' '.join(sorted(before + after)) or 'no driver'} beside it, all on "
-                       f"{'one side' if before or after else 'neither side'}; the line leaves a "
-                       f"{s1 - s0:.1f} mm slot for those pins and the feed enters the pour from "
-                       f"INSIDE it, not off the end (3a)")
+        if not (before and after) or s0 < pour.u0 - TOL or s1 > pour.u1 + TOL:
+            out.append(f"11 V12 pour: OUTPUTS {feed.refdes}'s pin row stands at u {s0:.1f}..{s1:.1f} "
+                       f"and the pour spans u {pour.u0:.1f}..{pour.u1:.1f}, with "
+                       f"{' '.join(sorted(before + after)) or 'no driver'} beside it"
+                       + ("" if before and after else
+                          f", all on {'one side' if before or after else 'neither side'}")
+                       + f"; the line leaves a {s1 - s0:.1f} mm slot for those pins and the "
+                       f"11.39 A enters the pour from INSIDE it, not off the end (3a)")
+    if pour.w > V12_POUR_MM + TOL:
+        out.append(f"11 V12 pour: OUTPUTS the pour runs u {pour.u0:.1f}..{pour.u1:.1f}, "
+                   f"{pour.w:.1f} mm from {' '.join(sorted(p.refdes for p in ics))}'s VS pads, over "
+                   f"{V12_POUR_MM:g}; 11.39 A down a 20 mm x 35 um pour drops 5.61 mV per 20 mm and "
+                   f"the budget is 50 mV")
     return out
+
+
+def _check_routability(pl, ix, boards=None):
+    """20 -- ROUTABILITY, per board.  Placement decides whether routing is
+    possible, and checks 10-16 ask that of the BOARD; this asks it of the
+    NETS, which is what the owner was looking at when he said routing all four
+    would be extremely difficult (2026-09-22).  Three clauses:
+
+    (a) a net's u-span against its class's reach (`net_limit`) -- a channel
+        behind its terminal, a signal behind its connector;
+    (b) the programming land within `PROG_REACH` of the module, measured pin to
+        pin on the nets they share;
+    (c) the worst 1 mm cut against half of what two signal layers hold.
+
+    The figures are reported on every run whether they pass or not
+    (`routability_report`): the point of the check is that the number is
+    visible, not that it is silent."""
+    out = []
+    for board in bp.STACK_ORDER:
+        if board not in pl.project.pcbs or (boards is not None and board not in boards):
+            continue
+        r = routability(pl, ix, board)
+        for run in r.runs:
+            if run.limit is not None and run.span > run.limit + TOL:
+                out.append(f"20 reach: {board} {run.net} spans {run.span:.1f} mm of u over "
+                           f"{run.pins} pins; {run.why}, so {run.limit:.1f} mm")
+        for name, (n, at, cap) in (("across", r.across), ("along", r.along)):
+            if n > CUT_LOAD * cap + TOL:
+                out.append(f"20 congestion: {board}'s worst cut {name} the board carries {n} nets "
+                           f"at {'u' if name == 'across' else 'v'} {at:.0f}, {100 * n / cap:.0f} % of "
+                           f"the {cap:.0f} tracks {SIGNAL_LAYERS} signal layers hold at "
+                           f"{TRACK_PITCH:g} mm; the backstop is {100 * CUT_LOAD:.0f} %")
+        out += _check_programmer(pl, ix, board)
+    return out
+
+
+def programmer_reach(pl, ix, board):
+    """(the land, the module, the worst pin-to-pin distance between them on the
+    nets they share), or None.  Both parts come from the netlist -- the
+    connector with a `land`, the item of kind MODULE -- never from a refdes."""
+    items = pl.placed(board)
+    land = next((items[it.refdes] for it in ix.on(board)
+                 if it.kind == "CONN" and it.land and it.refdes in items), None)
+    mod = next((items[it.refdes] for it in ix.on(board)
+                if it.kind == "MODULE" and it.refdes in items), None)
+    if land is None or mod is None:
+        return None
+    frame = pl.frame(board)
+    shared = set(ix.items[land.refdes].pin_net.values()) & set(ix.items[mod.refdes].pin_net.values())
+    shared = {n for n in shared if n and ix.signal(n)}
+    worst = None
+    for net in sorted(shared):
+        for num, u, v in land.pads(frame):
+            if ix.items[land.refdes].pin_net.get(num) != net:
+                continue
+            for mnum, mu, mv in mod.pads(frame):
+                if ix.items[mod.refdes].pin_net.get(mnum) != net:
+                    continue
+                d = math.hypot(u - mu, v - mv)
+                if worst is None or d > worst[0]:
+                    worst = (d, net)
+    return None if worst is None else (land.refdes, mod.refdes, worst[0], worst[1])
+
+
+def _check_programmer(pl, ix, board):
+    got = programmer_reach(pl, ix, board)
+    if got is None:
+        return []
+    land, mod, mm, net = got
+    if mm <= PROG_REACH + TOL:
+        return []
+    return [f"20 programmer: {board} {land} stands {mm:.1f} mm from {mod} (worst on {net}), over "
+            f"{PROG_REACH:g}; the land carries the module's OWN EN, IO0 and UART0 pins (D25), so "
+            f"it belongs beside it"]
 
 
 def _check_partition(pl, ix, boards=None):
@@ -2923,6 +3509,36 @@ def _ref_key(ref):
     return (m.group(1), int(m.group(2)), m.group(3)) if m else (ref, 0, "")
 
 
+#: How many of a board's longest nets check 20 reports beside the star length.
+#: Three: enough to show whether one net is an outlier or the whole board runs
+#: long, and short enough that the line is read rather than skipped.
+REPORT_RUNS = 3
+
+
+def routability_lines(pl, ix, board):
+    """Check 20's figures for `board` as readable lines -- the star length, the
+    three longest nets against their limits, and the worst cut in each axis.
+    ✔ Printed on every `--check` and `--stack` whether the check passes or not:
+    the owner read the placement as hard to route off figures like these, and
+    a figure nobody prints is one nobody looks at."""
+    r = routability(pl, ix, board)
+    n_a, u_a, cap_a = r.across
+    n_l, v_l, cap_l = r.along
+    out = [f"{board}: star {r.star / 1000:.2f} m over {len(r.runs)} nets; "
+           f"worst 1 mm cut {n_a} nets across at u {u_a:.0f} ({100 * n_a / cap_a:.0f} % of "
+           f"{cap_a:.0f} tracks), {n_l} along at v {v_l:.0f} ({100 * n_l / cap_l:.0f} % of "
+           f"{cap_l:.0f})"]
+    for run in r.runs[:REPORT_RUNS]:
+        # the short head of the reason -- every one of them names the class or
+        # the check that owns the net before its colon; the sentence that says
+        # WHY belongs in the failure message, which is where it is read
+        head = run.why.split(":")[0]
+        limit = f"limit {run.limit:.1f} mm, {head}" if run.limit is not None \
+            else f"not bound — {head}"
+        out.append(f"    {run.net} {run.span:.1f} mm over {run.pins} pins; {limit}")
+    return out
+
+
 def placement_table(pl, board):
     frame = pl.frame(board)
     lines = [f"# {board} — placement", "",
@@ -2930,8 +3546,11 @@ def placement_table(pl, board):
              f"{frame.length:g} mm length, v across the {frame.width:g} mm width, v = 0 the connector "
              f"face, the origin of each footprint. File frame: the editor's X, Y in mm"
              + (" (the outline is drawn portrait: X across, Y along)." if frame.portrait else "."),
-             "", "| Refdes | u | v | angle | file X | file Y | layer | band | reason |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "", "## Routability (check 20)", ""]
+    lines += [f"- {ln.strip()}" if ln.startswith("    ") else f"- {ln}"
+              for ln in routability_lines(pl, pl.ix, board)]
+    lines += ["", "| Refdes | u | v | angle | file X | file Y | layer | band | reason |",
+              "|---|---|---|---|---|---|---|---|---|"]
     for ref in sorted(pl.boards[board], key=_ref_key):
         p = pl.boards[board][ref]
         if p.unplaced:
@@ -2945,7 +3564,12 @@ def placement_table(pl, board):
     return "\n".join(lines) + "\n"
 
 
-def summary(pl):
+def summary(pl, ix=None):
+    """The per-board population, and under each board check 20's routability
+    figures -- ✔ a required read after every `--stack` (PROCESS.md): they are
+    what says whether the placement can be ROUTED, and they are printed
+    passing or failing."""
+    ix = ix or pl.ix
     lines = []
     for board in _place_order():
         items = pl.boards.get(board, {})
@@ -2958,9 +3582,26 @@ def summary(pl):
         lines.append(f"{board}: {len(items)} placed; bands "
                      + ", ".join(f"{b}: {n}" for b, n in sorted(pops.items()))
                      + (f"; UNPLACED {' '.join(unplaced)}" if unplaced else ""))
+        if board in pl.project.pcbs and pl.placed(board):
+            lines += [f"  {ln}" for ln in routability_lines(pl, ix, board)]
     for n in pl.notes:
         lines.append(f"  note: {n}")
     return "\n".join(lines)
+
+
+def _summary_lines(pl, ix, picked):
+    """`summary` narrowed to `--board`: a board's own line AND the block of
+    routability figures under it, which a line-by-line filter on the refdes
+    prefix would have dropped."""
+    keep, out = False, []
+    for ln in summary(pl, ix).split("\n"):
+        if ln.lstrip().startswith("note:"):
+            keep = False
+        elif not ln.startswith(" "):
+            keep = ln.split(":")[0] in picked
+        if keep:
+            out.append(ln)
+    return "\n".join(out)
 
 
 # --- the picture --------------------------------------------------------------------
@@ -3127,8 +3768,7 @@ def main(argv=None):
         picked = list(a.board) if a.board else None
         problems = check(pl, ix, boards=picked)
         if a.check:
-            print(summary(pl) if not picked else
-                  "\n".join(ln for ln in summary(pl).split("\n") if ln.split(":")[0] in picked))
+            print(summary(pl, ix) if not picked else _summary_lines(pl, ix, picked))
             if picked:
                 print(f"checking {' '.join(picked)} only")
             print(f"{len(problems)} problem(s)"
@@ -3145,7 +3785,7 @@ def main(argv=None):
         return EXIT_REFUSED
     picked = list(a.board) if a.board else None
     pl = stack(project, ix, anchor=a.anchor, keep=a.keep)
-    print(summary(pl))
+    print(summary(pl, ix))
     problems = check(pl, ix)
     docs = Path(a.docs)
     docs.mkdir(parents=True, exist_ok=True)

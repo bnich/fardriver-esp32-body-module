@@ -643,35 +643,49 @@ def test_10_channel_between_bands(placed, ix):
     assert any(s.startswith("10 channel: LOGIC") and "U401" in s and "3 mm" in s for s in got)
 
 
-def test_11_v12_bus_line_and_feed(placed, ix):
-    """⚠️ THREE DRIVERS, NOT FOUR. `U305` was the fourth IC on OUTPUTS' V12
-    bus until IO-26 2a took the 5 V buck to CTRL, and a mutation aimed at a
-    part that is not on the board moves nothing and "passes"."""
+def test_11_the_pour_is_one_sheet_one_way_under_every_vs_pad(placed, ix):
+    """(check 11, AMENDED) The bus is the layer-3 `V12` POUR, not a line of
+    drivers 15 mm from their feed: clustering spreads the drivers along the
+    board and PROCESS.md R1 makes the pour carry the current between them.
+
+    ⚠️ THREE DRIVERS, NOT FOUR. `U305` was the fourth IC on OUTPUTS' V12 bus
+    until IO-26 2a took the 5 V buck to CTRL, and a mutation aimed at a part
+    that is not on the board moves nothing and "passes"."""
     _, pl = placed
     assert "U305" not in pl.boards["OUTPUTS"], "the buck is on CTRL; this bus is OUTPUTS'"
     assert pl.get("U305").board == "CTRL"
-    j311 = pl.get("J311")
-    far = pl
-    for r in ("U301", "U302", "U303"):
-        far = moved(far, r, du=(j311.box.cu + 40.0) - pl.get(r).box.cu)
-    assert any(s.startswith("11 V12 bus") and "over 15" in s for s in place.check(far, ix))
+    pour, ics, feed, ref = place.v12_pour(pl, ix, "OUTPUTS")
+    assert {p.refdes for p in ics} == {"U301", "U302", "U303"} and feed.refdes == "J311"
+    assert not lines(place.check(pl, ix), 11)                      # silent as placed
+    # one pour, one orientation
     turned = moved(pl, "U302", angle=(pl.get("U302").angle + 90) % 360)
-    assert any(s.startswith("11 V12 bus") and "2 ways" in s for s in place.check(turned, ix))
+    assert any(s.startswith("11 V12 pour") and "2 ways" in s for s in place.check(turned, ix))
+    # a driver pushed off the line: its VS pads are no longer over the sheet
+    off_line = moved(pl, "U303", dv=5.0)
+    got = lines(place.check(off_line, ix), 11)
+    assert any("U303's" in s and "off the pour's strip" in s for s in got), got
 
 
-def test_11_the_feed_is_inside_the_driver_line_not_off_its_end(placed, ix):
-    """(IO-26 3a) The driver line leaves a SLOT for `J311`'s four pins and the
-    11.39 A feed enters the pour from inside the line. The mutation is the
-    arrangement 3a rejected: the loom off the END of the line, so the whole bus
-    current runs the length of the drivers before it reaches the last one.
+def test_11_the_pour_is_no_longer_than_the_drop_allows(placed, ix):
+    """(check 11, the clause that REPLACED the 15 mm reach) `V12_POUR_MM` is
+    the length 11.39 A may travel in a 20 mm x 35 um pour for 50 mV. The
+    mutation is the arrangement clustering could produce and must not: a
+    driver at each end of the board, 220 mm of pour."""
+    _, pl = placed
+    pour, _, _, _ = place.v12_pour(pl, ix, "OUTPUTS")
+    assert pour.w <= place.V12_POUR_MM, pour
+    ends = moved(moved(pl, "U302", du=8.0 - pl.get("U302").box.u0),
+                 "U303", du=228.0 - pl.get("U303").box.u0)
+    got = lines(place.check(ends, ix), 11)
+    assert any("the pour runs" in s and f"over {place.V12_POUR_MM:g}" in s for s in got), got
 
-    ⚠️ On THIS design the new clause cannot be made to fire on its own: three
-    9.8 mm drivers with a 20 mm slot between two of them make a line 46 mm
-    long, and every position past its end is more than `BUS_REACH` from the
-    centroid, so the 15 mm clause fires too. The clause is still what states
-    3a -- a line twice as tight would pass the centroid test with every driver
-    on one side -- and what is proven here is that it FIRES on the defect and
-    is SILENT on the placement the engine leaves."""
+
+def test_11_the_feed_is_inside_the_pour_not_off_its_end(placed, ix):
+    """(IO-26 3a, now said about the pour) The driver line leaves a SLOT for
+    `J311`'s four pins and the 11.39 A enters the pour from inside it. The
+    mutation is the arrangement 3a rejected: the loom off the END of the line,
+    so the whole bus current runs the length of the drivers before it reaches
+    the last one."""
     _, pl = placed
     names, feed = place.v12_bus(ix, "OUTPUTS")
     assert feed == "J311" and len(names) == 3
@@ -1079,6 +1093,184 @@ def test_the_engine_never_lands_a_pin_in_a_body_on_the_other_face(placed, placea
         tht = {p.refdes for b in PLACED_BOARDS for p in pl.placed(b).values() if p.tht}
         assert {"J308", "J411", "J303", "J406"} <= tht
         assert lines(place.check(pl, ix), 17) == []
+
+
+# --- check 20: routability -----------------------------------------------------------
+def test_20_measures_what_the_owner_measured(placed, ix):
+    """The seed of check 20 is the measurement the routing-difficulty finding
+    was made with, so the tool has to reproduce it: the planes and the pours
+    left out, the star length as the MST proxy, and the worst 1 mm cut against
+    two signal layers at 0.4 mm."""
+    _, pl = placed
+    measured = place.routed_nets(ix, "LOGIC")
+    assert "GND" not in measured and "V3P3" not in measured      # the plane and the pour
+    assert "LGT_LOW" in measured and "SCL" in measured
+    r = place.routability(pl, ix, "LOGIC")
+    assert r.star > 0 and r.runs == tuple(sorted(r.runs, key=lambda x: (-x.span, x.net)))
+    # the capacity is DERIVED from the board, not typed
+    frame = pl.frame("LOGIC")
+    assert r.across[2] == pytest.approx(2 * frame.width / 0.4)
+    assert r.along[2] == pytest.approx(2 * frame.length / 0.4)
+    assert 0 < r.across[0] < r.across[2]
+
+
+def test_20a_a_channel_that_runs_the_length_of_the_board(placed, ix):
+    """(a) The defect the owner saw: a driver clustered away from the terminal
+    its channels feed, so a 1.55 A channel runs the length of OUTPUTS. The
+    message carries the span, the terminal's own width and the limit."""
+    _, pl = placed
+    assert not [s for s in place.check(pl, ix) if s.startswith("20 reach")]
+    far = moved(pl, "U303", du=20.0 - pl.get("U303").box.u0)   # J313 is at the far end
+    got = [s for s in place.check(far, ix) if s.startswith("20 reach")]
+    assert any("OUTPUTS AUX12V_" in s and "a channel to J313" in s for s in got), got
+    assert any(float(s.split("spans ")[1].split(" mm")[0]) > 180 for s in got), got
+
+
+def test_20a_the_classes_and_the_exemptions_come_from_the_copper(placed, ix):
+    """Which nets check 20(a) binds, and why each of the others is out. ⛔ An
+    exemption is a claim about who owns the net, not a way to pass: every one
+    of these is owned by a check that does bind it, or by a fact of the stack
+    the board's own placement does not decide."""
+    _, pl = placed
+    lim = lambda b, n: place.net_limit(pl, ix, b, n)
+    # a channel: its terminal's own width plus the channel reach
+    j313 = pl.get("J313").box.w
+    assert lim("OUTPUTS", "AUX12V_3")[0] == pytest.approx(j313 + place.CHANNEL_REACH)
+    # a signal to a harness terminal: the same shape, the smaller reach
+    assert lim("LOGIC", "SPARE_B6_WIRE")[0] == pytest.approx(pl.get("J410").box.w
+                                                             + place.SIGNAL_REACH)
+    # exempt, each for its own stated reason
+    assert lim("OUTPUTS", "AUX12")[0] is None and "face-row net" in lim("OUTPUTS", "AUX12")[1]
+    assert lim("LOGIC", "LGT_LOW")[0] is None and "INTER-BOARD half" in lim("LOGIC", "LGT_LOW")[1]
+    assert lim("LOGIC", "BOOT_IO0")[0] is None and "20(b)" in lim("LOGIC", "BOOT_IO0")[1]
+    assert lim("LOGIC", "EN")[0] is None and "a BUS" in lim("LOGIC", "EN")[1]
+    assert lim("LOGIC", "SCL")[0] is None and "a BUS" in lim("LOGIC", "SCL")[1]
+    assert lim("OUTPUTS", "FAULT1_DEV")[0] is None \
+        and "no connector" in lim("OUTPUTS", "FAULT1_DEV")[1]
+    assert lim("POWER", "HV_BPLUS")[0] is None and "pack voltage" in lim("POWER", "HV_BPLUS")[1]
+    assert lim("POWER", "KEY_SENSE")[0] is None and "STRADDLES" in lim("POWER", "KEY_SENSE")[1]
+    assert lim("LOGIC", "KEY_SENSE_PIN")[0] is None and "SENSE" in lim("LOGIC", "KEY_SENSE_PIN")[1]
+    # and RAILS are not measured at all
+    assert "V12" not in place.routed_nets(ix, "OUTPUTS")
+
+
+def test_20b_the_programming_land_stays_beside_the_module(placed, ix):
+    """(b) `EN`, `BOOT_IO0` and the two UART0 lines are the S3's OWN pins
+    (D25). The land is the module's satellite, and the measure is pin to pin
+    on the nets they share -- not the nets' spans, which carry a pull-up and
+    every expander's RESET."""
+    _, pl = placed
+    land, mod, mm, net = place.programmer_reach(pl, ix, "LOGIC")
+    assert (land, mod) == ("J408", "U401") and mm <= place.PROG_REACH
+    assert not [s for s in place.check(pl, ix) if s.startswith("20 programmer")]
+    far = moved(pl, "J408", du=225.0 - pl.get("J408").box.u0)
+    got = [s for s in place.check(far, ix) if s.startswith("20 programmer")]
+    assert any("J408 stands" in s and "from U401" in s and f"over {place.PROG_REACH:g}" in s
+               for s in got), got
+
+
+def test_20c_congestion_against_two_signal_layers(placed, ix):
+    """(c) The backstop. The four boards fill 4-21 % of a cut today, so the
+    clause cannot be made to fire by moving parts: LOGIC's 110 measured nets
+    could at best all cross one cut, and that is 53 % of a 41.84 mm board.
+
+    ⭐ So the mutation is a SYNTHETIC BOARD -- the same nets on a narrower one.
+    The capacity is `2 x width / 0.4`, derived and not typed, so the width that
+    puts LOGIC's own crossings at 60 % of it is arithmetic, and asking for that
+    width proves both halves at once: the clause fires, and the capacity it
+    fires against really does come off the outline."""
+    project, pl = placed
+    wide = place.routability(pl, ix, "LOGIC")
+    assert wide.load < place.CUT_LOAD
+    want = 0.60
+    width = wide.across[0] * place.TRACK_PITCH / (place.SIGNAL_LAYERS * want)
+    narrow = _narrowed(pl, "LOGIC", width)
+    r = place.routability(narrow, ix, "LOGIC")
+    assert r.across[0] == wide.across[0]                  # the same nets cross
+    assert r.across[2] == pytest.approx(2 * width / 0.4)
+    assert r.load == pytest.approx(want)
+    got = [s for s in place.check(narrow, ix) if s.startswith("20 congestion")]
+    assert any("LOGIC's worst cut across the board carries" in s and "backstop is 50 %" in s
+               for s in got), got
+
+
+def _narrowed(pl, board, width):
+    """`pl` on a board of `width` mm -- the same parts at the same u, a
+    narrower strip to route them in. Pin positions do not move (the frame's
+    length and handedness are untouched), so only the cut CAPACITY changes."""
+    from tools.place import PcbDoc, Project
+    doc = pl.project.pcbs[board]
+    pcbs = dict(pl.project.pcbs)
+    pcbs[board] = PcbDoc(doc.title, doc.uuid, replace(doc.frame, width=width), doc.components)
+    out = place.Placement(Project(pl.project.snap, pl.project.records, pcbs,
+                                  pl.project.footprints, pl.project.envelopes), pl.ix)
+    out.boards = {b: dict(items) for b, items in pl.boards.items()}
+    return out
+
+
+def test_20_is_reported_even_when_it_passes(placed, ix):
+    """✔ The figures are printed on every run, and written into the tables.
+    The owner read this placement as hard to route off numbers like these; a
+    number nobody prints is a number nobody looks at."""
+    _, pl = placed
+    text = "\n".join(place.routability_lines(pl, ix, "OUTPUTS"))
+    assert "star" in text and "worst 1 mm cut" in text and "% of" in text
+    assert len(place.routability_lines(pl, ix, "OUTPUTS")) == 1 + place.REPORT_RUNS
+    # every reported net says what it answers to: a limit, or who owns it
+    for line in place.routability_lines(pl, ix, "OUTPUTS")[1:]:
+        assert "limit " in line or "not bound — " in line, line
+    # ⚠️ The three longest nets of a board can all be exempt (they are on this
+    # fixture), so the "limit" half of the format is proven on the runs
+    # themselves: every bound net names the connector its budget is built from.
+    bound = [x for b in PLACED_BOARDS
+             for x in place.routability(pl, ix, b).runs if x.limit is not None]
+    assert bound and all(" mm and " in x.why and " of reach" in x.why for x in bound)
+    table = place.placement_table(pl, "OUTPUTS")
+    assert "## Routability (check 20)" in table and "star" in table
+    assert "star" in place.summary(pl, ix)
+
+
+# --- the clustering objective --------------------------------------------------------
+def test_a_host_is_steered_to_the_connectors_it_serves(placed, ix):
+    """⭐ The objective the owner asked for: "cluster placement by circuit".
+    A driver stands behind the terminals its channels feed, a 5 V switch
+    behind `J314`, an expander behind the terminals it reads through their
+    series resistors, the module at the centroid of what it talks to."""
+    _, pl = placed
+    served = lambda r: {c for _, c, _, _ in place.served_contacts(ix, ix.items[r].board, r)}
+    assert "J313" in served("U303")                       # the channels it drives
+    assert "J314" in served("U306")                       # the 5 V switch behind its terminal
+    assert {"J402", "J403"} <= served("U402")             # through each input's series R
+    assert {"J406", "J411"} <= served("U401")             # the sockets the S3 talks to
+    # the weighting is the copper's, not a count: a channel contact pulls
+    # CLASS_PULL times as hard as one of the nine control lines
+    pulls = {n: p for n, _, _, p in place.served_contacts(ix, "OUTPUTS", "U303")}
+    assert pulls["AUX12V_3"] == place.CLASS_PULL["CH12"]
+    assert place.net_pull(ix, "SEL_IN") == 1.0
+    # and the placement follows it: each driver is behind its own terminals
+    assert pl.get("U303").box.cu > pl.get("U301").box.cu > pl.get("U302").box.cu
+    assert abs(pl.get("U303").box.cu - pl.get("J313").box.cu) < 60.0
+
+
+def test_the_objective_does_not_steer_powers_84v_parts(placed, ix):
+    """⛔ POWER's 84 V parts are placed as a REGION and checks 13, 18 and 19
+    already say where each one stands. A second objective pulled them out of
+    the blob toward the signal partners they link and split the region in two
+    (2026-09-22), so `circuit_u` is not asked about them."""
+    _, pl = placed
+    for r in ("L101", "Q101", "C201"):
+        assert ix.is_hv(r)
+        assert "the connectors it serves" not in pl.get(r).reason
+        assert "the signal partners it links" not in pl.get(r).reason
+    assert lines(place.check(pl, ix), 13) == []
+
+
+def test_the_programming_land_is_the_modules_satellite(placed, ix):
+    """It follows the module wherever the clustering puts it, and the reason
+    in the table says so."""
+    _, pl = placed
+    assert "beside U401" in pl.get("J408").reason
+    assert pl.get("J408").box.separation(pl.get("U401").box) < place.PROG_REACH
 
 
 # --- a host stands where its satellite can follow ------------------------------------
