@@ -227,30 +227,36 @@ def check(d: Design) -> list[str]:
                         f"{[c.refdes for c in up]}")
             continue
         a, b = lo[0], up[0]
+        # Both kinds compare the halves CONTACT BY CONTACT NUMBER -- `cp.pin`,
+        # never the position in the table's tuple. ⛔ The cable branch once
+        # zipped the two tuples and called position i "contact i": J311
+        # re-tabled 5:V12 4:GND 2:V5 1:KEY_SENSE -- a straight loom putting
+        # 12 V on KEY_SENSE -- passed, and the same copper with a tuple merely
+        # written in another order was reported four times (H9).
+        ta = {cp.pin: cp.net for cp in a.pins}
+        tb = {cp.pin: cp.net for cp in b.pins}
+        contacts = sorted(set(ta) | set(tb), key=lambda x: (len(x), x))
         if is_cabled(iface):
             # Deliberately says NOTHING about sides, facing or mirroring. What
-            # a loom cannot survive is ends of different sizes, or a conductor
-            # that leaves one contact index and arrives on another.
-            if len(a.pins) != len(b.pins):
+            # a loom cannot survive is ends with different contact numbers, or
+            # a conductor that leaves one contact and arrives on another.
+            if set(ta) != set(tb):
                 errs.append(f"interface: {iface} is a cable, so its two ends "
-                            f"must have the same contact count; {a.refdes} has "
-                            f"{len(a.pins)} and {b.refdes} has {len(b.pins)}")
-            else:
-                for i, (pa, pb) in enumerate(zip(a.pins, b.pins), start=1):
-                    if pa.net == pb.net:
-                        continue
-                    errs.append(f"interface: contact {i} of {iface} carries "
-                                f"{pa.net!r} on {a.refdes}.{pa.pin} but "
-                                f"{pb.net!r} on {b.refdes}.{pb.pin} -- a cable "
+                            f"must have the same contacts; {a.refdes} has "
+                            f"{sorted(ta, key=lambda x: (len(x), x))} and "
+                            f"{b.refdes} has {sorted(tb, key=lambda x: (len(x), x))}")
+            for pin in contacts:
+                if pin in ta and pin in tb and ta[pin] != tb[pin]:
+                    errs.append(f"interface: contact {pin} of {iface} carries "
+                                f"{ta[pin]!r} on {a.refdes}.{pin} but "
+                                f"{tb[pin]!r} on {b.refdes}.{pin} -- a cable "
                                 f"is wired contact for contact")
         else:
             if (a.side, b.side) != ("top", "bottom"):
                 errs.append(f"interface: {a.refdes} must stand on top of {lower} "
                             f"and {b.refdes} hang under {upper} to face each "
                             f"other; they are {a.side} and {b.side}")
-            ta = {cp.pin: cp.net for cp in a.pins}
-            tb = {cp.pin: cp.net for cp in b.pins}
-            for pin in sorted(set(ta) | set(tb), key=lambda x: (len(x), x)):
+            for pin in contacts:
                 if ta.get(pin) != tb.get(pin):
                     errs.append(f"interface: {a.refdes}.{pin} carries "
                                 f"{ta.get(pin)!r} but its mate {b.refdes}.{pin} "

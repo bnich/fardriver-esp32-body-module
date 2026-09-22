@@ -257,14 +257,24 @@ def test_a_cabled_crossing_with_both_halves_on_top_is_clean():
     assert integrity.check(CABLED) == []
 
 
-def test_a_cable_whose_ends_have_different_contact_counts():
+def test_a_cable_whose_ends_have_different_contacts():
     """A loom terminates in two housings. One end wider than the other is a
-    conductor with nowhere to go, or a contact fed by nothing."""
+    conductor with nowhere to go, or a contact fed by nothing. The two ends
+    are compared as SETS OF CONTACT NUMBERS, so the same count on different
+    numbers is a mismatch too."""
     j = CABLED.connector("J202")
     bad = CABLED.replace_connector("J202", pins=j.pins + (ConnPin("3", ""),))
     errs = problems(bad, "interface")
-    assert any("PWR-OUT is a cable" in e and "J202 has 3 and J311 has 2" in e
+    assert any("PWR-OUT is a cable" in e and "same contacts" in e
+               and "J202 has ['1', '2', '3'] and J311 has ['1', '2']" in e
                for e in errs), errs
+    # Same count, different numbers: J311 on contacts 1 and 3 against J202's 1 and 2.
+    j = CABLED.connector("J311")
+    bad = CABLED.replace_connector("J311", pins=(j.pins[0], ConnPin("3", "GND")))
+    bad = bad.replace_net("GND", pins=tuple(
+        (r, "3" if r == "J311" else p) for r, p in bad.net("GND").pins))
+    errs = problems(bad, "interface")
+    assert any("J202 has ['1', '2'] and J311 has ['1', '3']" in e for e in errs), errs
 
 
 def test_a_cable_wired_to_the_wrong_contact_at_one_end():
@@ -281,6 +291,51 @@ def test_a_cable_wired_to_the_wrong_contact_at_one_end():
     assert any("contact 1 of PWR-OUT carries 'V12' on J202.1 but 'GND' on "
                "J311.1" in e for e in errs), errs
     assert any("contact 2 of PWR-OUT" in e for e in errs), errs
+
+
+def _retabled(d, refdes, moves: dict):
+    """`refdes`'s table AND its nets with each contact renumbered per `moves`
+    -- the copper really is wired that way, and integrity's table-vs-net
+    check has nothing to say. Only the cable check can see it."""
+    j = d.connector(refdes)
+    by = {p.pin: p for p in j.pins}
+    pins = tuple(ConnPin(moves.get(p, p), by[p].net, by[p].note) for p in by)
+    out = d.replace_connector(refdes, pins=pins)
+    for n in d.nets:
+        if any(r == refdes for r, _ in n.pins):
+            out = out.replace_net(n.name, pins=tuple(
+                (r, moves.get(p, p) if r == refdes else p) for r, p in n.pins))
+    return out
+
+
+def test_a_cable_end_retabled_onto_other_contacts_is_caught_on_the_real_netlist():
+    """⚠️ H9 (2026-09-21): J311 re-tabled 5:V12 4:GND 2:V5 1:KEY_SENSE -- a
+    straight loom then puts 12 V on KEY_SENSE -- passed integrity, rules and
+    the build gate, because the cable branch zipped the two tuples by POSITION
+    and called position i "contact i". It compares by contact number now."""
+    from tools import netlist
+    d = netlist.current()
+    assert [(p.pin, p.net) for p in d.connector("J311").pins] == \
+        [("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE")]
+    bad = _retabled(d, "J311", {"1": "5", "2": "4", "4": "2", "5": "1"})
+    assert [(p.pin, p.net) for p in bad.connector("J311").pins] == \
+        [("5", "V12"), ("4", "GND"), ("2", "V5"), ("1", "KEY_SENSE")]
+    errs = problems(bad, "interface")
+    assert "interface: contact 1 of PWR-OUT carries 'V12' on J202.1 but 'KEY_SENSE' " \
+        "on J311.1 -- a cable is wired contact for contact" in errs, errs
+    assert len([e for e in errs if "of PWR-OUT carries" in e]) == 4
+
+
+def test_a_cable_table_written_in_another_order_is_the_same_copper():
+    """The other half of H9: J202's tuple in the order 5, 4, 2, 1 -- nothing
+    moved, only the lines of the table -- gave four FALSE problems. A table
+    is a set of (contact, net) pairs, and its order means nothing."""
+    from tools import netlist
+    d = netlist.current()
+    j = d.connector("J202")
+    by = {p.pin: p for p in j.pins}
+    same = d.replace_connector("J202", pins=tuple(by[k] for k in ("5", "4", "2", "1")))
+    assert integrity.check(same) == []
 
 
 def test_a_crossing_with_no_declared_kind_is_named(monkeypatch):
