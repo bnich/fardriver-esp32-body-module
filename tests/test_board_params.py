@@ -24,20 +24,56 @@ def part(ref, board, height, *, side="top", confirmed=True, package="0805",
                 (2.0, 1.25), side=side, dnp=dnp)
 
 
-def conn(ref, board, height, *, confirmed=True, interface=None):
+def conn(ref, board, height, *, confirmed=True, interface=None, side="top"):
     return Connector(ref, board, ref, (ConnPin("1", ""),), height, confirmed,
                      (10.0, 5.0), leaves_box=interface is None,
-                     interface=interface)
+                     interface=interface, side=side)
 
 
 def three_boards(power_top=14.0):
     """POWER: one tall THT part on top, the brick UNDER the board on its floor
-    seat. OUTPUTS, LOGIC: a 7.0 connector each."""
+    seat. OUTPUTS, LOGIC: a 7.0 connector each. Nothing on CTRL, which is what
+    makes it a THREE-deck design out of a four-board order."""
     return Design(
         parts=(part("L101", "POWER", power_top, package="THT"),
                part("U201", "POWER", 12.7, package="brick", side="bottom"),
                part("U401", "LOGIC", 3.1, package="module")),
         connectors=(conn("J301", "OUTPUTS", 7.0), conn("J401", "LOGIC", 7.0)))
+
+
+#: The nylon pillar that stands under BOTH connector pairs of the upper stack,
+#: specified short of the 11.04 mm stop they set. Said once so the two gaps are
+#: fixtured the same way the netlist declares them.
+def tp11(between):
+    return Standoff("HIWA TP-11", "C118174", 20, 11.0, between, "shimmed",
+                    "short of the connector stop; fitted by measured length")
+
+
+def four_boards():
+    """The four decks and the four things that SET them, one fixture each.
+
+    FLOOR -> POWER   the brick's baseplate on its thermal pad
+    POWER -> OUTPUTS the brass M3x30, a standoff that SETS its gap
+    OUTPUTS -> LOGIC the STACK pair, 8.5 socket + 2.54 header, insulator to
+                     insulator, with a TP-11 shimmed short beside it
+    LOGIC -> CTRL    the CTRL-STACK pair, built the same way out of the same
+                     family, with four more TP-11 shimmed short beside it
+    CTRL -> LID      CTRL's tallest top-side body, the 8.3 mm controller-row
+                     terminal, and the clearance over it
+    """
+    return Design(
+        parts=(part("L102", "POWER", 22.0, package="THT"),
+               part("U201", "POWER", 12.7, package="brick", side="bottom"),
+               part("U401", "LOGIC", 3.1, package="module")),
+        connectors=(conn("J410", "LOGIC", 7.25),
+                    conn("J308", "OUTPUTS", 8.5, interface="STACK"),
+                    conn("J406", "LOGIC", 2.54, interface="STACK", side="bottom"),
+                    conn("J411", "LOGIC", 8.5, interface="CTRL-STACK"),
+                    conn("J501", "CTRL", 2.54, interface="CTRL-STACK", side="bottom"),
+                    conn("J404", "CTRL", 8.3)),
+        standoffs=(Standoff("Shuntian M3X30", "C775781", 4, 30.0,
+                            ("POWER", "OUTPUTS"), "sets", "brass, sets the gap"),
+                   tp11(("OUTPUTS", "LOGIC")), tp11(("LOGIC", "CTRL"))))
 
 
 def gap(stack, below, above):
@@ -699,6 +735,97 @@ def test_three_board_stack_by_hand():
     assert stack.total_mm == pytest.approx(47.2 + 3 * 1.6)           # 52.0
     assert stack.margin_mm == pytest.approx(42.0)                    # 94.0 - 52.0
     assert stack.ok
+
+
+#: The four-board stack, gap by gap, as a person works it out on paper. ⚠️ It
+#: is stated to ONE decimal the way `board_fit`'s HEIGHT block prints it, and
+#: the two pairs really butt at 8.5 + 2.54 = 11.04 each, so the derived figure
+#: is 80.98 and this is 0.08 under it. The tolerance below is 0.1 for exactly
+#: that reason, and the assertion beside it re-derives the same number from the
+#: module's own constants so neither figure can drift alone.
+FOUR_BOARD_STACK_MM = 80.9
+
+
+def test_four_board_stack_by_hand():
+    """IO-26/IO-27: CTRL on top of LOGIC, mated straight down onto it.
+
+      13.2   FLOOR -> POWER     0.5 pad + the 12.7 brick on its floor seat
+    +  1.6   POWER              the PCB
+    + 30.0   POWER -> OUTPUTS   the brass M3x30, which SETS that gap
+    +  1.6   OUTPUTS
+    + 11.0   OUTPUTS -> LOGIC   the STACK pair, 8.5 + 2.54 = 11.04
+    +  1.6   LOGIC
+    + 11.0   LOGIC -> CTRL      the CTRL-STACK pair, the same 8.5 + 2.54
+    +  1.6   CTRL
+    +  9.3   CTRL -> LID        J404 stands 8.3 on CTRL, plus 1.0 of clearance
+    = 80.9 mm of the 94.0 available -- 13.1 mm spare.
+
+    Protects: the two gaps the fourth board adds are DERIVED, each from the
+    thing that really sets it -- the pair for LOGIC -> CTRL, the tallest body
+    for CTRL -> LID -- and the total is arithmetic a person can check. The
+    stack grew 13.7 mm (a PCB, an 11.04 mm gap and a 9.3 mm lid gap, less the
+    8.2 mm LOGIC -> LID gap it replaced) and is still 13.1 mm inside AVAIL_H.
+    """
+    stack = bp.stack_height(four_boards())
+    assert [(g.below, g.above) for g in stack.gaps] == [
+        ("FLOOR", "POWER"), ("POWER", "OUTPUTS"), ("OUTPUTS", "LOGIC"),
+        ("LOGIC", "CTRL"), ("CTRL", "LID")]
+    assert [g.gap_mm for g in stack.gaps] == pytest.approx(
+        [bp.THERMAL_PAD_T + 12.7, 30.0, 8.5 + 2.54, 8.5 + 2.54,
+         8.3 + bp.CLEARANCE])
+    # The hand figure, and the same sum re-derived from the module's constants.
+    assert stack.total_mm == pytest.approx(FOUR_BOARD_STACK_MM, abs=0.1)
+    assert stack.total_mm == pytest.approx(
+        (bp.THERMAL_PAD_T + 12.7) + 30.0 + 2 * (8.5 + 2.54)
+        + (8.3 + bp.CLEARANCE) + 4 * bp.PCB_T)
+    assert stack.margin_mm == pytest.approx(bp.AVAIL_H - stack.total_mm)
+    assert stack.ok, stack.problems
+
+
+def test_the_pair_sets_logic_to_ctrl_and_ctrl_s_tallest_body_sets_the_lid():
+    """The two NEW gaps, and what each one answers to.
+
+    LOGIC -> CTRL is the pair's, not the pillar's: four more HIWA TP-11 stand
+    in it, specified short of the 11.04 mm stop exactly as the four under
+    STACK are, so the connectors keep setting the gap and the standoff only
+    stops the boards flexing apart. CTRL -> LID is an ordinary top gap: the
+    tallest thing standing on CTRL, and the clearance over it."""
+    stack = bp.stack_height(four_boards())
+    g = gap(stack, "LOGIC", "CTRL")
+    assert g.mated_confirmed and g.set_by == ("J411", "J501")
+    assert g.standoff.name == "HIWA TP-11" and not g.standoff_sets_gap
+    assert any("gap LOGIC->CTRL" in n and "deliberately SHORT" in n
+               and "10.94 and 11.04" in n for n in stack.notes), stack.notes
+    lid = gap(stack, "CTRL", "LID")
+    assert lid.top_ref == "J404"
+    assert lid.gap_mm == pytest.approx(8.3 + bp.CLEARANCE)
+
+
+def test_an_empty_board_in_the_order_is_not_a_deck_of_the_stack():
+    """⚠️ STACK_ORDER is the ORDER, not the roll-call, and the fixtures here
+    are three-board designs built out of a four-board order.
+
+    A board nothing is on has no PCB to be 1.6 mm thick and no gaps either
+    side of it, so the stack above the top POPULATED board is that board ->
+    LID. ⛔ Without this the day CTRL joined the order every three-board design
+    grew a 1.6 mm PCB and two clearances round nothing, and the report said
+    `LOGIC -> CTRL` about a board with no parts.
+
+    THE MUTATION: put ONE body on CTRL and it IS a deck at once -- `LOGIC ->
+    LID` becomes `LOGIC -> CTRL` and `CTRL -> LID`, and the stack grows by that
+    body's own gap plus a PCB."""
+    three = three_boards()
+    assert bp.stack_boards(three) == ("POWER", "OUTPUTS", "LOGIC")
+    assert [(g.below, g.above) for g in bp.stack_height(three).gaps][-1] == \
+        ("LOGIC", "LID")
+    four = three.with_part(part("J404", "CTRL", 8.3))
+    assert bp.stack_boards(four) == ("POWER", "OUTPUTS", "LOGIC", "CTRL")
+    assert [(g.below, g.above) for g in bp.stack_height(four).gaps][-2:] == \
+        [("LOGIC", "CTRL"), ("CTRL", "LID")]
+    # 8.0 of LOGIC -> LID becomes 8.0 of LOGIC -> CTRL (J401 7.0 + clearance,
+    # nothing above it), a 1.6 mm PCB and 8.3 + 1.0 over the new board.
+    assert bp.stack_height(four).total_mm - bp.stack_height(three).total_mm == \
+        pytest.approx(bp.PCB_T + 8.3 + bp.CLEARANCE)
 
 
 def test_a_height_changed_in_the_design_moves_the_stack_by_that_much():

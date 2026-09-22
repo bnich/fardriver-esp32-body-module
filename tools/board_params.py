@@ -1,4 +1,4 @@
-"""Physical envelope for the three-board stack -- THE single home for it.
+"""Physical envelope for the four-board stack -- THE single home for it.
 
 Two kinds of thing live here and they are kept apart on purpose:
 
@@ -222,7 +222,14 @@ CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 256.0
 
 # --- stack parameters --------------------------------------------------------
 #: Bottom to top.  BD-2: voltage decreases with height, 84 V at the floor.
-STACK_ORDER = ("POWER", "OUTPUTS", "LOGIC")
+#: ⚠️ FOUR boards since IO-26/IO-27 (2026-09-22): the controller row did not fit
+#: POWER's edge once a through-hole terminal was counted on both faces, so the
+#: FarDriver and display terminals and their conditioning became CTRL, a fourth
+#: board on TOP of LOGIC, mated straight down onto it by the CTRL-STACK pair.
+#: ⛔ It is the ORDER OF THE DECKS, not a roll-call: a design that puts nothing
+#: on one of these boards has no deck for it and no gaps either side of it
+#: (`stack_boards`), so a three-board fixture still derives three decks.
+STACK_ORDER = ("POWER", "OUTPUTS", "LOGIC", "CTRL")
 
 PCB_T = 1.6
 #: Air between the tallest thing in a gap and whatever faces it, so that
@@ -434,6 +441,23 @@ def _tallest(items):
     return max(items, default=(0.0, "-"))
 
 
+def stack_boards(d: Design, order=STACK_ORDER) -> tuple[str, ...]:
+    """The boards of `order` this design actually puts something on, in order.
+
+    ⭐ STACK_ORDER is the ORDER OF THE DECKS, not a claim that every design has
+    all of them. A board carrying no part and no connector is not a deck: it
+    has no PCB to add PCB_T for, and a gap derived either side of it would be
+    two clearances round nothing. That matters twice -- every fixture in
+    `tests/` builds a two- or three-board design out of the same four-board
+    order, and a board added to the order before the netlist fills it must not
+    move the stack it is not yet in.
+    ⛔ Read it wherever the stack is walked DECK BY DECK. `order.index()` is
+    still right for SORTING, which is about the order and not about the decks.
+    """
+    on = {x.board for x in (*d.parts, *d.connectors)}
+    return tuple(b for b in order if b in on)
+
+
 def _halves(d: Design, board: str) -> dict:
     found = {}
     for c in d.connectors:
@@ -525,8 +549,12 @@ def layer_gaps(d: Design, order=STACK_ORDER) -> tuple[Gap, ...]:
     wherever a through-hole part is -- so they ADD to what stands below.
 
     A DNP part counts: its footprint can be populated, so its part must fit.
+
+    ⚠️ The decks are the boards the design POPULATES (`stack_boards`), not every
+    name in `order`: an empty board is not a deck, and the gap above the top
+    populated board is that board -> LID.
     """
-    decks = (FLOOR_NAME,) + tuple(order) + (LID_NAME,)
+    decks = (FLOOR_NAME,) + stack_boards(d, order) + (LID_NAME,)
     paired = _paired(d, order)
     gaps = []
     for below, above in zip(decks, decks[1:]):
@@ -826,7 +854,9 @@ def stack_height(d: Design, order=STACK_ORDER, avail_mm: float = AVAIL_H) -> Sta
                         f"{g.above}; nothing on {g.below} taller than {room:.1f} mm "
                         f"may sit beneath it ({', '.join(blockers)})")
 
-    total = sum(g.gap_mm for g in gaps) + PCB_T * len(order)
+    # One PCB per DECK, not per name in `order`: an unpopulated board has no
+    # board to be PCB_T thick (`stack_boards`).
+    total = sum(g.gap_mm for g in gaps) + PCB_T * len(stack_boards(d, order))
     envelope_verdicts: list[str] = []
     if total > avail_mm + 1e-9:
         verdict = (f"stack: {total:.1f} mm derived, {avail_mm:.1f} mm available -- "

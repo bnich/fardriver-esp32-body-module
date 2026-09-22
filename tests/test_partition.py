@@ -1,17 +1,21 @@
-"""Three boards, bottom to top: POWER (84 V, both converters, the controller
-row), OUTPUTS (every driver, the 12 V and 5 V rows), LOGIC (the S3, the
-inputs row). Design spec IO-7."""
+"""Four boards, bottom to top: POWER (84 V, both converters), OUTPUTS (every
+driver, the 12 V and 5 V rows), LOGIC (the S3, the inputs row) and CTRL (the
+controller row and its conditioning). Design spec IO-7, IO-26, IO-27."""
 from tools import board_params as bp, integrity, netlist
 from tools.model import CROSSING
 
 
-def test_three_boards_bottom_to_top():
-    assert bp.STACK_ORDER == ("POWER", "OUTPUTS", "LOGIC")
+def test_four_boards_bottom_to_top():
+    """⚠️ CTRL joined the ORDER with the stack model (IO-26 task 1); the parts
+    move onto it in task 2, and `test_every_item_sits_on_one_of_them` below is
+    what says which boards the netlist has actually filled."""
+    assert bp.STACK_ORDER == ("POWER", "OUTPUTS", "LOGIC", "CTRL")
 
 
-def test_every_item_sits_on_one_of_the_three():
+def test_every_item_sits_on_one_of_them():
     d = netlist.current()
     assert {x.board for x in (*d.parts, *d.connectors)} == {"POWER", "OUTPUTS", "LOGIC"}
+    assert bp.stack_boards(d) == ("POWER", "OUTPUTS", "LOGIC")
 
 
 def test_pack_voltage_stays_on_power():
@@ -40,12 +44,15 @@ def test_every_interface_joins_neighbours():
         "CTRL": ("POWER", "OUTPUTS"),
         "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
         "STACK": ("OUTPUTS", "LOGIC"),
+        "CTRL-STACK": ("LOGIC", "CTRL"),
     }
 
 
 def test_each_crossing_declares_how_it_crosses():
     """IO-20: no stocked connector spans the 25.1 mm POWER → OUTPUTS gap, so
-    those two crossings are CABLES; the 11.0 mm ones stay mated pairs. The two
+    those two crossings are CABLES; the 11.0 mm ones are mated pairs, and
+    CTRL-STACK is a third of them -- the same family across the same 11.04 mm
+    stop, one deck higher (IO-27). The two
     kinds are held to different truths, so a crossing with no declared kind is
     a crossing whose checks nobody chose -- `integrity` reports one."""
     assert CROSSING == {
@@ -53,5 +60,6 @@ def test_each_crossing_declares_how_it_crosses():
         "CTRL": "cable",
         "PWR-LOGIC": "pair",
         "STACK": "pair",
+        "CTRL-STACK": "pair",
     }
     assert set(CROSSING) == set(integrity.INTERFACE_BOARDS)

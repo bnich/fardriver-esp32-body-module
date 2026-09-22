@@ -58,6 +58,7 @@ INTERFACE_BOARDS = {
     "CTRL": ("POWER", "OUTPUTS"),
     "PWR-LOGIC": ("OUTPUTS", "LOGIC"),
     "STACK": ("OUTPUTS", "LOGIC"),
+    "CTRL-STACK": ("LOGIC", "CTRL"),
 }
 
 

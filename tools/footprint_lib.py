@@ -24,7 +24,7 @@ TOOL = Path(os.environ.get("LCSC_SEARCH_HOME", Path.home() / "tools" / "lcsc-sea
 #: Interfaces whose land pattern is TWO rows: a signal bus that puts a ground
 #: beside every signal carries twice its signal count, numbered across the rows
 #: (pin 1 signal, pin 2 its ground).  A power bus is one row.
-DUAL_ROW_INTERFACES = frozenset({"STACK", "CTRL"})
+DUAL_ROW_INTERFACES = frozenset({"STACK", "CTRL", "CTRL-STACK"})
 
 
 def allegro_safe(title):

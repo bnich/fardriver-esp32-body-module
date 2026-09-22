@@ -33,9 +33,16 @@ import math
 from dataclasses import dataclass, replace
 from typing import Literal, get_args
 
-Board = Literal["POWER", "OUTPUTS", "LOGIC"]
+#: Bottom to top, and `board_params.STACK_ORDER` is the ORDER. ⚠️ CTRL is the
+#: fourth board (IO-26/IO-27, 2026-09-22): the controller row outgrew POWER's
+#: edge, so it sits on top of LOGIC and mates straight down onto it.
+Board = Literal["POWER", "OUTPUTS", "LOGIC", "CTRL"]
 Domain = Literal["84V", "12V", "5V", "3V3", "SIGNAL", "GND"]
-Interface = Literal["PWR-OUT", "CTRL", "PWR-LOGIC", "STACK"]
+#: ⚠️ `CTRL-STACK` is the LOGIC ↔ CTRL pair, and it is NOT the `CTRL` ribbon:
+#: that is a POWER → OUTPUTS cable. The name is a pair's name on purpose -- the
+#: pair is built like STACK, out of the same family, and a reader who sees
+#: "CTRL" must not be able to reach for the ribbon's rules.
+Interface = Literal["PWR-OUT", "CTRL", "CTRL-STACK", "PWR-LOGIC", "STACK"]
 #: How an inter-board interface gets from one board to the other.
 Crossing = Literal["pair", "cable"]
 #: How a pillar in the stack meets the gap it stands in. ⚠️ The three are NOT
@@ -88,6 +95,7 @@ CROSSING: dict[Interface, Crossing] = {
     "CTRL": "cable",
     "PWR-LOGIC": "pair",
     "STACK": "pair",
+    "CTRL-STACK": "pair",
 }
 
 

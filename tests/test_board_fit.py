@@ -150,6 +150,41 @@ def test_a_shimmed_standoff_is_reported_as_what_it_is_not_as_the_gap(capsys):
     assert "J308+J406 mates at 11.0" in line
 
 
+def test_a_fourth_board_adds_two_gaps_and_an_empty_one_adds_none(capsys):
+    """IO-26/IO-27: CTRL sits on top of LOGIC, so the report gains
+    `gap LOGIC -> CTRL` -- set by the CTRL-STACK pair, 8.5 + 2.54 = 11.04 --
+    and `gap CTRL -> LID`, set by CTRL's tallest top-side body.
+
+    ⛔ AND THE OTHER HALF OF IT, which is why both directions are in one test:
+    `good()` puts NOTHING on CTRL, and a board nothing is on is not a deck. Its
+    report must be exactly what it was before CTRL joined STACK_ORDER --
+    `LOGIC -> LID`, three boards in the AREA table, no CTRL row anywhere. Two
+    clearances and a 1.6 mm PCB round an empty board is a stack nobody built."""
+    code, out = run(capsys, good())
+    assert code == 0 and "gap LOGIC -> LID" in out
+    assert "CTRL" not in out, "an empty board is not a deck"
+    assert [ln.split()[:2] for ln in out.splitlines() if ln.startswith("  POWER ")] \
+        == [["POWER", "top"], ["POWER", "bottom"]]
+    four = with_connectors(
+        good(),
+        conn("J411", "LOGIC", 8.5, (27.94, 5.0), interface="CTRL-STACK"),
+        replace(conn("J501", "CTRL", 2.54, (27.94, 5.0), interface="CTRL-STACK"),
+                side="bottom"),
+        conn("J404", "CTRL", 8.3, (35.56, 12.2), leaves_box=True, overhang=8.8))
+    code, out = run(capsys, four)
+    assert code == 0, out
+    assert "gap LOGIC -> LID" not in out
+    up = next(ln for ln in out.splitlines() if "gap LOGIC -> CTRL" in ln)
+    assert "J411+J501 mates at 11.0" in up
+    lid = next(ln for ln in out.splitlines() if "CTRL -> LID" in ln)
+    assert "J404 8.3 up" in lid and lid.split()[-4] == "9.3"
+    # ...and the fourth board is budgeted like any other: its own AREA faces
+    # and its own strip of connector edge.
+    assert "  CTRL   top" in out and "  CTRL   bottom" in out
+    assert next(ln for ln in out.splitlines()
+                if ln.startswith("  CTRL ") and "of edge" in ln).split()[1] == "35.6"
+
+
 def test_the_real_report_says_which_standoff_sets_the_power_to_outputs_gap(capsys):
     """The same thing on the real netlist, which is where it has to be true.
     The HEIGHT budget is what this reads; the exit code is the whole report's

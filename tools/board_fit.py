@@ -1,4 +1,4 @@
-"""Area and height budget for the three-board stack, read off the netlist.
+"""Area and height budget for the four-board stack, read off the netlist.
 
 Nothing about the design is typed here. Parts and connectors -- board, side,
 footprint, height, whether that height was ever confirmed -- come from
@@ -148,8 +148,11 @@ def shelf_pack(rects, board_w: float | None = None):
 
 
 def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
+    # The boards the design POPULATES, not every name in the order: a board
+    # nothing is on has no faces to budget, and two rows of zeroes in the table
+    # read as a board that has been laid out (`board_params.stack_boards`).
     rows = []
-    for board in order:
+    for board in bp.stack_boards(d, order):
         for side in SIDES:
             rects = bodies(d, board, side)
             if side == "bottom" and not rects:
