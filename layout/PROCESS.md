@@ -5,8 +5,9 @@ consideration, use logic and process to decide on placement, make revisions when
 save so that i can view your work. This process should be repeatable."*
 
 This is that process. It is a **tool** (`tools/place.py`), not a session's judgement: the same
-netlist gives the same placement, every constraint it obeys is one the repo already encodes, and
-every run ends with the `.eprj2` the owner opens. The owner reviews; the tool re-places.
+netlist gives the same placement, every constraint it obeys is one the repo already encodes or this
+document states with its reason, and every run ends with the `.eprj2` the owner opens. The owner
+reviews; the tool re-places.
 
 ## Why the stack is one problem
 
@@ -19,8 +20,8 @@ Three facts make the boards inseparable, and the process is built around them:
    30 mm gap, so nothing on POWER taller than 18.1 / 20.4 mm may sit beneath them — which is where
    POWER's 22 mm chokes and 18.5 mm bulk caps want to be.
 3. **The connector face is one edge of the box** (IO-6). Every board's harness row sits on the
-   same Y = 0 edge, in the order `edge_budget` fixes, and the cable halves (`J202`↔`J311`,
-   `J105`↔`J312`) should be near each other in X so the looms run straight.
+   same edge, in the order `edge_budget` fixes, and the cable halves (`J202`↔`J311`,
+   `J105`↔`J312`) should be near each other along the board so the looms run straight.
 
 So the order is **OUTPUTS → LOGIC → POWER**: OUTPUTS holds both mated pairs' lower halves and both
 hanging connectors, so it fixes the most; LOGIC then inherits two positions; POWER then inherits
@@ -28,79 +29,142 @@ two keep-outs and two loom targets.
 
 ## The frame
 
-Board coordinates in **mm from the bottom-left corner**: X along the 242 mm length, Y across the
-41.84 mm width, **Y = 0 is the connector face**, +Y toward the back edge. The `.epcb2` stores mils
-(1 mm = 39.3701 mil) with the outline at (0,0)–(9527.56, 1647.24) — so the same frame, scaled. The
-imported parts sit at negative Y (dumped below the outline by the editor); the tool moves every one
-of them onto the board.
+The tool reasons in a **board frame**: `u` along the 242 mm length, `v` across the 41.84 mm width,
+**v = 0 is the connector face**, +v toward the back edge. Every table it writes gives `u`, `v` and
+the board angle, beside the file's own X, Y.
 
-## The placement logic — five bands, derived from the copper
+⚠️ **The file's outline is portrait.** The build draws the board 41.84 mm along X and 242 mm along
+Y (M3 holes at (3.5, 3.5) and (38.34, 238.5) mm; 1 mm = 39.3701 mil), so the board frame and the
+file frame differ by a rotation, which `place.Frame` reads from the outline at run time:
+`(u, v) → (x, y) = (v, 242 − u)`, and a footprint at board angle 0 stands at file angle 270. The
+connector face is the file's **left edge** (X = 0), and u runs from the top of the sheet down. A
+landscape outline would map with the identity; nothing in the tool assumes either. The imported
+parts sit at negative Y (dumped below the outline by the editor); the tool moves every one of them
+onto the board.
+
+**The editor's conventions**, read off tracks landing on pads in its own example projects: a
+component's `angle` is degrees counter-clockwise, and a component on layer 2 is rotated in its own
+frame and then mirrored about X. A footprint's plan is read from its FOOTPRINT document — pads,
+top silk, component shape — and widened to the body `netlist.py` states, so a courtyard is never
+smaller than either. **Pads are named by pin** (`padmap.py` renamed them before embedding), which
+is what lets the tool weight pin positions, check a mated pair pin for pin, and know which pads of
+a brick carry pack voltage.
+
+## The placement logic — bands, derived from the copper
 
 Every board is a **filter**: signals enter at the face on screw terminals, pass through their
 protection, reach their driver or reader, and leave DOWN or UP through an inter-board connector.
-The tool lays each board out as bands across its width, front to back, and fills each band by
-**net adjacency** — a part goes next to the part it shares the most nets with, nearest the
-terminal its signals enter on.
+The tool lays each board out as bands from the face backward and fills each by **net adjacency**:
+a part goes next to the pins it shares nets with, nearest the terminal its signals enter on.
 
-| Band | Y (mm) | Holds | Rule |
+| Band | Front (v, mm) | Holds | Rule |
 |---|---|---|---|
-| **1 · face** | 0 – 9.2 | the harness row | fixed order from `edge_budget`, 1 mm gaps, centred in the 242 less 2 × 3.5 M3 inset; the 3.50 mm row (`J314`) on the underside of OUTPUTS shares the face |
-| **2 · protection** | 9.2 – 19 | each terminal's TVS, series R, pull-ups, clamps | directly behind ITS terminal — the TVS first, cathode toward the face |
-| **3 · function** | 19 – 30 | drivers, switches, expanders, the buck | over the terminals they serve; a chip with no terminal (expander #2, the CAN transceiver) goes where its bus is shortest |
-| **4 · brain / power** | 30 – 41.84 | the S3, the converters' control, the inter-board connector footprints | the S3's antenna end at the back edge; `STACK`/`PWR-LOGIC` under Bands 3–4 where their signals originate |
-| **under** | bottom layer | the 7 bottom parts | `U201`/`U202` seated per `FLOOR_SEAT`; `J314` at the face; `J311`/`J312` under OUTPUTS where the looms land; `J406`/`J407` at the mates' X,Y |
+| **1 · face** | 0 | the harness row | `edge_budget` order, 1 mm gaps (4 mm where the row changes voltage class), centred in the 242 less the two 7 mm M3 corners, or `--anchor left`/`right`; the plug side of each body faces the edge; the 3.50 mm row (`J314`) on the underside of OUTPUTS shares the face |
+| **2 · protection** | row depth + 2 | each terminal's TVS, series R, pull-ups, clamps, and the class-A cap one hop behind them | directly behind ITS terminal |
+| **3 · function** | 19 | drivers, switches, expanders, the buck, the chokes and bricks, and every IC of the same part number as one of them | over the terminals they serve; their passives follow them |
+| **4 · brain / power** | 30 | the S3, its LDO and supervisor, the CAN transceiver, every inter-board connector footprint | the S3's antenna end at the back edge; `J307`/`J308` flush to the back edge; `J406`/`J407` at the mates' X,Y |
+| **under** | — | the 7 bottom parts, by the netlist's `side` | `U201`/`U202` with the HV group; `J314` at the face; `J311` under the middle of the V12 drivers, `J312` where its signals are; `J406`/`J407` at the mates' X,Y |
 
-**Adjacency scoring** (`tools/place.py`): for each unplaced part, the candidate position is the
-centroid of the already-placed parts it shares nets with, weighted by pin count, pushed to the
-nearest free courtyard in its band. Ties break toward the face. It is a greedy first-fit — good
-enough to be *reviewed*, and honest about being a proposal, not an optimum.
+**Bands are fronts, not walls.** A part is pulled toward its band's front and charged for the
+distance it ends up from it — three times a sideways step behind the front, four times ahead of
+it — so a band stays shallow and spreads along the terminal it serves, and a deep part (the S3 at
+25.5 mm, a lying can at 30 mm) reaches into the next band's range in its own column rather than
+failing. What holds between bands is the **channel**, wherever one band's part stands directly
+behind another's. Strips straight across the board are not possible: the S3 alone is 25.5 mm deep
+on a 41.84 mm board, and POWER's bulk fills the depth behind its row.
+
+**A part's band is derived** (`place.bands`) from kind and nets: a harness terminal is 1; a passive
+on a net that reaches a terminal, or one hop from one through a signal net, is 2; an IC that shares
+a signal with a Band 2 part or a terminal is 3, and so is any IC of the same part number; the
+module, the interface connectors, an IC that talks to the module and no terminal, and an IC with
+no signals on the module's rail are 4; any other passive takes its function partner's band.
+
+**Order within a band:** parts with a fixed target first (the S3, the flush connectors, the loom
+mates), then the function parts by area, then the passives by area. A **satellite** — a 100 nF
+decoupler, an ADC input's RC filter, the CAN transceiver — is placed the moment its host is,
+against the host's body, whichever side is free.
+
+**Adjacency scoring:** the candidate `u` is the pin-weighted centroid of the already-placed pins
+the part connects to — GND weighs 0 (it is a plane), pack-voltage nets and the 12 V bus weigh 10
+(wide copper, kept short), other rails 0.2, a signal 1 per pin — then the nearest free slot by a
+shelf scan with the clearances below. Among the four quarter turns, the one whose pins land nearest
+their partners wins (that is what tells 0 from 180 on a symmetric body). It is a greedy first-fit
+— good enough to be *reviewed*, and honest about being a proposal, not an optimum.
+
+**POWER places its 84 V parts first**, as one group: the bulk (bricks under the board, chokes,
+cans, the fuse clip) packs against the end `J101` stands at, straight behind the row, and the HV
+passives fill the gaps; the low-voltage parts then take the rest of the board and keep the strip.
+If a board cannot seat every part at the engine's 3 mm HV strip, it is placed again with the strip
+at the check's 1.25 mm floor and says so — the built-in revision.
 
 ## What the tool checks after placing — and refuses on
 
-A placement the tool writes has passed every one of these, or it does not write:
+A placement the tool writes has passed every one of these, or it does not write. Each is numbered
+in the tool's output, every constant in `place.py` says what it protects, and `tests/test_place.py`
+proves each check fires on a placement that breaks it. The first nine are the placement's own;
+**the last seven exist because the board must be routed afterwards (owner, 2026-09-22) —
+placement decides whether routing is possible.**
 
-- **Inside the outline**, clear of the four M3 corners (3.5 mm inset) by its courtyard.
-- **No two courtyards overlap** on the same face.
-- **Every bottom-side part is on layer 2** and every other on layer 1 — the seven, by name.
-- **The mated pairs coincide**: `J407`'s X,Y on LOGIC equals `J307`'s on OUTPUTS; `J406` equals
-  `J308`. (Mirroring is in the footprint; the position is the same.)
-- **The cross-board keep-outs hold**: nothing on POWER's top taller than the limit stands under
-  `J311`'s or `J312`'s footprint as placed on OUTPUTS.
-- **The row is at the face**, in order, no header past the board end.
-- **HV on POWER**: every part on an 84 V net (the HV class) sits ≥ 3 mm from the board edge and
-  ≥ 1.25 mm courtyard-to-courtyard from any part on a low-voltage net — a *placement* proxy for the
-  routing rule the owner sets up in the editor.
-- **The S3's antenna end** (`U401`, the `-1U`) is within 2 mm of the back edge with no part in the
-  8 mm × 18 mm zone beyond it.
-- **Nothing on a face stands taller than that face's gap** (`layer_gaps`) — the height model, applied
-  per part where it stands.
+1. **Inside the outline**, clear of the four M3 corners: a 7 × 7 mm washer square at each hole
+   centre, read from the file.
+2. **Same-face clearance**: 1.6 mm body to body — 0.5 mm courtyard each (`board_fit.COURTYARD`)
+   plus 0.6 mm for one 0.2 mm trace with 0.2 mm each side, JLC's 4-layer capability, so a trace
+   can pass between any two neighbours. Two harness headers in the row keep `edge_budget`'s 1 mm:
+   no trace passes between flanges.
+3. **Every bottom-side part on layer 2** and every other on layer 1 — the set comes from the
+   netlist's `side`, not from a list: `U201 U202 J314 J311 J312 J406 J407` today.
+4. **The mated pairs coincide**: `J407` over `J307`, `J406` over `J308`, X,Y within 0.01 mm — and
+   **pin for pin by net**: every contact of the lower half has the upper half's contact at the same
+   place carrying the same net. The upper half's angle is found the same way: the quarter turn at
+   which its pre-mirrored footprint lands its nets on its mate's (180 from `J308`'s, in the file).
+5. **The cross-board keep-outs hold**: nothing on POWER's top taller than the limit stands under
+   `J311`'s or `J312`'s footprint as placed on OUTPUTS; the limit is the gap less the connector's
+   height less `CLEARANCE`, from `board_params`.
+6. **The row is at the face**, bodies from v = 0, in `edge_budget` order, no header past the board
+   end less the M3 inset.
+7. **HV on POWER is copper.** The 84 V rule binds a part's HV **pads** where the footprint names
+   them (the bricks, the chokes, `J101`) and its whole body where it does not (a D-PAK's pads are
+   1-2-3): the brick under the board puts pack voltage on the top layer only at its input pins, and
+   its output end is 12 V. That copper keeps ≥ 3 mm from the board edge (the edge is where the
+   enclosure, a standoff or a finger meets the board) and ≥ 1.25 mm courtyard to courtyard from
+   every LV part (`layout_rules.HV_CLEARANCE_MM`, IPC-2221B B2 at the 160 V do-not-exceed) — a
+   *placement* proxy for the routing rule the owner sets up in the editor.
+8. **The S3's antenna end** (`U401`'s local +Y, the padless end) within 2 mm of the back edge,
+   nothing in the 8 × 18 mm zone beyond it on either face.
+9. **Nothing on a face taller than that face's gap** (`layer_gaps`).
+10. **Channels**: 2 mm between bands, 3 mm to or from Band 4 (the S3's 25 STACK signals fan out
+    there), wherever one band's part stands directly behind another's.
+11. **The 12 V bus on OUTPUTS is a line**: the centroid of the V12-fed ICs (`U301 U302 U303 U305`)
+    within 15 mm of the contact that feeds them (`J311`), and all of them facing one way, so `V12`
+    is one straight pour, not a tree. Which ICs and which contact come from the copper: the net
+    `U201`'s `+V` is on.
+12. **The ground plane** (152 pins on OUTPUTS, 108 LOGIC, 58 POWER — never traces): no through-hole
+    connector longer than 40 mm laid across the board's short axis. `J308`/`J406` (2 × 29, 73.66 mm)
+    lie along the board, flush to the back edge, where a row of holes cuts a plane least.
+13. **The HV region on POWER**: the 84 V parts form **one group** (each within 3 mm of another),
+    and **no LV part is enclosed** by 84 V copper on all four sides. The region's bounding box
+    cannot be made LV-free on this board — the HV bulk (3500 mm² of chokes, cans and Y-caps) has to
+    stand behind the LV headers of the same row — so "inside" means the part's traces could not
+    leave without crossing pack voltage; copper on three sides is a bay with a way out.
+14. **Pairs and sense lines are short**: `U404` within 10 mm of `J406`'s CANH/CANL contacts; the
+    I²C pull-ups ≥ 5 mm off the straight path from the brake terminal (`J306`) to the S3; an ADC
+    input's RC filter within 5 mm of the S3 (`R476`/`C437` on `KEY_SENSE_PIN`). A SENSE net is a
+    TPS4H160B `CS` net, or a net on an S3 ADC1 pin that a capacitor filters — `TWAI_TX` and
+    `FAN_CMD` use IO6–IO10 digitally and are not.
+15. **Every decoupler on its IC**: a 100 nF whose two nets are a rail and ground within 3 mm (edge
+    to edge) of the nearest IC on that rail; the engine hands the ICs on a rail its 100 nFs in turn.
+16. **`J408` reachable**: on top, nothing within 5 mm of either end along its long axis — the cable
+    plug's body and its exit; the drawing does not say which end, so both are kept.
 
-**And because the board must be routed afterwards (owner, 2026-09-22), seven more — placement
-decides whether routing is possible:**
+Every comparison allows a micrometre: the file holds mils to four decimals, and a coordinate
+written and read back may move by nanometres.
 
-- **Routing channels, not just courtyards.** 2.0 mm clear between Bands 1–2 and 2–3, 3.0 mm between
-  3–4 (the S3's 25 signals fan out there); within a band, part-to-part clearance is courtyard
-  + 0.6 mm — one 0.2 mm trace with its clearance each side. Named constants; each says what it holds.
-- **The 12 V bus is a LINE.** `V12` fans from `J311`'s one contact to 28 pins carrying **11.39 A at
-  the limiters**. The three `TPS4H160B`s and `U305` sit in a line along X with `VS` pins facing the
-  same way and `J311` under its middle, so `V12` is one straight pour, not a tree. Check: the
-  V12-bearing ICs' centroid within 15 mm of `J311`'s X.
-- **Ground is a plane** (152 pins on OUTPUTS, 108 LOGIC, 58 POWER — never traces; inner layer 2).
-  Placement must not split it: no THT connector over 40 mm long with its axis across the board's
-  short dimension. `J308`/`J406` (2×29, 73.66 mm) go at an edge region, along X.
-- **HV on POWER is a REGION.** All 14 HV-net parts in one contiguous blob at `J101`'s end, a 3 mm
-  clear strip between it and every low-voltage part; no LV part inside it. Check: the region's box
-  overlaps no LV courtyard + 1.25 mm.
-- **Pairs and sense lines are SHORT.** `U404` within 10 mm of `J406`'s CAN contacts; the brake-lever
-  nets `J306` → `U401` straight and away from the I²C pull-ups; `R476`/`C437` (the `KEY_SENSE` ADC
-  filter) within 5 mm of `U401`.
-- **Every decoupler on its IC.** A 100 nF whose non-GND net is a rail sits within 3 mm of the
-  nearest IC power pin on that rail — pairing derived from the netlist, checked.
-- **`J408` reachable**: on top, no part within 5 mm on the cable's entry side.
-
-The adjacency scoring weights rail nets by what they carry — `V12` pins ×10, HV nets ×10, GND ×0 (it
-is a plane and pulls nothing) — so the bus line, the HV region and the decoupler proximity fall out
-of the flow rather than being bolted on.
+**Power classes are derived from driver pins, never from a net's name** (`place.power_classes`):
+PWR12 is the net on `U201`'s `+V`; CH12 a net with a TPS4H160B `OUTx`; CH5 a net with a TPS2553
+`OUT`; PWR5AUX the buck's `SW` net and its inductor's nets; SENSE as above. `AUX5V_n_FAULT` is a
+logic level and is in no class. The adjacency weights use them: `V12` pins ×10, HV nets ×10, GND ×0
+(a plane pulls nothing), so the bus line, the HV group and the decoupler proximity fall out of the
+flow rather than being bolted on.
 
 ## The loop — repeatable
 
@@ -113,16 +177,22 @@ tools/place.py --stack --keep J302 J305 # re-place, holding the owner's hand-mov
 ```
 
 - `--stack` reads the saved `.eprj2` (the owner's file — so hand-moved parts are known), places
-  every part **not in `--keep`**, checks, and writes back. ⛔ It refuses if the editor is open.
+  every part **not in `--keep`**, checks, writes back, and writes `layout/<BOARD>-placement.md`.
+  ⛔ It refuses if the editor is open. `--file` and `--out` point it elsewhere; `--docs` says where
+  the tables go.
 - `--check` never writes. It is the review step and the regression test: after the owner moves
   things by hand, `--check` says what broke.
 - `--keep` is how revision works: the owner fixes a part where they want it; the tool re-flows
   everything else around it. Repeat until the owner is satisfied.
-- **Every write goes through the same round trip the build uses** (`eprj2.read` → edit →
-  `eprj2.write` → re-read identical), and the tool refuses to write if the re-read differs.
-- The write is to the owner's file **only** — it is placement, not generation, so the no-clobber
-  guard (`_is_generated`) is bypassed deliberately and the tool says so; it keeps the previous
-  file as `.eprj2.prev` for one step of undo.
+- **Every write goes through the same round trip the build uses** (`eprj2.read` → edit the
+  COMPONENT records and the labels that follow them → `eprj2.join` → `eprj2.write` → re-read), and
+  the tool refuses to leave a file whose re-read differs from what it meant to write, coordinate by
+  coordinate.
+- The write is to the owner's file **only** — it is placement, not generation, so the build's
+  no-clobber guard (`_is_generated`) does not apply; the tool keeps the previous file as
+  `.eprj2.prev` for one step of undo.
+- A PCB that carries a part the netlist does not put on that board is refused: re-import the
+  schematic first.
 
 ## What the tool does NOT do
 
@@ -134,11 +204,15 @@ tool derived.
 
 ## Files
 
-- `tools/place.py` — the tool. Stdlib only.
-- `tests/test_place.py` — every check above proven to fire on a placement that breaks it, and the
-  round trip proven lossless on a real saved project.
-- `layout/PROCESS.md` — this document. `layout/<BOARD>-placement.md` — the per-board rationale
-  the tool prints, regenerated each run (the LOGIC one written by hand on 2026-09-22 is the seed).
+- `tools/place.py` — the tool. Stdlib only (plus what `eprj2` needs to decrypt the file).
+- `tests/test_place.py` — every check above proven to fire on a placement that breaks it, the
+  engine proven to leave a clean one, and the writer proven to round-trip. The project under test
+  is **synthetic** (the build's outline, pin-named pads from the netlist), so no file of the
+  owner's is committed; `REVV1_PLACE_PROJECT=/path/to/saved.eprj2 pytest tests/test_place.py`
+  runs the same tests on a real save.
+- `layout/PROCESS.md` — this document. `layout/<BOARD>-placement.md` — the per-board tables
+  (`u`, `v`, angle, file X, Y, layer, band, and the reason: "face row, position 3 of 5" /
+  "centroid of U402, R413, …" / "fixed: mate of J308"), regenerated on every `--stack`.
 
 ---
 

@@ -910,11 +910,11 @@ class Placer:
         # each HV zone as an offset from the body's corner; the attached zones
         # (antenna, cable ends) likewise, against every placed body
         zone_off = [(z.u0 - off.u0, z.v0 - off.v0, z.u1 - off.u0, z.v1 - off.v0) for z in zones]
-        for zo in self.attached(ref, angle):
-            zone_off.append(zo)
+        attached = self.attached(ref, angle)
+        if attached:
+            zone_off += attached
             zone_obs = list(zone_obs) + [(p.box, 0.0, 0.0) for p in self.pl.boards[self.board].values()
-                                          if not p.unplaced and not p.box.overlaps(off.shift(0, 0))]
-            break
+                                          if not p.unplaced]
         best = None
         v0 = mv0
         while v0 + b <= W - mv1 + 1e-9:
@@ -1061,6 +1061,9 @@ class Placer:
         elif cu is not None:
             target = cu
             why = "centroid of " + ", ".join(partners[:6]) + (", …" if len(partners) > 6 else "")
+        elif self.terminal_u(ref) is not None:
+            target, term = self.terminal_u(ref)
+            why = f"behind {term} (reached through one passive)"
         else:
             target, why = self.frame.length / 2, "board centre (nothing it touches is placed)"
         layer = self.layer_of(ref)
@@ -1124,6 +1127,27 @@ class Placer:
             return
         _, u, v, ang = best
         self.pl.add(self.make(ref, u, v, ang, band, why))
+
+    def terminal_u(self, ref):
+        """(u, refdes) of the placed harness terminal `ref` reaches through one
+        passive on a signal net -- the class-A cap behind its series R -- or
+        None.  The pin's u, not the header's centre."""
+        placed = self.pl.boards[self.board]
+        for net in self.item(ref).nets:
+            if not self.ix.signal(net):
+                continue
+            for r, _ in self.ix.members[net]:
+                it = self.ix.items.get(r)
+                if r == ref or it is None or it.kind not in PASSIVE_KINDS:
+                    continue
+                for m in it.nets:
+                    if not self.ix.signal(m):
+                        continue
+                    for rr, pin in self.ix.members[m]:
+                        p = placed.get(rr)
+                        if p is not None and self.ix.items[rr].harness and not p.unplaced:
+                            return p.pin_point(self.frame, pin)[0], rr
+        return None
 
     def misalignment(self, ref, u, v, angle):
         """Weighted mean distance (u) from this part's pins to the placed pins
@@ -1295,6 +1319,15 @@ def _place_board(pl, board, anchor, keep, relaxed=False):
         for ref in sorted(set(pr.target_u) | set(pr.target_v) | set(pr.target_pt), key=_ref_key):
             if ref in pr.pending():
                 pr.place_with_satellites(ref, pr.band.get(ref, 4))
+        s3 = next((p for p in pl.boards[board].values() if ix.items[p.refdes].kind == "MODULE"), None)
+        term = pl.boards[board].get(brake_terminal(ix, board, s3.refdes)) if s3 else None
+        if s3 is not None and term is not None:
+            # the brake nets' straight path stays clear of the I2C pull-ups (check 14)
+            a, b = (term.box.cu, term.box.cv), (s3.box.cu, s3.box.cv)
+            corridor = Box(min(a[0], b[0]) - CORRIDOR_CLEAR, min(a[1], b[1]) - CORRIDOR_CLEAR,
+                           max(a[0], b[0]) + CORRIDOR_CLEAR, max(a[1], b[1]) + CORRIDOR_CLEAR)
+            for r in i2c_pullups(ix, board):
+                pr.extra.setdefault(r, []).append(corridor)
         for band in (2, 3, 4):
             pr.place_band(band)
         for ref in pr.pending():
@@ -1621,20 +1654,8 @@ def _check_sensitive(pl, ix):
             if dist > CAN_REACH + TOL:
                 out.append(f"14 CAN: LOGIC {it.refdes} is {dist:.1f} mm from {conn.refdes}'s CANH/CANL "
                            f"contacts ({', '.join(shared)}); the pair stays within {CAN_REACH:g} mm")
-    terminal = None
-    for n, members in ix.members.items():
-        if "BRAKE" not in n.upper() or not any(r == s3.refdes for r, _ in members):
-            continue
-        for r, _ in members:
-            it = ix.items.get(r)
-            if it and it.kind in PASSIVE_KINDS:
-                for m in it.nets:
-                    for rr, _ in ix.members[m]:
-                        c = ix.items.get(rr)
-                        if c and c.kind == "CONN" and c.harness and rr in items:
-                            terminal = items[rr]
-    pullups = [items[it.refdes] for it in ix.on(board)
-               if it.kind == "R" and it.refdes in items and any(n in ("SDA", "SCL") for n in it.nets)]
+    terminal = items.get(brake_terminal(ix, board, s3.refdes))
+    pullups = [items[r] for r in i2c_pullups(ix, board) if r in items]
     if terminal is not None:
         a, b = (terminal.box.cu, terminal.box.cv), (s3.box.cu, s3.box.cv)
         for r in pullups:
@@ -1655,6 +1676,37 @@ def _check_sensitive(pl, ix):
                 out.append(f"14 ADC: LOGIC {r} (on {n}, an ADC1 input) is {sep:.1f} mm from U401; "
                            f"the filter sits within {ADC_REACH:g} mm of the pin")
     return out
+
+
+def brake_terminal(ix, board, s3):
+    """The harness terminal the brake nets enter on: walk one passive back
+    from the S3's BRAKE pins along SIGNAL nets (ground reaches every header)."""
+    for n, members in ix.members.items():
+        if "BRAKE" not in n.upper() or not any(r == s3 for r, _ in members):
+            continue
+        for r, _ in members:
+            it = ix.items.get(r)
+            if it and it.kind in PASSIVE_KINDS:
+                for m in it.nets:
+                    if not ix.signal(m):
+                        continue
+                    for rr, _ in ix.members[m]:
+                        c = ix.items.get(rr)
+                        if c and c.kind == "CONN" and c.harness and c.board == board:
+                            return rr
+    return None
+
+
+def i2c_pullups(ix, board):
+    """The resistors on the I2C bus of `board`: those on a net the S3 talks
+    SDA/SCL on, by the module's own pin names."""
+    s3 = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
+    if s3 is None:
+        return []
+    bus = {ix.items[s3.refdes].pin_net.get(pin) for pin in ("IO13", "IO14")} - {None}
+    bus |= {n for n in s3.nets if n in ("SDA", "SCL")}
+    return sorted((it.refdes for it in ix.on(board) if it.kind == "R" and any(n in bus for n in it.nets)),
+                  key=_ref_key)
 
 
 def service_zones(box):

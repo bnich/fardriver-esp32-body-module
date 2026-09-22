@@ -77,6 +77,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `lcsc_fixture.py` | Refreshes `tests/fixtures/lcsc.json`: what LCSC says each ordered code is |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
+| `place.py` | Places the three boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the 16 rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
