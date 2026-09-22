@@ -16,12 +16,12 @@ from tools.model import ConnPin, Connector, Design, Part, Standoff
 
 
 def part(ref, board, height, footprint=(2.0, 1.25), *, side="top", confirmed=True,
-         package="0805", mpn="X"):
+         package="0805", mpn="X", lead=None):
     """A BODY with a height and a footprint: kind MECH, because the fit model
     reads neither kind nor value, and a resistor with no value is what the
-    model refuses (M11)."""
+    model refuses (M11). `lead` marks it through-hole (pins cross the board)."""
     return Part(ref, mpn, package, board, "MECH", ("1", "2"), height, confirmed,
-                footprint, side=side)
+                footprint, side=side, lead_mm=lead)
 
 
 def conn(ref, board, height, footprint=(20.0, 9.0), *, confirmed=True, interface=None,
@@ -43,7 +43,7 @@ def good() -> Design:
     return Design(
         parts=(part("L101", "POWER", 14.0, (22.0, 14.0), package="THT"),
                part("U201", "POWER", 12.7, (58.3, 37.2), package="brick",
-                    side="bottom"),
+                    side="bottom", lead=5.5),
                part("U401", "LOGIC", 3.1, (25.5, 18.0), package="module")),
         connectors=(conn("J301", "OUTPUTS", 7.0, leaves_box=False),
                     conn("J401", "LOGIC", 7.0, leaves_box=False)))
@@ -151,10 +151,11 @@ def test_a_shimmed_standoff_is_reported_as_what_it_is_not_as_the_gap(capsys):
 
 
 def test_the_real_report_says_which_standoff_sets_the_power_to_outputs_gap(capsys):
-    """The same thing on the real netlist, which is where it has to be true."""
+    """The same thing on the real netlist, which is where it has to be true.
+    The HEIGHT budget is what this reads; the exit code is the whole report's
+    and is not asserted here -- the ROWS budget owns its own verdict."""
     from tools import netlist
     code, out = run(capsys, netlist.current())
-    assert code == 0
     line = next(ln for ln in out.splitlines() if "gap POWER -> OUTPUTS" in ln)
     assert "the Shuntian M3X30 standoff stands 30.0, which sets it" in line
     assert "L102 22.0 up" in line                    # ...and what it has to clear
@@ -166,24 +167,52 @@ def test_the_edge_a_board_s_headers_take_by_hand():
     d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6),
                         conn("J303", "OUTPUTS", 7.0, overhang=0.0))
     (e,) = bf.edge_budget(d)
-    assert (e.board, e.side, e.headers) == ("OUTPUTS", "top", ("J302", "J303"))
+    assert (e.board, e.headers, e.blockers) == ("OUTPUTS", ("J302", "J303"), ())
     assert (e.length_mm, e.room_mm) == (pytest.approx(41.0), pytest.approx(19.6))
 
 
-def test_a_terminal_under_a_board_is_a_row_of_its_own(capsys):
-    """IO-6: one row per FACE. The 5 V row hangs under OUTPUTS, under the 12 V
-    row on top of it; summed as one board they would report 41 mm of edge where
-    neither row is longer than 20, and OUTPUTS would fail a length no row needs."""
+def test_a_terminal_under_a_board_takes_the_edge_like_one_on_top(capsys):
+    """A harness terminal is through-hole: its pins cross the board and stand
+    proud of the other face, so the 5 V row under OUTPUTS cannot share a length
+    of the edge with the 12 V row on top -- each one's pins would land in the
+    other's body. Two 20 mm terminals, one per face, are ONE 41 mm strip. (The
+    first placement, 2026-09-22, put J314 under J303-J305 and passed 16 checks;
+    the picture showed it.)"""
     d = with_connectors(good(), conn("J302", "OUTPUTS", 7.0, overhang=9.6),
                         replace(conn("J314", "OUTPUTS", 7.0, overhang=8.9),
                                 side="bottom"))
-    rows = {(e.board, e.side): e for e in bf.edge_budget(d)}
-    assert set(rows) == {("OUTPUTS", "top"), ("OUTPUTS", "bottom")}
-    assert rows[("OUTPUTS", "top")].length_mm == pytest.approx(20.0)
-    assert rows[("OUTPUTS", "bottom")].length_mm == pytest.approx(20.0)
-    assert rows[("OUTPUTS", "bottom")].room_mm == pytest.approx(18.9)
-    out = run(capsys, d)[1]
-    assert "OUTPUTS top " in out and "OUTPUTS bottom " in out
+    (e,) = bf.edge_budget(d)
+    assert e.headers == ("J302", "J314")
+    assert e.length_mm == pytest.approx(41.0)
+    assert e.room_mm == pytest.approx(19.6)      # the deeper plug of the two
+    rows = run(capsys, d)[1].split("\nROWS")[1]
+    assert "OUTPUTS   41.0 mm of edge" in rows and "J302 J314" in rows
+    assert rows.count("OUTPUTS") == 1            # one strip, not a row per face
+
+
+def test_an_underside_brick_too_deep_to_sit_behind_the_row_takes_the_edge():
+    """`good()` puts the 58.3 x 37.2 quarter brick under POWER with through-hole
+    pins. Behind a 9 mm row there are 41.84 - 9 = 32.84 mm; the brick is 37.2
+    deep, so the row's pins would land in its case: it takes 58.3 mm of the
+    edge, plus a gap. A 25.4 mm brick sits behind the row and takes nothing."""
+    d = with_connectors(good(), conn("J101", "POWER", 7.0, (56.1, 9.0)))
+    (e,) = bf.edge_budget(d)
+    assert e.blockers == ("U201",)
+    assert e.length_mm == pytest.approx(56.1 + 1.0 + 58.3)
+    shallow = replace(d, parts=tuple(
+        replace(x, footprint_mm=(50.8, 25.4)) if x.refdes == "U201" else x for x in d.parts))
+    (e2,) = bf.edge_budget(shallow)
+    assert e2.blockers == () and e2.length_mm == pytest.approx(56.1)
+
+
+def test_a_brick_without_through_hole_pins_is_not_a_row_blocker():
+    """The rule is about pins crossing the board: a body with no `lead_mm`
+    (nothing typed as through-hole) is not counted, whatever its depth."""
+    d = with_connectors(good(), conn("J101", "POWER", 7.0, (56.1, 9.0)))
+    smd = replace(d, parts=tuple(
+        replace(x, lead_mm=None) if x.refdes == "U201" else x for x in d.parts))
+    (e,) = bf.edge_budget(smd)
+    assert e.blockers == ()
 
 
 def test_a_row_longer_than_its_board_fails():
@@ -196,7 +225,8 @@ def test_a_row_longer_than_its_board_fails():
 def test_a_row_longer_than_its_board_is_a_plain_failure_not_a_caveat(capsys):
     """IO-14 made the board the design's own requirement, so a row that does not
     fit it is a failure whatever the cavity turns out to be. Two 130 mm headers
-    1 mm apart take 261 mm of a 242 mm board: 19 mm over."""
+    1 mm apart take 261 mm of the 228 mm between a 242 mm board's M3 corners:
+    33 mm over."""
     d = with_connectors(good(),
                         conn("J302", "OUTPUTS", 7.0, (130.0, 9.2), overhang=9.6),
                         conn("J303", "OUTPUTS", 7.0, (130.0, 9.2), overhang=9.6))
@@ -204,9 +234,9 @@ def test_a_row_longer_than_its_board_is_a_plain_failure_not_a_caveat(capsys):
     assert e.length_mm == pytest.approx(261.0)
     code, out = run(capsys, d)
     assert code == 1 and "✅ PASS" not in out
-    assert "row: OUTPUTS's 2 harness headers take 261 mm of the face" in out
-    assert "the board is 242 mm long" in out
-    assert "⛔ DOES NOT FIT (19 mm over)" in out
+    assert "row: OUTPUTS's 2 harness headers take 261 mm of the edge" in out
+    assert "the edge is 228 mm between the M3 corners of a 242 mm board" in out
+    assert "⛔ DOES NOT FIT (33 mm over)" in out
 
 
 def test_a_row_that_fits_its_board_is_no_verdict_at_all(capsys):
@@ -504,3 +534,20 @@ def test_the_density_verdict_word_on_the_area_line_agrees_with_the_exit(capsys):
     line = _area_line(out, "OUTPUTS", "top")
     assert code == 1 and "⛔ FAIL" in line and "✅ PASS" not in out
     assert float(line.split()[4].rstrip("%")) > bf.DENSITY_LIMIT * 100
+
+
+def test_the_real_design_s_rows_do_not_fit_and_the_report_says_which(capsys):
+    """2026-09-22: with both faces in one strip, POWER's row plus the quarter
+    brick under it and OUTPUTS' 12 V row plus the 5 V row under it both overrun
+    the 228 mm edge; LOGIC fits. This pins the honest state until the owner's
+    row decision (design record IO-26) changes the netlist -- when it does,
+    this test is rewritten to the new fact, not deleted."""
+    from tools import netlist
+    over = {e.board: (e.over_mm, e.blockers) for e in bf.edge_budget(netlist.current())}
+    assert over["POWER"][0] > 0 and over["POWER"][1] == ("U201",)
+    assert over["OUTPUTS"][0] > 0 and over["OUTPUTS"][1] == ()
+    assert over["LOGIC"][0] < 0
+    code, out = run(capsys, netlist.current())
+    assert code == 1
+    assert "row: POWER's 5 harness headers and U201 under them take 256 mm of the edge" in out
+    assert "row: OUTPUTS's 7 harness headers take 260 mm of the edge" in out

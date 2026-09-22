@@ -78,17 +78,17 @@ def test_the_envelope_the_pcb_outline_is_cut_to():
 TWELVE_V_ROW_MM = 220.28
 
 
-def test_the_board_length_holds_the_longest_row_with_room_to_spare():
+def test_the_edges_are_stated_by_hand_and_two_of_them_overrun_the_board():
     """The row is arithmetic, not a heuristic, so it is one of the two things
-    BOARD_L answers to. Every row is held to 0.90 x 242.0 = 217.80 mm except
-    the 12 V row, which is held to TWELVE_V_ROW_MM, where it stands.
+    BOARD_L answers to -- and since 2026-09-22 it is ONE strip per board edge,
+    both faces, between the M3 corners (228.0 mm of the 242): a harness
+    terminal is through-hole, so the 5 V row under OUTPUTS takes the edge like
+    the 12 V row on top of it, and the quarter brick under POWER, 37.2 mm deep
+    on a 41.84 board, cannot sit behind POWER's row and takes its 58.3 mm too.
+    The first placement put J314's pins inside J303-J305's bodies and J101's
+    pins into U201's case, and every check passed; the picture showed it.
 
-    THE EXCEPTION (IO-24, amended 2026-09-21). J301, J303 and J305 were three
-    3.81 x 4 terminals with three polarity conventions, and a swapped plug
-    drove a load reversed or held a lamp common at +12 V. The fix is a unique
-    size for each, and the family is saturated: every size 2-9 at 3.81 mm is a
-    terminal in one of the two rows and the 11-way header is stock 0, so J303
-    took 10 ways and J305 twelve. The 12 V row, by hand, header by header:
+    THE 12 V ROW (IO-24, amended 2026-09-21), header by header:
       J301  4 x 3.81 + 10.48 =  25.72
       J302  5 x 3.81 + 10.48 =  29.53
       J303 10 x 3.81 + 10.48 =  48.58
@@ -96,39 +96,38 @@ def test_the_board_length_holds_the_longest_row_with_room_to_spare():
       J305 12 x 3.81 + 10.48 =  56.20
       J313  7 x 3.81 + 10.48 =  37.15   bodies 215.28
       five HEADER_GAPs of 1.0            +  5.00 = 220.28 mm
-    220.28 / 242.0 = 91.0 %, 2.48 mm past the 90 % line. The margin exists to
-    absorb connector growth, and closing a real polarity hazard is what it is
-    for; the owner accepted this row on 2026-09-21. It is an exception, not a
-    loosening: the other rows keep 0.90, the pack and density tripwires below
-    are untouched, and the row is pinned where it stands, so the NEXT thing to
-    lengthen it -- a seventh header (18.10 + 1.0 mm at the least) or one more
-    position (3.81 mm) -- fails here and is a new decision. What a real defect
-    scores: a row over the board itself is 242.0 mm, 100 %, and board_fit
-    fails it; this test fires 21.72 mm before that.
+    and the 5 V row J314, 8 x 3.50 + 10.40 = 38.40, one more gap: 259.68 mm on
+    a 228 mm edge, 31.68 over.
+    POWER: 55.88 + 25.4 + 35.56 + 20.32 + 55.88 = 193.04 of headers and four
+    gaps = 197.04, plus U201's 58.3 and a gap = 256.34 mm, 28.34 over. (U202 is
+    25.4 deep: 41.84 - 13.0 = 28.84 mm stand behind a 13 mm row, so it sits
+    behind the row and costs nothing.)
+    LOGIC: 185.94 mm, 81.6 % of the edge -- inside the 90 % design margin.
 
-    The other rows: POWER top's five headers are 55.88 + 25.4 + 35.56 + 20.32 +
-    55.88 = 193.04 of body and four 1 mm gaps = 197.04 mm, 81.4 %, clearing
-    217.80 by 20.76 mm; LOGIC top 185.94, OUTPUTS bottom 38.40. The 12 V row
-    clears the board by 21.72 mm, 14.0 mm of which the four M3 corners take: at
-    each END of the row two corners take 2 x 3.5 mm of length between them, so
-    2 x 2 x 3.5 = 14.0 mm in all, and 7.72 mm is left.
-
-    ⚠️ No row sets the length. The 12 V row would want 220.28 / 0.90 = 244.76
-    and does not get it; the PACK wanted 239.49, and 242.0 was taken to keep the
-    pack tripwire off a hair trigger.
-    Protects: that every row but the one excepted keeps its margin while the
-    length is being set by something else, and that the exception stays the
-    size it was accepted at."""
+    ⚠️ THIS IS THE HONEST STATE, NOT A TARGET. board_fit fails POWER and
+    OUTPUTS on it and the gate stops there. Which row changes is the owner's
+    decision (design record IO-26); when the netlist changes, this test is
+    rewritten to the new arithmetic, not deleted. What the options score, for
+    the next person: J314 moved to LOGIC's edge makes LOGIC 225.34 (98.8 %,
+    inside 228 by 2.66 mm) and OUTPUTS 220.28 (96.6 %); dropping J405's parked
+    footprint alone brings POWER to 199.24 (87.4 %); dropping J310 alone
+    leaves it 235.02, still over.
+    Protects: that the edge arithmetic is stated where a person can check it,
+    and that the two overruns cannot be forgotten while IO-26 is open."""
     from tools import board_fit as bf, netlist
-    rows = {(e.board, e.side): e.length_mm for e in bf.edge_budget(netlist.current())}
-    twelve_v = rows.pop(("OUTPUTS", "top"))
-    assert twelve_v == pytest.approx(TWELVE_V_ROW_MM, abs=0.01)   # the exception, where it stands
-    assert twelve_v / bp.BOARD_L == pytest.approx(0.910, abs=0.0005)
-    assert twelve_v - 0.90 * bp.BOARD_L == pytest.approx(2.48, abs=0.01)
-    for face, length in rows.items():
-        assert length <= 0.90 * bp.BOARD_L, face                     # the tripwire, every other row
-    assert max(rows.values()) == pytest.approx(197.04)              # POWER top, unchanged
-    assert bp.BOARD_L - twelve_v > 4 * bf.M3_INSET_MM
+    edges = {e.board: e for e in bf.edge_budget(netlist.current())}
+    assert bf.EDGE_USABLE == pytest.approx(228.0)
+    twelve_v = sum((25.72, 29.53, 48.58, 18.10, 56.20, 37.15)) + 5 * 1.0
+    assert twelve_v == pytest.approx(TWELVE_V_ROW_MM, abs=0.01)
+    assert edges["OUTPUTS"].length_mm == pytest.approx(twelve_v + 1.0 + 38.40, abs=0.01)
+    assert edges["OUTPUTS"].headers[-1] == "J314" and edges["OUTPUTS"].blockers == ()
+    assert edges["OUTPUTS"].over_mm == pytest.approx(31.68, abs=0.01)
+    assert edges["POWER"].length_mm == pytest.approx(197.04 + 1.0 + 58.3, abs=0.01)
+    assert edges["POWER"].blockers == ("U201",)
+    assert edges["POWER"].over_mm == pytest.approx(28.34, abs=0.01)
+    assert edges["LOGIC"].length_mm == pytest.approx(185.94, abs=0.01)
+    assert edges["LOGIC"].length_mm <= 0.90 * bf.EDGE_USABLE          # the one row inside its margin
+    assert edges["LOGIC"].length_mm + 1.0 + 38.40 <= bf.EDGE_USABLE   # where J314 could go
 
 
 def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
@@ -393,16 +392,19 @@ def test_the_guard_reports_a_board_below_the_cliff(board_width):
     so."""
     from tools import board_fit as bf, netlist
     d = netlist.current()
-    assert bf.problems(d) == []                          # 41.84 mm: it builds
+    def but_the_rows(problems):
+        # the ROWS verdict is open on its own account (IO-26) at every width here
+        return [p for p in problems if not p.startswith("row:")]
+    assert but_the_rows(bf.problems(d)) == []            # 41.84 mm: it builds
     assert cliff_problems(d) == []                       # ...and it is clear
     board_width(40.0)
-    assert bf.problems(d) == []                          # 40.0 mm: it still builds
+    assert but_the_rows(bf.problems(d)) == []            # 40.0 mm: it still builds
     (at_40,) = cliff_problems(d)
     assert at_40.startswith("cliff above the board:")
     assert "steps at 40.84 mm" in at_40 and "BOARD_W is 40.00" in at_40
     assert "packs into 225.13 mm" in at_40 and "Re-run the envelope search" in at_40
     board_width(41.0)
-    assert bf.problems(d) == []                          # ...and it still builds
+    assert but_the_rows(bf.problems(d)) == []            # ...and it still builds
     (at_41,) = cliff_problems(d)
     assert at_41.startswith("cliff clearance:")          # above it, but not by 1 mm
     assert "steps at 40.84 mm" in at_41 and "BOARD_W is 41.00" in at_41

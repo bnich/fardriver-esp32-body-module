@@ -120,7 +120,10 @@ def test_tel_check_refuses_before_reading_the_export(broken_netlist, capsys, tmp
 
 # --- and the same entry points on the real design still run -------------------------
 def test_the_real_design_still_reaches_every_report(capsys):
-    assert board_fit.main([]) == 0
+    # board_fit reaches its report and exits 1 on the ROWS verdict alone (IO-26,
+    # open since 2026-09-22): rewrite to 0 when the owner's row decision lands
+    assert board_fit.main([]) == 1
+    assert "⛔ DOES NOT FIT" in capsys.readouterr().out
     assert gpio_budget.main([]) == 0
     assert power_budget.main() == 0
     assert soft_start.main([]) == 0

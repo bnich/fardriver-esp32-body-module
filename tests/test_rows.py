@@ -140,20 +140,20 @@ def test_the_free_inputs_are_two_fitted_harness_terminals():
     assert sum(n.startswith("SPARE_") for n in nets) == 13
 
 
-def test_each_row_is_one_face_of_one_board():
+def test_each_row_is_one_edge_of_one_board():
     """IO-6: the rows stack on ONE face of the box, each row the edge of one
-    board -- so the edge budget is grouped by (board, side), and every harness
-    connector belongs to exactly one row. Read off the design, not restated:
-    Task 5 hangs the 5 V row under OUTPUTS and it becomes a row here by itself."""
+    board -- so the edge budget is grouped by board, and every harness
+    connector belongs to exactly one edge. Read off the design, not restated.
+    The 5 V row hangs UNDER OUTPUTS (its connector's `side`), and since
+    2026-09-22 it is in OUTPUTS' one edge beside the 12 V row, not an edge of
+    its own: a through-hole terminal takes the edge from either face."""
     rows = bf.edge_budget(D)
-    assert [(e.board, e.side) for e in rows] == [
-        ("POWER", "top"), ("OUTPUTS", "top"), ("OUTPUTS", "bottom"),
-        ("LOGIC", "top")]
+    assert [e.board for e in rows] == ["POWER", "OUTPUTS", "LOGIC"]
     placed = [r for e in rows for r in e.headers]
-    assert sorted(placed) == sorted(ROW_FACE), "a header in two rows or none"
+    assert sorted(placed) == sorted(ROW_FACE), "a header in two edges or none"
     for e in rows:
-        assert set(e.headers) == {r for r, f in ROW_FACE.items()
-                                  if f == (e.board, e.side)}
+        assert set(e.headers) == {r for r, (b, _) in ROW_FACE.items() if b == e.board}
+    assert D.connector("J314").side == "bottom" and "J314" in rows[1].headers
 
 
 def test_every_class_a_network_sits_at_its_own_terminal():
@@ -178,11 +178,12 @@ def test_a_class_a_network_left_on_another_board_is_refused():
 def row_sizes(d, face):
     """{refdes: (pitch, positions)} of every harness header in the row on
     `face`, read off `edge_budget` -- the same grouping board_fit measures."""
-    edge = next((e for e in bf.edge_budget(d) if (e.board, e.side) == face), None)
+    board, side = face
+    edge = next((e for e in bf.edge_budget(d) if e.board == board), None)
     if edge is None:
         return {}
     return {r: (d.connector(r).pitch_mm, len(d.connector(r).pins))
-            for r in edge.headers}
+            for r in edge.headers if d.connector(r).side == side}
 
 
 def shared_sizes(d):

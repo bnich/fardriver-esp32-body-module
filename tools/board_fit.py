@@ -23,11 +23,18 @@ Four budgets, four plain answers:
             Each gap names what puts the boards where they are: a part, a mated
             connector pair, the brick's floor seat, or the STANDOFF screwed
             across it (`model.Standoff`).
-  ROWS      each FACE's harness headers end to end -- one row per face (IO-6),
-            so a terminal under a board is not summed into the row on top of it
-            -- against the length of the board they stand on. The room in front
-            of them, `board_params.FACE_ROOM`, is not a budget here: it is a
-            term of the cavity this design REQUIRES, which the report states.
+  ROWS      each board's harness headers end to end, BOTH faces in ONE strip,
+            against the length of the board edge between its M3 corners. ⚠️ A
+            harness terminal is through-hole: its pins cross the board and stand
+            proud of the other face, so a terminal hanging UNDER a board takes
+            the same length of the edge as one standing on top -- the two faces
+            are not two rows (found 2026-09-22, when the first placement put the
+            5 V row's pins inside the 12 V terminals' bodies and passed). A
+            through-hole part on the underside that is too deep to sit behind
+            the row -- the quarter brick, 37.2 mm of a 41.84 mm board -- takes
+            its length of the strip as well. The room in front of the row,
+            `board_params.FACE_ROOM`, is not a budget here: it is a term of the
+            cavity this design REQUIRES, which the report states.
 
 ⚠️ M18 is MEASURED (2026-09-20), so the cavity is a fact and every budget here
 is a verdict. What is still an allowance is the ENCLOSURE -- wall, floor and lid
@@ -153,47 +160,72 @@ def area_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Side, ...]:
     return tuple(rows)
 
 
+#: The edge a row may use: the board's length less the two M3 corner squares
+#: (`pcb.py` puts each hole M3_INSET_MM from both edges; a 7 mm washer covers
+#: the square). A header body may not stand on a washer.
+EDGE_USABLE = bp.BOARD_L - 2 * (2 * M3_INSET_MM)
+
+
 @dataclass(frozen=True)
 class Edge:
     board: str
-    side: str                  # the FACE of that board: one row per face (IO-6)
-    headers: tuple[str, ...]
-    length_mm: float           # the harness headers end to end, HEADER_GAP apart
+    headers: tuple[str, ...]   # every harness header of the board, both faces
+    blockers: tuple[str, ...]  # underside through-hole bodies too deep to sit behind the row
+    length_mm: float           # headers and blockers end to end, HEADER_GAP apart
     room_mm: float             # deepest mated plug's overhang + the wire's bend
 
     @property
-    def face(self) -> str:
-        return f"{self.board} {self.side}"
+    def usable_mm(self) -> float:
+        return EDGE_USABLE
+
+    @property
+    def over_mm(self) -> float:
+        return self.length_mm - EDGE_USABLE
+
+
+def row_blockers(d: Design, board: str, row_depth_mm: float) -> list:
+    """Underside parts whose pins cross the board and which cannot sit behind
+    the face row: through-hole (a `lead_mm`), on the bottom, and deeper across
+    the board than the width left behind a row `row_depth_mm` deep. The row's
+    pins would land in their case, so they take the edge instead."""
+    return [x for x in d.parts if x.board == board and x.side == "bottom" and x.lead_mm
+            and x.footprint_mm[1] > bp.BOARD_W - row_depth_mm]
 
 
 def edge_budget(d: Design, order=bp.STACK_ORDER) -> tuple[Edge, ...]:
-    """Every FACE with harness headers: the row they take and the room to
-    the wall their plugs need. An unfitted header still takes its row.
+    """Every board with harness headers: the one strip of its connector edge
+    they take, and the room to the wall their plugs need. An unfitted header
+    still takes its row.
 
-    One row per FACE, not per board (IO-6). A terminal hanging UNDER a board
-    is a row of its own, beside the row standing on top of the same board:
-    summed together they would report an edge twice as long as either row is,
-    and a board would fail a length no row of it needs."""
+    ONE strip per board, both faces: a harness terminal is through-hole, so one
+    under the board and one on top cannot share a length of the edge -- each
+    one's pins land inside the other's body. Underside through-hole parts too
+    deep to sit behind the row (`row_blockers`) take their length as well."""
     out = []
     for board in order:
-        for side in SIDES:
-            hs = [c for c in d.connectors if c.board == board
-                  and c.side == side and c.leaves_box]
-            if not hs:
-                continue
-            length = sum(c.footprint_mm[0] for c in hs) + HEADER_GAP * (len(hs) - 1)
-            room = max((c.overhang_mm for c in hs if not c.dnp),
-                       default=0.0) + bp.WIRE_BEND
-            out.append(Edge(board, side, tuple(c.refdes for c in hs), length, room))
+        hs = [c for c in d.connectors if c.board == board and c.leaves_box]
+        if not hs:
+            continue
+        depth = max(c.footprint_mm[1] for c in hs)
+        bl = row_blockers(d, board, depth)
+        bodies = [c.footprint_mm[0] for c in hs] + [x.footprint_mm[0] for x in bl]
+        length = sum(bodies) + HEADER_GAP * (len(bodies) - 1)
+        room = max((c.overhang_mm for c in hs if not c.dnp),
+                   default=0.0) + bp.WIRE_BEND
+        out.append(Edge(board, tuple(c.refdes for c in hs), tuple(x.refdes for x in bl),
+                        length, room))
     return tuple(out)
 
 
 def face_verdicts(d: Design) -> list[str]:
-    """Each board's harness headers are one row on the connector face (IO-6):
-    the row must fit the board's length."""
-    return [f"row: {e.board}'s {len(e.headers)} harness headers take "
-            f"{e.length_mm:.0f} mm of the face; the board is {bp.BOARD_L:g} mm long"
-            for e in edge_budget(d) if e.length_mm > bp.BOARD_L]
+    """Each board's harness headers -- and the underside bodies its row cannot
+    stand over -- are one strip of the connector edge: it must fit the edge
+    between the M3 corners."""
+    return [f"row: {e.board}'s {len(e.headers)} harness headers"
+            + (f" and {' '.join(e.blockers)} under them" if e.blockers else "")
+            + f" take {e.length_mm:.0f} mm of the edge; the edge is {EDGE_USABLE:g} mm "
+              f"between the M3 corners of a {bp.BOARD_L:g} mm board"
+            for e in edge_budget(d) if e.over_mm > 0]
 
 
 def unseen(d: Design, order=bp.STACK_ORDER) -> list[str]:
@@ -356,15 +388,18 @@ def report(d: Design) -> str:
             out.append(f"  {'⭐' if starred else '  '} {board:6} {h:5.1f} mm  "
                        f"{what}: {' '.join(refs)}")
 
-    out.append(f"\nROWS   one row per FACE (IO-6): its harness headers end to end, "
-               f"{HEADER_GAP:g} mm apart, along a {bp.BOARD_L:g} mm board. The face "
-               f"needs {bp.FACE_ROOM:.2f} mm in front of it (the deepest mated plug, "
-               f"then a {bp.WIRE_BEND:g} mm wire bend), which is in the cavity above.")
+    out.append(f"\nROWS   one strip per board edge, BOTH faces: the harness headers end to "
+               f"end, {HEADER_GAP:g} mm apart -- a terminal is through-hole, so one under the "
+               f"board takes the edge like one on top -- plus any underside through-hole body "
+               f"too deep to sit behind the row. The edge is {EDGE_USABLE:g} mm between the M3 "
+               f"corners of a {bp.BOARD_L:g} mm board. The face needs {bp.FACE_ROOM:.2f} mm in "
+               f"front of it (the deepest mated plug, then a {bp.WIRE_BEND:g} mm wire bend), "
+               f"which is in the cavity above.")
     for e in edge_budget(d):
-        fits = ("fits" if e.length_mm <= bp.BOARD_L else
-                f"⛔ DOES NOT FIT ({e.length_mm - bp.BOARD_L:.0f} mm over)")
-        out.append(f"  {e.board:7} {e.side:6} {e.length_mm:6.1f} mm of row, "
-                   f"{e.room_mm:5.2f} mm in front   {fits:12} {' '.join(e.headers)}")
+        fits = ("fits" if e.over_mm <= 0 else f"⛔ DOES NOT FIT ({e.over_mm:.0f} mm over)")
+        out.append(f"  {e.board:7} {e.length_mm:6.1f} mm of edge, "
+                   f"{e.room_mm:5.2f} mm in front   {fits:26} {' '.join(e.headers)}"
+                   + (f"  + under: {' '.join(e.blockers)}" if e.blockers else ""))
 
     errs = problems(d)
     out.append("")
