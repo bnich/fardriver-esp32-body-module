@@ -67,7 +67,10 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
 - ⛔ **Never close a gap on paper only.** A part counts as protection when both its pins are on nets,
   not when a comment says so.
 - A height or rating is "confirmed" only if it was read in a manufacturer PDF — say which.
-- The generated EasyEDA project is a build artefact: never hand-edit it, never commit it.
+- The generated EasyEDA project is a build artefact: never hand-edit it, never commit it. ⚠️ **The
+  owner's LAYOUT is not that artefact.** Once boards are placed, the project is saved to
+  **`layout/revv1-module.eprj2`** (tracked) and every session opens that file — 📄 `layout/README.md`.
+  A layout saved in `build-eprj3/` is one `gate.sh` away from being renamed `.stale`.
 - ⛔ **EasyEDA Pro 3.2.149 opens `.eprj2`, not `.eprj3`.** Open `build-eprj3/revv1-module.eprj2`.
   The editor refuses a netlist export while any part lacks a footprint. 📄 The
   `working-with-easyeda-pro` skill has the formats and the proof method.
