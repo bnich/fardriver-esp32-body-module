@@ -1,13 +1,14 @@
 # Design-time tooling
 
 Checks the three-board set and generates its EasyEDA Pro project from a checked-in netlist.
-**Stdlib only**, no virtualenv, with two exceptions. Without either, everything else still runs and
-says what it could not do:
+**Stdlib only**, no virtualenv, with three exceptions, each checked by name before the gate runs
+anything:
 
+- the tests need `pytest`;
 - the `.eprj2` output needs the `cryptography` package;
-- library footprints come through `~/tools/lcsc-search`, which caches every answer, so builds run
-  offline after one online build. Without it the build binds no library footprint and names every
-  item left without one.
+- library footprints come through `~/tools/lcsc-search` (`LCSC_SEARCH_HOME` to relocate it), which
+  caches every answer, so builds run offline after one online build. Without it the build binds no
+  library footprint, names every item left without one, and exits 2, INCOMPLETE.
 
 Run everything from the repo root.
 
@@ -15,19 +16,35 @@ Run everything from the repo root.
 
 ## The order to run things in
 
-After any change to the netlist or the model:
+After any change to the netlist or the model, run the gate:
 
 ```bash
-python3 -m tools.integrity        # is the netlist a circuit at all?  must print "0 integrity problem(s)"
-python3 -m pytest                 # rules and unit tests              hermetic: no library fetch
+tools/gate.sh
+```
+
+It removes every `__pycache__` first — CPython validates a `.pyc` by second and size, so a
+same-second, same-size edit (`1.25` → `9.25`) is otherwise read as the OLD constant, and `-B` /
+`PYTHONDONTWRITEBYTECODE` stop writing one, not reading it — checks that `pytest`, `cryptography`,
+`~/tools/lcsc-search` and an editor-saved `.eprj2` template are present, then runs these, in this
+order, each **bare**, and exits at the first non-zero exit code naming the tool:
+
+```bash
+python3 -m tools.integrity        # is the netlist a circuit at all?  exit 1 on any problem
+python3 -m pytest -q              # rules and unit tests              hermetic: no library fetch
 python3 -m tools.rules            # every rule, and the warnings      exit 1 on a violation
-python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL (2: see below)
 python3 -m tools.gpio_budget      # pin budget                        exit 1 on FAIL
 python3 -m tools.power_budget     # the 12 V load, choke and tap fuse exit 1 on FAIL
-python3 tools/soft_start.py       # D13 soft start                    exit 1 on FAIL
-python3 tools/build_project.py    # the EasyEDA project, and build-eprj3/layout-rules.txt
+python3 -m tools.soft_start       # D13 soft start                    exit 1 on FAIL
+python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL (2: see below)
+python3 tools/build_project.py    # the EasyEDA project and build-eprj3/layout-rules.txt — refused while EasyEDA Pro is open
+                                  #   exit 1 REFUSED (previous build renamed .stale) · 2 INCOMPLETE (an item without a footprint, or no .eprj2)
 python3 -m tools.jlc_bom          # JLC's BOM, the loose parts, the hand-soldered parts
 ```
+
+⛔ **`python3 -m tools.X | tail -1` returns `tail`'s exit code, not the tool's.** Every tool exits
+non-zero on failure; a pipeline hides it. When the exit code matters, run the tool bare or run the
+gate. ⛔ The gate has no flag to build while EasyEDA Pro is open — the editor holds the project the
+build replaces, and refusing is the safety property. Close it and run again.
 
 - ⛔ **After changing any LCSC code:** `python3 -m tools.lcsc_fixture`, which refreshes
   `tests/fixtures/lcsc.json` from the library. The tests hold the design to that file on every run,

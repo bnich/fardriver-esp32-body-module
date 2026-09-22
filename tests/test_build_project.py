@@ -19,13 +19,26 @@ from tests.test_schematic import (derive_nets, documents, netlist_slice,
 
 DESIGN = netlist.current()
 NAME = build_project.PROJECT_NAME
+bp = build_project
+
+#: What `main()` returns in THIS suite.  `conftest.py` sets REVV1_NO_LIBRARY, so
+#: no library footprint is bound and every build here is INCOMPLETE by its own
+#: account (see `test_no_library_is_incomplete_and_names_the_unbound`).  Every
+#: project file is still written, which is what the tests below read.  0 would
+#: mean a library was reached, and the suite would no longer be hermetic.
+HERMETIC = bp.EXIT_INCOMPLETE
+
+
+def run(out, *extra):
+    """A build into `out`, asserting the hermetic exit code; returns `out`."""
+    code = bp.main(["--out", str(out), *extra])
+    assert code == HERMETIC, code
+    return out
 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    out = tmp_path_factory.mktemp("build")
-    assert build_project.main(["--out", str(out)]) == 0
-    return out
+    return run(tmp_path_factory.mktemp("build"))
 
 
 def tree(root):
@@ -37,7 +50,7 @@ def tree(root):
 def test_refuses_an_integrity_failure(monkeypatch, tmp_path, capsys):
     broken = DESIGN.without_pin("R110", "1")      # a floating leg
     monkeypatch.setattr(netlist, "current", lambda: broken)
-    assert build_project.main(["--out", str(tmp_path)]) == 1
+    assert build_project.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
     err = capsys.readouterr().err
     assert "REFUSED" in err and "integrity: floating: R110.1" in err
     assert list(tmp_path.iterdir()) == []         # nothing written
@@ -46,10 +59,157 @@ def test_refuses_an_integrity_failure(monkeypatch, tmp_path, capsys):
 def test_refuses_a_rule_failure(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(rules, "check_all",
                         lambda d: ["D99: a deliberately failing rule"])
-    assert build_project.main(["--out", str(tmp_path)]) == 1
+    assert build_project.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
     err = capsys.readouterr().err
     assert "rules: D99: a deliberately failing rule" in err
     assert list(tmp_path.iterdir()) == []
+
+
+# --- a refused build marks the previous one stale (M17) -------------------------
+def _refuse_next_build(monkeypatch):
+    monkeypatch.setattr(rules, "check_all",
+                        lambda d: ["D99: a deliberately failing rule"])
+
+
+def _names(out):
+    return sorted(p.name for p in Path(out).iterdir())
+
+
+def test_a_refused_build_renames_the_previous_project_stale(tmp_path, monkeypatch, capsys):
+    """A good build, then a refusal into the same directory: the old .eprj2
+    must not be there to open as current.  Every artefact is renamed, not only
+    the .eprj2 -- the folder and zip are its sources and the layout rules its
+    derivation, and any of them read as 'the current build' otherwise."""
+    run(tmp_path)
+    before = _names(tmp_path)
+    assert f"{NAME}.eprj2" in before and NAME in before and "layout-rules.txt" in before
+    _refuse_next_build(monkeypatch)
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    after = _names(tmp_path)
+    assert after == sorted(n + bp.STALE_SUFFIX for n in before)
+    assert not (tmp_path / f"{NAME}.eprj2").exists()
+    assert (tmp_path / f"{NAME}{bp.STALE_SUFFIX}" / f"{NAME}.eprj3").is_file()
+    err = capsys.readouterr().err
+    assert f"renamed {bp.STALE_SUFFIX}" in err and f"{NAME}.eprj2" in err
+
+
+def test_a_second_refusal_has_nothing_left_to_rename(tmp_path, monkeypatch):
+    run(tmp_path)
+    _refuse_next_build(monkeypatch)
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    stale = _names(tmp_path)
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    assert _names(tmp_path) == stale
+
+
+def test_mark_stale_replaces_an_earlier_stale_copy(tmp_path):
+    """`main` never leaves a current build beside a .stale one, so this is
+    the helper's own contract: the newer artefact wins the .stale name."""
+    (tmp_path / f"{NAME}.eprj2").write_bytes(b"newer")
+    (tmp_path / f"{NAME}.eprj2{bp.STALE_SUFFIX}").write_bytes(b"older")
+    (tmp_path / NAME).mkdir()
+    (tmp_path / NAME / f"{NAME}.eprj3").write_text("{}")
+    (tmp_path / f"{NAME}{bp.STALE_SUFFIX}").mkdir()
+    (tmp_path / f"{NAME}{bp.STALE_SUFFIX}" / "old.txt").write_text("older")
+    renamed = bp.mark_stale(tmp_path)
+    assert sorted(p.name for p in renamed) == sorted(
+        [f"{NAME}.eprj2{bp.STALE_SUFFIX}", f"{NAME}{bp.STALE_SUFFIX}"])
+    assert (tmp_path / f"{NAME}.eprj2{bp.STALE_SUFFIX}").read_bytes() == b"newer"
+    assert (tmp_path / f"{NAME}{bp.STALE_SUFFIX}" / f"{NAME}.eprj3").is_file()
+    assert not (tmp_path / f"{NAME}{bp.STALE_SUFFIX}" / "old.txt").exists()
+    assert not (tmp_path / f"{NAME}.eprj2").exists() and not (tmp_path / NAME).exists()
+
+
+def test_a_build_that_writes_removes_the_stale_remains(tmp_path, monkeypatch):
+    """After a refusal, the next build that writes leaves the directory
+    holding the current build alone -- current or marked, never both."""
+    run(tmp_path)
+    with monkeypatch.context() as m:
+        _refuse_next_build(m)
+        assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    assert any(n.endswith(bp.STALE_SUFFIX) for n in _names(tmp_path))
+    run(tmp_path)
+    assert not any(n.endswith(bp.STALE_SUFFIX) for n in _names(tmp_path))
+    assert (tmp_path / f"{NAME}.zip").is_file()
+
+
+def test_a_refusal_leaves_a_folder_it_did_not_write_alone(tmp_path, monkeypatch):
+    (tmp_path / NAME).mkdir()
+    (tmp_path / NAME / "notes.txt").write_text("mine", encoding="utf-8")
+    _refuse_next_build(monkeypatch)
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_REFUSED
+    assert (tmp_path / NAME / "notes.txt").read_text() == "mine"
+    assert _names(tmp_path) == [NAME]
+
+
+def test_a_refusal_into_a_directory_that_does_not_exist_creates_nothing(tmp_path, monkeypatch):
+    _refuse_next_build(monkeypatch)
+    out = tmp_path / "never"
+    assert bp.main(["--out", str(out)]) == bp.EXIT_REFUSED
+    assert not out.exists()
+
+
+# --- the exit code is a completeness gate (M17) ------------------------------------
+def _every_item_bound(monkeypatch):
+    """The real build, with every unbound item reported as bound: the suite
+    cannot reach a library, so the binding is taken as reported and the exit
+    code's own logic is what is under test."""
+    real = bp.build
+
+    def all_bound(design, **kw):
+        project, sheets = real(design, **kw)
+        for s in sheets:
+            s.footprints_bound += s.footprints_unbound
+            s.footprints_unbound.clear()
+        return project, sheets
+
+    monkeypatch.setattr(bp, "build", all_bound)
+
+
+def test_no_library_is_incomplete_and_names_the_unbound(tmp_path, capsys):
+    """The suite's own state: REVV1_NO_LIBRARY, so every LCSC-coded item is
+    unbound.  That build is INCOMPLETE -- written, named, exit 2, never 0."""
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_INCOMPLETE
+    out, err = capsys.readouterr()
+    assert "INCOMPLETE" in err and "carry no footprint" in err
+    q301 = next(p for p in DESIGN.parts if p.refdes == "Q301")
+    assert q301.lcsc, "Q301 is an LCSC-coded part, so it is unbound here"
+    assert "Q301" in out.split("footprints:")[1].split("\n")[0]
+    assert (tmp_path / NAME / f"{NAME}.eprj3").is_file(), "still written"
+
+
+def test_a_complete_build_exits_zero(tmp_path, monkeypatch, capsys):
+    """Every item bound and the .eprj2 written: 0.  The suite cannot reach a
+    library, so the binding is taken as reported; the .eprj2 step is
+    stubbed so the exit code does not hang on this machine's editor."""
+    _every_item_bound(monkeypatch)
+    monkeypatch.setattr(bp, "write_eprj2",
+                        lambda root, template: (tmp_path / f"{NAME}.eprj2", None))
+    assert bp.main(["--out", str(tmp_path)]) == 0
+    out, err = capsys.readouterr()
+    assert "INCOMPLETE" not in err and "0 do not" in out
+
+
+def test_no_eprj2_alone_is_incomplete(tmp_path, monkeypatch, capsys):
+    _every_item_bound(monkeypatch)
+    monkeypatch.setattr(bp, "write_eprj2", lambda root, template: (None, "no template"))
+    assert bp.main(["--out", str(tmp_path)]) == bp.EXIT_INCOMPLETE
+    out, err = capsys.readouterr()
+    assert "no .eprj2 was written" in err and "carry no footprint" not in err
+    assert "NO .eprj2 WRITTEN" in out
+    assert (tmp_path / f"{NAME}.zip").is_file(), "the folder and zip are still written"
+
+
+def test_the_exit_codes_are_distinct_and_non_zero():
+    assert bp.EXIT_REFUSED != bp.EXIT_INCOMPLETE
+    assert bp.EXIT_REFUSED and bp.EXIT_INCOMPLETE
+
+
+def test_incomplete_names_each_missing_thing():
+    assert bp.incomplete([], True) == 0
+    assert bp.incomplete(["D308"], True) == bp.EXIT_INCOMPLETE
+    assert bp.incomplete([], False) == bp.EXIT_INCOMPLETE
+    assert bp.incomplete(["D308"], False) == bp.EXIT_INCOMPLETE
 
 
 def test_the_real_design_passes_the_gate():
@@ -163,15 +323,15 @@ def test_zip_holds_the_folder_itself(built):
 
 # --- determinism ------------------------------------------------------------
 def test_two_runs_are_byte_identical(built, tmp_path):
-    assert build_project.main(["--out", str(tmp_path)]) == 0
+    run(tmp_path)
     assert tree(tmp_path) == tree(built)
 
 
 def test_a_rebuild_replaces_stale_files(tmp_path):
-    assert build_project.main(["--out", str(tmp_path)]) == 0
+    run(tmp_path)
     stale = tmp_path / NAME / "sch" / "POWER" / "P9.esch2"
     stale.write_text("left over", encoding="utf-8")
-    assert build_project.main(["--out", str(tmp_path)]) == 0
+    run(tmp_path)
     assert not stale.exists()
 
 
@@ -185,7 +345,7 @@ def test_refuses_to_clobber_a_folder_it_did_not_write(tmp_path):
 
 # --- the summary ------------------------------------------------------------
 def test_summary_names_every_board_and_warns(tmp_path, capsys):
-    assert build_project.main(["--out", str(tmp_path)]) == 0
+    run(tmp_path)
     out = capsys.readouterr().out
     for board in STACK_ORDER:
         assert f"\n  {board}" in out
@@ -198,9 +358,6 @@ def test_default_naming_is_both():
 
 
 # --- gate 3: the build reads back what it is about to write ---------------------
-bp = build_project
-
-
 def test_the_real_build_reads_back_clean():
     project, _sheets = bp.build(netlist.current())
     assert bp.read_back(project, netlist.current()) == []
@@ -236,6 +393,6 @@ def test_the_build_refuses_sheets_that_do_not_carry_the_netlist(tmp_path, monkey
     monkeypatch.setattr(bp.schematic, "emit_board", corrupt)
     code = bp.main(["--out", str(tmp_path)])
     err = capsys.readouterr().err
-    assert code == 1
+    assert code == bp.EXIT_REFUSED
     assert "read-back" in err and "OUTPUTS" in err
     assert not any(tmp_path.iterdir()), "nothing may be written when read-back fails"

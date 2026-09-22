@@ -219,7 +219,10 @@ def test_with_this_machines_editor_template_when_there_is_one(gauge_folder, tmp_
 def test_the_build_writes_an_openable_eprj2_for_every_board(template, tmp_path, capsys):
     from tools import build_project
     from tools.board_params import STACK_ORDER
-    assert build_project.main(["--out", str(tmp_path), "--template", str(template)]) == 0
+    # INCOMPLETE, not 0: the suite binds no library footprint (REVV1_NO_LIBRARY).
+    # The .eprj2 is written all the same, which is what this test reads.
+    assert build_project.main(["--out", str(tmp_path), "--template", str(template)]) \
+        == build_project.EXIT_INCOMPLETE
     out = tmp_path / f"{build_project.PROJECT_NAME}.eprj2"
     snap = eprj2.read(out)
     assert sorted(b["title"] for b in snap["structure"]["boards"].values()) == sorted(STACK_ORDER)

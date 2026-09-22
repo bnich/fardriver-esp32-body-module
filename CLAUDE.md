@@ -25,19 +25,23 @@ owner decision (2026-09-18), and an exception to the workspace's CC BY-SA defaul
 
 ## The `tools/` workflow
 
-Stdlib Python, no virtualenv. The exceptions are `cryptography`, needed for the `.eprj2` output
-(`tools/eprj2.py`), and `~/tools/lcsc-search` for library footprints. Without either, the build
-still runs and says what it could not do. Run from the repo root, in this order, after any change
-to the netlist or the model:
+Stdlib Python, no virtualenv, with three exceptions: `pytest` runs the tests, `cryptography` writes
+the `.eprj2` (`tools/eprj2.py`), and `~/tools/lcsc-search` serves the library footprints. The gate
+checks all three by name before running anything, and stops at the one that is missing. After any
+change to the netlist or the model, run the gate from the repo root:
 
 ```bash
-python3 -m tools.integrity     # structural gate — must print "0 integrity problem(s)"
-python3 -m pytest              # rules and unit tests (hermetic: no library fetch)
-python3 tools/build_project.py # the project, footprints bound; names every item still without one
-python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the owner hand-solders
+tools/gate.sh   # every check, in order, each run bare; stops at the first non-zero exit and names the tool
 ```
 
-`tools/README.md` has the full order (`board_fit`, `gpio_budget`, `soft_start`) and one line per tool.
+The individual commands are inside it, in the order they run — integrity, pytest, rules,
+gpio_budget, power_budget, soft_start, board_fit, then the build (refused while EasyEDA Pro is
+open; there is no override) and jlc_bom — and `tools/README.md` has one line per tool. Its step 0
+removes every `__pycache__`: a same-second, same-size edit is otherwise read as the OLD constant,
+and `-B` / `PYTHONDONTWRITEBYTECODE` do not prevent that. ⛔ **Never judge a tool through
+`| tail -1`** — the pipeline returns `tail`'s 0, not the tool's exit code. Run it bare.
+`build_project.py` exits 1 REFUSED (and renames the previous build `.stale`) or 2 INCOMPLETE (an
+item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
 
 - ⛔ **After changing any LCSC code, run `python3 -m tools.lcsc_fixture`.** It refreshes
   `tests/fixtures/lcsc.json` — what LCSC says each ordered code is (part number, maker, package,

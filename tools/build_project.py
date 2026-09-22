@@ -24,8 +24,23 @@ routing (`layout_rules.py`).
      derive its nets from the BYTES, then compare them pin by pin with the
      netlist. This is the emitter checking its own output on every run, not
      only in the test suite.
-A failure exits non-zero naming every problem: a project that looks finished
-and carries the wrong nets is worse than no project.
+A failure exits `EXIT_REFUSED` (1) naming every problem, and renames the
+previous build's artefacts under `--out` to `<name>.stale`, so the project
+left in the directory can never be mistaken for one built from the current
+netlist: a project that looks finished and carries the wrong nets is worse
+than no project.
+
+The exit code is a COMPLETENESS gate, not only a refusal:
+  0                  every placed item carries a footprint and the .eprj2 the
+                     editor opens was written;
+  EXIT_REFUSED   (1) a gate failed; nothing new was written; the previous
+                     build is renamed .stale;
+  EXIT_INCOMPLETE (2) the project was written but cannot yet be laid out: a
+                     placed item has no footprint (the editor refuses a
+                     netlist export while one is missing), or no .eprj2 was
+                     written (no `cryptography`, or no editor template). The
+                     summary names each one. Everything that COULD be
+                     written is on disk, so the folder can still be read.
 
 Output is DETERMINISTIC: every uuid and record id is derived, every timestamp
 is `project.DEFAULT_EPOCH_MS`, and the zip carries fixed dates.  Two runs are
@@ -60,6 +75,15 @@ from tools.eprj3.project import DEFAULT_EPOCH_MS, Project  # noqa: E402
 
 PROJECT_NAME = "revv1-module"
 DEFAULT_OUT = "build-eprj3"
+
+#: A gate refused the netlist: nothing new on disk, the old build marked stale.
+EXIT_REFUSED = 1
+#: Written, but not a project the editor can lay out yet -- an item without a
+#: footprint, or no .eprj2.  Distinct from EXIT_REFUSED so a caller can tell
+#: "the netlist is wrong" from "this machine lacks a library or a template".
+EXIT_INCOMPLETE = 2
+#: What a refused build renames the previous build's artefacts with.
+STALE_SUFFIX = ".stale"
 
 #: The line every summary ends with.  Stated plainly, every run.
 ACCEPTANCE_WARNING = (
@@ -131,12 +155,56 @@ def write_zip(folder, zip_path, epoch_ms=DEFAULT_EPOCH_MS):
     return Path(zip_path)
 
 
+def artefacts(out, name=PROJECT_NAME):
+    """Every path a build of `name` writes under `out`, whether or not it is
+    there: the folder, its zip, the .eprj2 and the layout rules.  A folder of
+    that name that is NOT a generated project is not in the list -- the build
+    never touches one (see `write`)."""
+    out = Path(out)
+    paths = [out / f"{name}.eprj2", out / f"{name}.zip", out / "layout-rules.txt"]
+    root = out / name
+    if not root.is_dir() or (root / f"{name}.eprj3").is_file():
+        paths.append(root)
+    return paths
+
+
+def _remove(path):
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def mark_stale(out, name=PROJECT_NAME):
+    """Rename the previous build's artefacts under `out` to `<path>.stale`, so
+    a REFUSED build leaves nothing that opens as the current project.  A
+    `.stale` from an earlier refusal is replaced.  Returns the new paths."""
+    renamed = []
+    for path in artefacts(out, name):
+        if not path.exists():
+            continue
+        stale = path.with_name(path.name + STALE_SUFFIX)
+        _remove(stale)
+        path.rename(stale)
+        renamed.append(stale)
+    return renamed
+
+
+def clear_stale(out, name=PROJECT_NAME):
+    """A build that writes removes the `.stale` copies a refusal left: the
+    directory holds either the current build or the marked remains of the
+    last one, never both."""
+    for path in artefacts(out, name):
+        _remove(path.with_name(path.name + STALE_SUFFIX))
+
+
 def write(project, out):
     """Write the project folder and its zip under `out`; return both paths.
 
     A previous build of the same project is replaced, so a file the generator
-    no longer writes cannot survive into the new one.  A folder of that name
-    that is NOT a generated project is left alone and refused.
+    no longer writes cannot survive into the new one, and the `.stale` remains
+    of a refused build are removed.  A folder of that name that is NOT a
+    generated project is left alone and refused.
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -147,6 +215,7 @@ def write(project, out):
                 f"{root} exists and is not a generated project; not "
                 f"overwriting it")
         shutil.rmtree(root)
+    clear_stale(out, project.name)
     root = project.write(out)
     zip_path = write_zip(root, out / f"{project.name}.zip", project.epoch_ms)
     return root, zip_path
@@ -156,8 +225,9 @@ def write_eprj2(root, template):
     """Wrap the written folder as `<name>.eprj2` beside it: the file EasyEDA
     Pro 3.2.149 opens.  Returns (path, None), or (None, why it was not written).
 
-    Not writing it is not a failed build -- the folder is still the design --
-    but the summary says so loudly, every run.
+    The folder is still the design when this cannot be written, so it is not
+    a REFUSED build -- but the owner cannot open the result, so `main` exits
+    `EXIT_INCOMPLETE` and the summary says why, every run.
     """
     root = Path(root)
     template = template or eprj2.find_template()
@@ -206,7 +276,8 @@ def main(argv=None):
                         help=f"output directory (default: {DEFAULT_OUT}/)")
     parser.add_argument("--no-footprints", action="store_true",
                         help="bind no library footprint (default: bind them "
-                             "through ~/tools/lcsc-search when it is here)")
+                             "through ~/tools/lcsc-search when it is here); "
+                             f"the build then exits {EXIT_INCOMPLETE}, INCOMPLETE")
     parser.add_argument("--template",
                         help="an .eprj2 EasyEDA Pro saved, for the .eprj2 "
                              "output (default: found in the editor's folders)")
@@ -215,29 +286,59 @@ def main(argv=None):
     design = netlist.current()
     problems = gate(design)
     if problems:
-        print(f"REFUSED: {len(problems)} problem(s); nothing was written.",
-              file=sys.stderr)
-        for p in problems:
-            print(f"  {p}", file=sys.stderr)
-        return 1
+        return refuse(f"{len(problems)} problem(s)", problems, args.out)
 
     library = None if args.no_footprints else footprint_lib.open_library()
     project, sheets = build(design, library=library)
     problems = read_back(project, design)
     if problems:
-        print(f"REFUSED: the emitted sheets do not carry the netlist -- "
-              f"{len(problems)} problem(s); nothing was written.", file=sys.stderr)
-        for p in problems:
-            print(f"  read-back: {p}", file=sys.stderr)
-        return 1
+        return refuse(f"the emitted sheets do not carry the netlist -- "
+                      f"{len(problems)} problem(s)",
+                      [f"read-back: {p}" for p in problems], args.out)
     root, zip_path = write(project, args.out)
     print(summary(project, sheets, root, zip_path))
-    print(eprj2_line(*write_eprj2(root, args.template)))
+    eprj2_path, why = write_eprj2(root, args.template)
+    print(eprj2_line(eprj2_path, why))
     # The HV clearance the PCB documents cannot carry: set it up before routing.
     rules_path = Path(args.out) / "layout-rules.txt"
     rules_path.write_text(layout_rules.text(design) + "\n", encoding="utf-8")
     print(f"  layout rules to set up in the editor before routing: {rules_path}")
-    return 0
+
+    unbound = [r for s in sheets for r in s.footprints_unbound]
+    return incomplete(unbound, eprj2_path is not None)
+
+
+def refuse(headline, problems, out):
+    """Say why nothing new was written, mark the previous build stale, and
+    return `EXIT_REFUSED`."""
+    print(f"REFUSED: {headline}; nothing was written.", file=sys.stderr)
+    for p in problems:
+        print(f"  {p}", file=sys.stderr)
+    stale = mark_stale(out)
+    if stale:
+        print(f"  the previous build in {out} is renamed {STALE_SUFFIX}, so it "
+              f"cannot be opened as current: "
+              + " ".join(p.name for p in stale), file=sys.stderr)
+    return EXIT_REFUSED
+
+
+def incomplete(unbound, eprj2_written):
+    """0 when the written project is one the editor can lay out; else
+    `EXIT_INCOMPLETE`, saying on stderr what is missing.  The summary above
+    has already named each unbound item."""
+    missing = []
+    if unbound:
+        missing.append(f"{len(unbound)} placed item(s) carry no footprint "
+                       f"(named above); the editor refuses a netlist export "
+                       f"until every one has one")
+    if not eprj2_written:
+        missing.append("no .eprj2 was written, and EasyEDA Pro 3.2.149 opens "
+                       "nothing else")
+    if not missing:
+        return 0
+    print(f"INCOMPLETE: the project is written but is not one to lay out yet "
+          f"-- {'; '.join(missing)}.", file=sys.stderr)
+    return EXIT_INCOMPLETE
 
 
 if __name__ == "__main__":
