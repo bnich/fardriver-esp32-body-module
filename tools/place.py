@@ -311,8 +311,11 @@ def envelope(records, body_mm):
     axis when the two disagree (a brick drawn upright), and centred on the
     drawn geometry; with nothing drawn it is centred on the origin.
 
-    A pad is THROUGH-HOLE when its record carries a `hole` -- plated or not,
-    something passes through the board there."""
+    A pad is THROUGH-HOLE when its record carries a `hole` WITH A SIZE --
+    plated or not, something passes through the board there. ⚠️ A `hole`
+    object of zero width is how a converted SMD land arrives (U404's SOIC-8 in
+    the owner's file: eight pads, each `{"holeType":"ROUND","width":0,
+    "height":0}`); it drills nothing and crosses nothing."""
     pts, pads = [], []
     for h, p in records:
         if h["type"] == "PAD":
@@ -323,8 +326,9 @@ def envelope(records, body_mm):
             hh = max((dp.get("height") or 0), (hole.get("height") or 0)) / 2
             cx, cy = o["centerX"], o["centerY"]
             pts += [(cx - hw, cy - hh), (cx + hw, cy + hh)]
+            drilled = ((hole.get("width") or 0) > 0) or ((hole.get("height") or 0) > 0)
             pads.append((str(o.get("num", "")), cx / MIL_PER_MM, cy / MIL_PER_MM,
-                         hw / MIL_PER_MM, hh / MIL_PER_MM, bool(hole)))
+                         hw / MIL_PER_MM, hh / MIL_PER_MM, drilled))
         elif h["type"] in ("POLY", "FILL", "LINE"):
             o = json.loads(p)
             if o.get("layerId") in OUTLINE_LAYERS:

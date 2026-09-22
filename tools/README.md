@@ -153,9 +153,12 @@ height and every **keep-out** a bottom-side part imposes on the board below it.
 
 ⚠️ **ROWS replaced the per-wall plug verdict** when the connectors were grouped by kind (IO-6). There
 is no longer a budget of "every header's plug against the nearest wall": every harness plug is on
-**one face**, so the check is **one row per face** — that face's harness headers end to end, 1 mm
-apart, against the length of the board they stand on, with a terminal under a board counted in its
-own row and not in the one above it. The room a mated plug and its wire's bend need is no longer a
+**one face**, so the check is **one strip per board edge, both faces of the board in it** — its
+harness headers end to end, 1 mm apart, against the **228 mm** between the M3 corners of the board
+they stand on. ⚠️ A harness terminal is through-hole, so one hanging under the board takes the edge
+exactly as one on top does (its pins come up inside the other's body), and an underside through-hole
+body too deep to sit behind the row — the quarter brick, 37.2 mm of 41.84 — takes its length of the
+strip too (`row_blockers`). The room a mated plug and its wire's bend need is no longer a
 budget either: it is a **term of the cavity this design requires**, which the report states on its
 second line against the cavity M18 measured. ⚠️ **That requirement is checked, not just printed:** a
 plan axis the measured box cannot hold is a **FAIL** (`board_params.cavity_problems`).

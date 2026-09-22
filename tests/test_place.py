@@ -37,9 +37,11 @@ def _is_tht(it, d):
 
     ⚠️ A MODEL of the real thing, and deliberately a conservative one: on the
     owner's saved project this predicate is right for every connector, and it
-    misses the radial cans, the disc caps, the fuse clip, the 2 x 1 in. brick
-    and `U404`, whose library footprints have holes the netlist does not
-    describe.  Fewer pins cross here than really do, so a placement the
+    misses the radial cans, the disc caps, the fuse clip and the 2 x 1 in.
+    brick, whose library footprints have holes the netlist does not describe.
+    (`U404`'s SOIC-8 carries a `hole` object of ZERO size on every pad -- a
+    converted SMD land, not a drill; `envelope()` does not count it.)  Fewer
+    pins cross here than really do, so a placement the
     fixture calls legal can still be illegal on the owner's footprints -- the
     check reads the FILE's pads (`envelope`), never this."""
     if it.kind == "CONN":
@@ -841,3 +843,22 @@ def test_cli_refuses_a_part_the_netlist_does_not_know(synthetic_project, tmp_pat
                 project.snap["name"], owner=project.snap["owner"])
     assert place.main(["--check", "--file", str(bad)]) == place.EXIT_REFUSED
     assert "R999" in capsys.readouterr().err
+
+
+def test_a_zero_size_hole_is_an_smd_pad_not_a_pin_through_the_board():
+    """`U404`'s SOIC-8 in the owner's file: eight pads, each with
+    `"hole":{"holeType":"ROUND","width":0,"height":0}` -- the converter's way
+    of writing an SMD land. Counting it as through-hole made an SOIC a THT part
+    (2026-09-22) and would forbid every part on the other face under it. A
+    hole crosses the board only if it has a size; the same pad with a 0.6 mm
+    hole does."""
+    def pad(hole):
+        return [({"type": "PAD", "id": "p"}, eprj2._compact({
+            "layerId": 1, "num": "1", "centerX": 0, "centerY": 0, "hole": hole, "plated": True,
+            "defaultPad": {"padType": "RECT", "width": 60.0, "height": 60.0}}))]
+    smd = place.envelope(pad({"holeType": "ROUND", "width": 0, "height": 0}), (2.0, 2.0))
+    assert smd.pads[0][5] is False and not smd.tht
+    none = place.envelope(pad(None), (2.0, 2.0))
+    assert none.pads[0][5] is False and not none.tht
+    drilled = place.envelope(pad({"holeType": "ROUND", "width": 23.622, "height": 23.622}), (2.0, 2.0))
+    assert drilled.pads[0][5] is True and drilled.tht
