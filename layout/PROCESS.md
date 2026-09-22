@@ -507,141 +507,312 @@ tool derived.
 
 # Part 2 — Routing
 
-Owner, 2026-09-22: *"after placement, we will need to route the traces"* and *"the routing process
-should be included in our layout process."* Placement decides whether routing is possible; routing
-decides whether the board works. The two are one process, and the placement rules in Part 1 (the
-channels, the bus line, the HV region, the ground plane) exist **for** this part.
+Owner, 2026-09-22: *"after placement, we will need to route the traces"*, *"the routing process
+should be included in our layout process"* and, after autorouting POWER, *"can't you also do the
+routing?"* Placement decides whether routing is possible; routing decides whether the board works.
+The two are one process, and the placement rules in Part 1 (the channels, the bus line, the HV
+region, the ground plane) exist **for** this part.
 
-## What a tool can do, and what it cannot — stated first
-
-A tool **can derive** every number routing needs from the netlist: which nets carry current and how
-much (`power_budget`), which need clearance (`layout_rules.hv_nets`), which are pairs, which are
-planes, which pins must be short. It **can write** those as **net classes and design rules** into
-the project so the editor enforces them while you route. And it **can check** a routed board read
-back from the save: every net connected, every rule met, every width and clearance as derived.
-
-A tool **cannot** route this board well. Autorouters exist (the editor has one) and are acceptable
-for the signal fan-out on LOGIC; they are **not** acceptable for the 8.47 A bus, the 84 V region, or
-the CAN pair. Those are routed by hand, by the owner, against rules the tool set up. **The process
-puts the derivation and the checking in the tool, and the routing in the editor.**
-
-## Step R0 — the rules go in before the first trace (`tools/place.py --rules`)
-
-Derived from the netlist, written into the project's PCB documents as net classes and rules, and
-printed as `build-eprj3/layout-rules.txt` (already exists; extended). ⛔ The editor's board-wide
-default is 0.2 mm / 0.2 mm — good for logic, fatal for power. These override it per class:
-
-| Class | Nets (derived) | Width | Clearance | Why — the number it protects |
-|---|---|---|---|---|
-| **HV** | the 14 `hv_nets(d,"POWER")` | 0.5 mm | **1.25 mm** | IPC-2221B B2 for the 160 V do-not-exceed. Already in `layout-rules.txt`; unchanged |
-| **PWR12** | `V12` and its return on OUTPUTS and POWER | **≥ 5.0 mm** on 1 oz outer copper, or a **pour** | 0.3 mm | **11.39 A** — the LIMITED case, not the 8.47 A nominal (`power_budget.limit_case`): the copper must survive every limiter at its ceiling. 5 mm / 1 oz ≈ 11 A at 20 °C rise (IPC-2152 external). A pour is better; the placement's bus line exists so a pour works |
-| **PWR5AUX** | `V5AUX` and its switches' inputs | **2.0 mm** | 0.3 mm | 4 × 1.39 A = 5.6 A at the limiters |
-| **CH12** | each `AUX12V_n`, each lamp `OUTx` | **1.0 mm** | 0.25 mm | 1.55 A per channel at its limiter (`R359` = 1k5) |
-| **CH5** | each `AUX5V_n` | **0.8 mm** | 0.25 mm | 1.39 A |
-| **RAIL** | `V5`, `V3P3` on every board | 0.6 mm | 0.25 mm | the logic supplies; < 1 A but many pins — width is for droop, not heat |
-| **DIFF** | `CANH`/`CANL` | 0.25 mm, **paired**, 0.25 mm gap | 0.4 mm to everything else | a differential pair on a 4-layer board; 120 Ω is not achievable in 0.25 mm over 0.2 mm prepreg — **the run is electrically short (< 150 mm) so impedance is not the constraint; pairing and skew are** (audit A10 / parts doc §2) |
-| **SENSE** | `KEY_SENSE_PIN`, `V12_SENSE`, `CS1`, `CS2` (the four ADC nets), `BL_SENSE` | 0.25 mm | 0.3 mm, **not adjacent to any CH12 or PWR** | an ADC input beside an 11 A pour reads the pour, not the sense |
-| **default** | everything else | 0.2 mm | 0.2 mm | signals; the editor's default is right for these |
-
-⚠️ **Widths are for 1 oz outer copper on a 4-layer board, inner layers reserved for planes.** If
-the fab's stackup differs, `--rules` takes `--copper-oz` and re-derives. The tool writes the class
-membership from the netlist every run, so a renamed or added net is never in the wrong class.
-
-## Step R1 — planes, before any trace (owner asked 2026-09-22: "we have 4 layers, should we fill one ground and/or power?" — yes, and a different one per board)
-
-Decided from the pin counts, not the textbook. **Layer 2 is GND on every board** (ground-domain pins, counted from the
-netlist after IO-26 moved three rows between boards: 139 on LOGIC, 100 on CTRL, 92 on OUTPUTS,
-30 on POWER — never traces; a solid plane under the top-layer parts gives
-every signal its return and every decoupler a short loop). **Layer 3 differs by what each board
-carries:**
-
-| Board | Layer 3 | Because |
-|---|---|---|
-| **OUTPUTS** | **`V12` pour** under the driver line | 25 pins at **11.39 A** at the limiters. The pour IS the bus: `J311`'s two power contacts onto it by vias-in-pad or a ≥ 5 mm neck; each `TPS4H160B`'s `VS` pins down to it by **four** vias, not two — the pour is also the drivers' heat spreader, and a via is a thermal path only if there are enough |
-| **LOGIC** | **`V3P3` pour** | 57 pins — the S3, three expanders' worth of pull-ups, every filter: a pour for **droop**, not current |
-| **CTRL** | **second GND** — no power pour | the controller row is signals and the 5 V block's currents are small (4 × 1.39 A on short runs from `U305` to `J314`, which `PWR5AUX`'s 2.0 mm traces carry); what CTRL has a lot of is **returns** — five harness terminals, the `CTRL-STACK` pair's ground beside every signal — so the second plane is worth more as GND than as a rail. ⚠️ **No pack voltage reaches CTRL**, so neither plane is cut back |
-| **POWER** | **second GND** — no power pour (6 `V12` pins earn none) — **and BOTH inner planes cut back 3 mm from the HV region** | the 14 HV nets sit at up to 160 V; a plane under them is 84 V-to-GND across one 0.2 mm prepreg, which is what the 1.25 mm rule forbids. The 84 V section returns on `HV_C1_N` / `HV_C2_N` — **not GND** |
-
-**Layers 1 and 4 (outer): traces and the parts.** The bottom layer carries the seven bottom parts'
-pads and the face rows' returns.
-
-⛔ **What the planes demand of placement** (and why Part 1 checks it): no long THT connector across
-the short axis — `J308`/`J406` at 73.66 mm would split every inner plane, so they run along X at an
-edge; `J311` under the driver line, or the `V12` pour is fed through a bottleneck; the HV region one
-contiguous blob, or the plane cut-back has holes in it.
-
-`tools/place.py --rules` writes the two pour outlines per board (the `V12` pour's rectangle over the
-driver line; the HV cut-back polygon on POWER) as copper regions into the project, so the owner
-fills them rather than draws them.
-
-## Step R2 — route by class, in this order (owner, by hand, in the editor)
-
-Power first, because it needs the room; signals last, because they can go around anything.
-
-1. **HV region on POWER** (class HV). `J101` → `Q101` → `L101` → `C201` → `U201.+Vin`, and the Cincon
-   branch. Short, wide, on one layer, inside the region the placement drew. ✔ **Before leaving it:
-   run the editor's DRC with the HV rule on** — the one check the tool cannot do until you save.
-2. **The 12 V bus on OUTPUTS** (PWR12). Pour on layer 3 under the driver line; `J311`'s two power
-   contacts onto it with the widest neck the pad allows — they come up **inside** the line, in the
-   slot the placement left for them (3a). Then each driver's `VS` pins down to the pour with two
-   vias each. **Then the return**: `J311`'s GND contact to the layer-2 plane the same way. This is
-   the 8.47 A path — nothing else on the board matters if this is thin.
-3. **The 5 V aux supply on CTRL** (PWR5AUX): `V12` reaches the buck by `PWR-LOGIC` and then
-   `CTRL-STACK`, two contacts on each, so route those two pairs' `V12` and `GND` pins together on
-   OUTPUTS, LOGIC and CTRL before anything else on those boards. Then `U305`'s input, its inductor
-   `L301` and output caps in a tight loop (the switching node `V5AUX_SW` is the noisiest thing on
-   CTRL — shortest trace, no via, no signal within 3 mm), then `V5AUX` to the four switches.
-4. **Each output channel** (CH12 / CH5): driver `OUTx` → clamp diode → terminal, in that order and
-   that geometry — the TVS sits *between* driver and terminal so a surge meets the clamp first.
-5. **The face rows' returns**: every terminal's GND to the plane by its own via, beside the pad.
-6. **The differential pair** (DIFF): `U404` → `J411` on LOGIC, and on to `J501` on CTRL. Paired,
-   same layer, no via if it can be avoided, one via each if not — together.
-7. **Sense lines** (SENSE): `KEY_SENSE_PIN`, `V12_SENSE`, `CS1`, `CS2` from their dividers to the S3 or
-   the `CS` pins, routed *away* from every CH12 and PWR trace; on the layer opposite the pour.
-8. **Everything else** — the autorouter is acceptable here, **after** 1–7 are done and locked.
-   Lock every trace of classes HV, PWR12, PWR5AUX and DIFF first, or the autorouter moves them.
-
-## Step R3 — the routed board is checked, not admired (`tools/place.py --check-routing`)
-
-Read back from the saved `.eprj2`, every one of these, and the tool says which failed:
-
-- **Every net connected** — the editor's own unrouted count, read from the file, is 0.
-- **Every class rule met** — width ≥ the class minimum on every segment; clearance ≥ the class
-  minimum to every other net. (The editor's DRC does this too; the tool does it from the netlist's
-  own derivation so a class the owner forgot to set up is still caught.)
-- **The HV/GND separation**: no GND copper on any layer inside the HV region's outline + 1.25 mm.
-- **The pour exists**: `V12` on layer 3 covers ≥ 80 % of the bounding box of the parts on it.
-- **Every decoupling cap's loop**: cap pad → IC power pin ≤ 3 mm of trace, cap GND pad → a via ≤ 2 mm.
-- **The CAN pair**: `CANH` and `CANL` segment lengths within 5 % of each other, never more than
-  0.5 mm apart along the run.
-- **No via inside the Tag-Connect keep-out**, and none inside the four M3 annuli.
-- **Sense nets**: no `SENSE` segment within 1.0 mm of a `PWR12` or `CH12` segment on the same layer.
-
-## Step R4 — export, prove, DRC
-
-After routing, the same proof as always, plus the editor's: **export each board's netlist →
-`tel_check` identical** (routing must not have changed connectivity — an accidental short or a
-dragged pad shows up here) **→ editor DRC clean with every class rule on → `--check-routing` clean.**
-Three independent checks; a board is routed when all three agree.
+The answer to the third question is: **the rule-driven copper, yes.** An 8.47 A bus, a 1.25 mm
+pack-voltage chain and a 1.55 A channel each have one shape, and a tool can derive it, write it and
+check it. The ~250 signal nets are the editor's autorouter's job — **once the rules and the planes
+exist**, which is what the autoroute of 2026-09-22 did not have.
 
 ## The loop, complete
 
 ```
-tools/place.py --stack            # placement (Part 1) → the .eprj2
-tools/place.py --rules            # net classes + design rules INTO the project, layout-rules.txt out
-owner: planes, then route by class R2.1 → R2.8, save often
-tools/place.py --check            # placement still legal after the owner moved things
-tools/place.py --check-routing    # R3
-owner: export ×3 → tel_check ×3 → editor DRC
+tools/place.py  --stack                  # placement (Part 1) → the .eprj2
+tools/route.py  --rules                  # R0: the classes into every PCB document
+tools/route.py  --pours                  # R1: the planes, cut back at POWER's partition
+tools/route.py  --heavy                  # R2: the copper whose shape the rules decide
+tools/route.py  --draw pics/             # ✔ LOOK AT IT
+owner: in the editor — check the pours fill, lock R2's copper, autoroute the rest, save
+tools/place.py  --check                  # placement still legal after the owner moved things
+tools/route.py  --check-routing          # R3 — this is the gate
+owner: export ×4 → tel_check ×4 → editor DRC with the class rules on
 ```
-`--check` and `--check-routing` never write; run them after every save. `--stack --keep …` re-flows
-placement around what the owner fixed; there is deliberately **no** `--route` — the tool derives and
-checks routing, the owner does it.
+
+`--check-routing` and `--check` never write; run them after every save. Everything that writes
+**refuses while EasyEDA Pro is open**, keeps the previous file as `.eprj2.prev`, and re-reads the
+result record for record before it says "written". There is deliberately **no `--route`**: the tool
+derives, writes what the rules determine, and checks; the threading is the editor's and the
+judgement is the owner's.
+
+## What the tool does, and what it does not
+
+It **derives** every number routing needs from the netlist — which nets carry current and how much
+(`power_budget`), which sit at pack voltage (`layout_rules.hv_nets`), which are a pair, which are a
+plane. It **writes** those as net classes and design rules into the project, as copper regions, and
+as the runs whose width and path the rules decide. It **checks** a saved file against the same
+derivation, so a class the owner forgot to set up is still caught.
+
+It does **not** thread signals, judge aesthetics, or place a via. ⛔ And it never routes **round**
+an obstacle: a run it cannot draw straight is **refused by name**, because a bus that wanders is a
+bus whose length nobody derived.
+
+## Step R0 — the rules go in before the first trace (`tools/route.py --rules`)
+
+⛔ The editor's board-wide default is **0.2 mm / 0.2 mm** — good for logic, fatal for power, and it
+is what the JLCPCB capability template gives every net. These override it per class. **Membership
+is derived from the copper on every run**, never from a net's name, so a renamed or added net is
+never in the wrong class.
+
+| Class | Nets — where they come from | Width | Clearance | Why — the number it protects |
+|---|---|---|---|---|
+| **HV** | `layout_rules.hv_nets(d, board)` — 14 on POWER | 0.5 mm | **1.25 mm** | IPC-2221B B2 for the 160 V do-not-exceed. The clearance is `layout_rules.HV_CLEARANCE_MM` itself, the same figure check 7 uses as a placement proxy — not a second copy. The width is a FLOOR, not a current: the HV nets carry 1.93 A at the 60 V LVC, which 0.5 mm takes easily |
+| **PWR12** | `place.power_classes()["PWR12"]` — the net `U201`'s `+V` is on — **and only on a board that carries the bus** | **≥ 5.0 mm**, or a **pour** | 0.3 mm | **11.39 A**, the LIMITED case (`power_budget.limit_case`), not the 8.47 A nominal: the copper survives every limiter at its ceiling at once. IPC-2152, external 1 oz, 20 °C rise |
+| **PWR5AUX** | the buck's `SW` net and its inductor's | 2.0 mm | 0.3 mm | 4 × 1.39 A = 5.6 A at the four `TPS2553` limiters |
+| **CH12** | a net on a `TPS4H160B` `OUTx` | 1.0 mm | 0.25 mm | 1.55 A per channel at its limiter (`R359` = 1k5) |
+| **CH5** | a net on a `TPS2553` `OUT` | 0.8 mm | 0.25 mm | 1.39 A |
+| **DIFF** | the nets on a transceiver's own `CANH`/`CANL` **pins** | 0.25 mm | 0.4 mm | the run is electrically short (< 150 mm), so pairing and skew are the constraint and 120 Ω is not |
+| **SENSE** | a `TPS4H160B` `CS` net, or an S3 ADC1 net a capacitor filters | 0.25 mm | 0.3 mm | an ADC input beside an 11 A pour reads the pour. R3 adds the rule that bites: never within **1.0 mm** of a PWR or CH12 segment on its own layer |
+| **RAIL** | `V5`, `V3P3` — and `V12` where it is only passing through | 0.6 mm | 0.25 mm | the logic supplies: width for **droop**, not for heat |
+| **default** | everything else | 0.2 mm | 0.2 mm | signals; the JLC template is right for these |
+
+⚠️ **Strongest first, and the order is load-bearing.** `HV_C1_P` and `HV_C2_HOLD` are in
+`rules.rails(d)` as well as in the HV set; reached by the RAIL row first they would be routed at
+0.6 mm and 0.25 mm of clearance **at pack voltage**.
+
+⚠️ **`V12` reaches all four boards; the 11.39 A does not.** `route.carries_bus` derives R0's "on
+OUTPUTS and POWER" rather than typing it: a board is on the bus if it MAKES it (a converter whose
+`+V` is the PWR12 net) or LOADS it (`route.v12_line` — an IC with a PWR12 pin and a CH12 pin,
+which is `U301 U302 U303` and nothing else). On LOGIC `V12` crosses two sockets and on CTRL it
+feeds one buck — about 0.7 A between them — so both get RAIL. Calling them PWR12 asks for a 5 mm
+trace between two back-edge sockets, which does not fit across a 41.84 mm board.
+
+⚠️ **Widths are for 1 oz outer copper on a 4-layer board with both inner layers spoken for.**
+
+### The record the editor reads — established, not guessed
+
+⭐ A **net-class rule is a named `RULE` per category plus one `RULE_SELECTOR` per member net.**
+Proven against a file this editor wrote: `~/Documents/EasyEDA-Pro/example-projects/Example_3D Shell
+Design.eprj2`, which 3.2.149 converted from `.eprj` itself, carries `["RULE","TRACK","电源"]` (a
+20 mil power track, `ruleState` `NORMAL` beside the category's `DEFAULT` one) bound to net `+5V` by
+`["RULE_SELECTOR",["NET","+5V"]]` with `ruleKeyValue {"TRACK":"电源"}`. POWER's own saved document
+already carries the same shape — `["RULE_SELECTOR",["NET","GND"]]` with `{"COPPER":"copperRegion"}`
+— written when the owner made the pours. `ruleOrder` 4 is the NET / NET_CLASS scope; the
+`ruleKeyValue` keys are the editor's rule categories by name (`SAFE`, `TRACK`, `COPPER`, `PLANE`,
+`RADIUS`, …).
+
+⛔ **There is no persisted net-class record.** A "class" in the saved file *is* that set of per-net
+selectors pointing at one named rule, which is why `--rules` writes one selector per member net and
+merges into a selector the owner already set rather than replacing it.
+
+⚠️ **`isForAll` is the LAYER set, not the net set** (`"ALL"` vs `"LAYERED"`). The one rule POWER
+carried said `isForAll: "ALL"` and applied to every net only because **no selector named any other
+rule** — R0 had never been done.
+
+Each class SAFE rule is built from the document's own `DEFAULT` one, with every cell of the
+clearance matrix **raised** to the class figure and none lowered: the matrix's rows are
+element-type pairs, and raising all of them is the conservative reading of "this net keeps 1.25 mm
+from everything". The JLCPCB capability template and its ALL-nets rules are left exactly as they
+are — they stay the default for the ~250 signal nets, which is what they are right for.
+
+`--rules --rules-doc PATH` also writes the whole table as text, for the day a rule has to be
+entered by hand: **PCB → Design Rules** for each row, then **Design → Net Class** with the nets
+listed.
+
+## Step R1 — planes, before any trace (`tools/route.py --pours`)
+
+Owner, 2026-09-22: *"we have 4 layers, should we fill one ground and/or power?"* — yes, and a
+different one per board. Decided from the pin counts, not the textbook.
+
+⚠️ **This document counts layers by the STACKUP; the file numbers them differently.** Physical 1 ·
+2 · 3 · 4 is `layerId` **1 · 15 · 16 · 2** (`LAYER_PHYS` zIndex order: Top, Inner1, Inner2,
+Bottom). `route.STACK_LAYER` is the one place the two meet. ⛔ Never write "layer 2" into a record
+meaning the second layer of the stack — `layerId` 2 is the BOTTOM.
+
+**Layer 2 is GND on every board**: 139 ground-domain pins on LOGIC, 100 on CTRL, 92 on OUTPUTS, 30
+on POWER, never traces. A solid plane under the top-layer parts gives every signal its return and
+every decoupler a short loop. **Layer 3 differs by what each board carries:**
+
+| Board | Layer 3 | Because |
+|---|---|---|
+| **OUTPUTS** | **`V12` pour** over the driver line | 25 pins at **11.39 A** at the limiters. The pour IS the bus, and its extent is the amended check 11's: the u-span of the drivers' own bus pads and the feed's contacts, in the v-strip of the driver nearest the feed. `J311`'s two power contacts come onto it inside the line (3a); each `TPS4H160B`'s `VS` pins go down to it by **four** vias, not two — the pour is also the drivers' heat spreader, and a via is a thermal path only if there are enough |
+| **LOGIC** | **`V3P3` pour** | 57 pins — the S3, three expanders' worth of pull-ups, every filter: a pour for **droop**, not current. The threshold is derived (`route.RAIL_POUR_PINS`): the next-best rail on any board is CTRL's `V5AUX` at 13 pins, and that is a CURRENT problem, which `PWR5AUX`'s 2.0 mm traces answer |
+| **CTRL** | **second GND** | the controller row is signals and the 5 V block's currents are small and short. What CTRL has a lot of is **returns**. ⚠️ No pack voltage reaches CTRL, so neither plane is cut back |
+| **POWER** | **second GND** — and **BOTH inner planes cut back at the partition** | the 14 HV nets sit at up to 160 V; a plane under them is 84 V to GND across one 0.2 mm prepreg, which is exactly what the 1.25 mm rule forbids. The 84 V section returns on `HV_C1_N` / `HV_C2_N` — **not GND** |
+
+**The cut-back is derived, not typed.** `place.hv_partition` gives (the 84 V end, its far edge
+`far`, the line `far + HV_STRIP`); `--pours` starts POWER's planes **at the line**, so there is
+`HV_STRIP` (3 mm) of clear board between the 84 V parts and any plane. On the placement of
+2026-09-22 that is u 167.7 mm of 242: the planes hold the low-voltage end and stop dead.
+
+**Layers 1 and 4 (outer): traces and the parts.** The bottom layer carries the six bottom parts'
+pads and the face rows' returns.
+
+⭐ **A `POUR` needs no `POURED`.** The same example project carries POUR records with no POURED
+beside them — the editor regenerates the filled result — so `--pours` writes the outline only. A
+POURED written here would be this tool's idea of a fill standing in for the editor's, which is
+worse than none. ⭐ **A copper keep-out, if one is ever needed, is a `REGION`** with
+`regionType: "PROHIBIT"` and `prohibitType: ["COPPER"]`, layer-scoped, rectangle or polygon — the
+same example carries four. R1 needs none: a cut-back plane is a smaller rectangle.
+
+⛔ **What the planes demand of placement** (and why Part 1 checks it): no long through-hole
+connector across the short axis — `J308`/`J406` at 73.66 mm would split every inner plane, so they
+run along the board at an edge (check 12); `J311` inside the driver line, or the `V12` pour is fed
+through a bottleneck (check 11); the HV region one contiguous blob, or the cut-back has holes in it
+(checks 13 and 18).
+
+## Step R2 — the copper whose shape the rules decide (`tools/route.py --heavy`), then the rest by hand
+
+Power first, because it needs the room; signals last, because they can go around anything. **The
+tool writes 1–4 where the placement leaves a straight run; the owner draws what it refused and then
+locks all of it.**
+
+1. **The 84 V chain on POWER** (HV). `J101.B+ → FH201 → Q101 → HV_SW → L101`/`L102` → `C201`/`C202`
+   → `U201`/`U202` `+Vin`, and the negative twin on `HV_C1_N` / `HV_C2_N`. 0.5 mm minimum at
+   1.25 mm, inside the region the placement drew, on one layer. ✔ **Before leaving it, run the
+   editor's DRC with the HV rule on.**
+2. **The 12 V bus on POWER** (PWR12). `U201.+V`/`+S` → `C207.+` → `J202.V12` and its **ground
+   twin**, ≥ 5 mm. ⚠️ **A trace, not a pour**: R1 cuts both inner planes off at the partition and
+   the brick's output pins stand *at* it, so the return cannot come back on copper that is not
+   there. This is the 23.65 mm run check 19 exists to keep short. ⚠️ The twin is `GND` and not
+   every net in the ground domain — `BASEPLATE` is on `U201` too and is not a return.
+3. **The 12 V bus on OUTPUTS** (PWR12). The **pour** R1 wrote is the bus; `J311`'s two power
+   contacts go onto it with the widest neck the pad allows, each driver's `VS` down with two vias,
+   then `J311`'s GND contact to the layer-2 plane the same way. Nothing else on the board matters
+   if this is thin.
+4. **The channels** (CH12 / CH5) and **the 5 V aux supply** (PWR5AUX): driver `OUTx` → clamp diode
+   → terminal, in that order and that geometry, so a surge meets the clamp first. On CTRL, `V12`
+   reaches the buck through `PWR-LOGIC` and `CTRL-STACK` (two contacts on each — route those pairs'
+   `V12` and `GND` together on OUTPUTS, LOGIC and CTRL first), then `U305`'s input, `L301` and the
+   output caps in a tight loop — `V5AUX_SW` is the noisiest thing on CTRL: shortest trace, no via,
+   no signal within 3 mm — then `V5AUX` to the four switches.
+5. **The face rows' returns**: every terminal's GND to the plane by its own via, beside the pad.
+6. **The differential pair** (DIFF): `U404` → `J411` on LOGIC and on to `J501` on CTRL. Paired,
+   same layer, no via if it can be avoided, one via each if not — together.
+7. **Sense lines** (SENSE): from their dividers to the S3 or the `CS` pins, routed *away* from
+   every CH12 and PWR trace, on the layer opposite the pour.
+8. **Everything else** — the autorouter is acceptable here, **after 1–7 are done and locked.** Lock
+   every trace of HV, PWR12, PWR5AUX and DIFF first, or the autorouter moves them.
+
+### How `--heavy` draws a run, and when it refuses
+
+A net's pins are joined by a spanning tree grown in the **Manhattan** metric the runs are drawn in,
+and each leg is a straight run where the two pins line up, else a single-corner L. ⭐ **The tree is
+built out of legs that EXIST**: every leg to the tree is offered in turn, shortest first, and only
+a pin that no legal leg reaches is refused. A plain minimum spanning tree hung `J202` off the
+nearest chip cap because that leg was 2 mm shorter, the 5 mm run hit `C211`, and the chain check 19
+measures went unrouted while the stubs between the chip caps got drawn.
+
+A run **necks** into the pad it lands on — a 5 mm bus cannot land on `J202`'s 3.96 mm pitch
+otherwise, and a 2.0 mm `V5AUX` run cannot leave a 1.5 mm chip pad. The neck is at most
+`route.NECK_MM` (3 mm) long: 3 mm of a 1.5 mm neck in 1 oz copper is 0.985 mΩ, so the limited
+11.39 A drops 11.2 mV across it, and two necks spend under half the bus's whole 50 mV budget.
+⛔ **There is no taper exemption in the obstacle test.** A `LINE` record has one width, so a leg
+"drawn" with the neck excused would be a full-width rectangle lying across the pad next door — a
+short in the saved file, and copper the tool's own check would then refuse.
+
+A refusal names the pair and what stopped it, and the owner necks it by hand or moves the part with
+`--stack --keep`. **On the placement of 2026-09-22** the tool wrote 21 runs on POWER (the 12 V bus,
+its twin, and ten legs of the 84 V chain), 14 on OUTPUTS, 16 on CTRL and none on LOGIC, and refused
+23 · 32 · 14 · 0. Two things the refusals say, and both are findings rather than noise:
+
+- ⚠️ **The HV class's 1.25 mm cannot be met between the 84 V gate network's own parts.** Fourteen
+  of POWER's refusals are one 84 V net's run passing within 1.25 mm of another 84 V net's pad —
+  `D13_GATE` beside `HV_SW`, `D13_PD_MID` beside `HV_BPLUS` — on 0603s whose pads are 0.6 mm apart.
+  Check 7 only holds pack-voltage copper 1.25 mm from **low-voltage** parts, and IPC-2221B asks for
+  clearance by the voltage *between* two conductors, which for a gate node and its source is about
+  13 V and not 160. ⬜ **Open, and the owner's call:** either a second rule for pairs inside the
+  84 V group, or those parts move.
+- **Most of OUTPUTS' 32 refusals are the pre-clustering placement**, where a channel runs 121 mm
+  and its straight line crosses three other parts. They should thin out once check 20's clustering
+  placement is in the file; re-run and see.
+
+## Step R3 — the routed board is checked, not admired (`tools/route.py --check-routing`)
+
+Read back from the saved `.eprj2`, on any board, derived from the netlist rather than from the
+rules in the file — **so a class the owner forgot to set up is still caught.** It reports the worst
+offender per class with the count beside it, and exits 1.
+
+- **Width** — every segment at least its class's minimum. Two exemptions, both from R0 itself: a
+  class whose copper may be a POUR is exempt where the pour is, and a **neck** is exempt. ⚠️ A neck
+  is two conditions together — at most `NECK_MM` long **and** one end on a pad of its own net. Drop
+  the second and a whole thin bus reads as a chain of necks.
+- **Clearance** — edge to edge, the **stronger** of the two nets' class figures: segment to
+  segment, segment to pad, and a via to anything. A via's barrel crosses every layer, so it is the
+  one object compared against copper on all of them. ⛔ Pad to pad is not checked: two pads of a
+  land pattern sit where the manufacturer put them, and the editor's own `OTHER.deviceClearance` is
+  0 for the same reason. ⚠️ A pad is measured by its **copper** — `defaultPad`, with an equal-axis
+  `ELLIPSE` treated as a circle — and not by the courtyard box `place.Envelope` carries.
+- **R1, HV over a plane** — no pack-voltage segment on a layer whose GND pour reaches the 84 V end,
+  and **no pack-voltage via at all** while such a plane exists.
+- **R1, pour extent** — no pour past the partition on the board that carries pack voltage.
+- **The 12 V bus** — carried by a pour, or by ≥ 5 mm of copper, on every board the bus is on.
+- **SENSE beside power** — no SENSE segment within 1.0 mm of a PWR or CH12 segment on its layer.
+
+It is a DRC, not a completion report: a placed, unrouted board has nothing to fail, and the
+unrouted count is the editor's own business. Every rule is proven to fire on a mutation of the
+route the tool itself wrote (`tests/test_route.py`) — ⛔ **a check is not a check until a test
+shows it firing on the defect it names.**
+
+### What the owner's autoroute of 2026-09-22 scored — the example of what the check refuses
+
+The owner autorouted POWER in the editor and saved. `--check-routing` on that file reports **12
+problems**, and they are what R0 and R1 exist to prevent:
+
+```
+POWER: class HV width -- D13_EN_MID is 0.254 mm over 5.4 mm on layer 1 at u 41.9, v 28.0,
+  and is not a neck at a pad; the class needs 0.50 mm
+POWER: class PWR12 width -- V12 is 0.254 mm over 8.2 mm on layer 1 at u 217.4, v 14.8,
+  and is not a neck at a pad; the class needs 5.00 mm
+POWER: class RAIL width -- V5 is 0.254 mm over 9.7 mm ...; the class needs 0.60 mm
+POWER: class HV clearance -- 201 pair(s) short of 1.25 mm; the worst is D13_EN segment to
+  R112A.2 (D13_EN_MID) at 0.158 mm on layer 1 (short by 1.092)
+POWER: class PWR12 clearance -- 4 pair(s) short of 0.30 mm; the worst is GND segment to
+  C207.+ (V12) at 0.150 mm
+POWER: class RAIL clearance -- 3 pair(s) short of 0.25 mm ...
+POWER: class default clearance -- 4 pair(s) short of 0.20 mm; the worst is KEY_SENSE segment
+  to U202.-Vout (GND) at 0.000 mm
+POWER: R1 -- 30 pack-voltage segment(s) on layer(s) 15, 16, which carry a GND pour reaching
+  the 84 V end (u < 164.7 mm); first is HV_C2_HOLD_IN at u 11.9
+POWER: R1 -- 7 pack-voltage via(s) through the GND pour on layer(s) 15, 16
+POWER: R1 pour extent -- GND pour POUR1 on layer 15 reaches u -1.7 mm, past the partition
+  at 164.7 mm; --pours writes it at 167.7
+POWER: R1 pour extent -- GND pour POUR2 on layer 16 reaches u -2.0 mm ...
+POWER: V12 is carried by neither a pour nor 5.0 mm of copper -- the thinnest of 9 segment(s)
+  that is not a neck at a pad is 0.254 mm
+```
+
+**Every one of its 271 segments is 0.254 mm** — a 10 mil trace, the editor's default — including
+`V12` at 8.47 A, and all fourteen 84 V nets. Two GND pours covered the **whole** board on both
+inner layers, 84 V end included, with 30 pack-voltage segments inside them and 7 pack-voltage vias
+through them at 0.2 mm. ⭐ **The cause was not the autorouter.** The PCB's RULE records held one
+0.2 mm / 0.2 mm rule and no selector named any other: **R0 had never been done**, because the
+`--rules` option was planned and not built. The autorouter obeyed the only rule it was given.
+
+⛔ **So a route is redone, not patched:** `--strip-routing BOARD` takes that board's LINE, VIA,
+POUR and POURED records off — proven lossless on everything else — and the loop starts again at
+`--rules`.
+
+## Step R4 — export, prove, DRC
+
+After routing, the same proof as always, plus the editor's: **export each of the four boards'
+netlists → `tel_check` identical** (routing must not have changed connectivity — an accidental
+short or a dragged pad shows up here) **→ editor DRC clean with every class rule on →
+`--check-routing` clean.** Three independent checks; a board is routed when all three agree.
 
 ## What routing may send back to placement
 
-Routing finds what placement could not: a channel that is too narrow for the bus neck, a TVS that
-ended up on the far side of its terminal, a decoupler whose IC is across a plane split. **Each is a
-`--keep` and a re-place, not a hand-fix that the next `--stack` would undo.** When it is a *rule*
-that was wrong (a channel width, a band boundary), fix the constant in `place.py` — every number
-there states what it protects, so the fix names what it learned.
+Routing finds what placement could not: a channel too narrow for the bus neck, a TVS on the far
+side of its terminal, a decoupler whose IC is across a plane split, a straight run with a part in
+it. **Each is a `--keep` and a re-place, not a hand-fix that the next `--stack` would undo.** When
+it is a *rule* that was wrong, fix the constant — every number in `place.py` and `route.py` states
+what it protects, so the fix names what it learned.
+
+## Files
+
+- `tools/route.py` — the tool. A **sibling** of `place.py`, not more of it: every fact about the
+  design, the file and the board frame is read through `place`, and what lives here is the copper.
+  Stdlib only (plus what `eprj2` needs to decrypt the file, and Pillow for `--draw`).
+- `tests/test_route.py` — every rule of the check proven to fire on a mutation of the route the
+  tool wrote, the tool proven to write nothing its own check refuses, and the writer proven to
+  re-read record for record. The project under test is the **synthetic** one `test_place.py`
+  builds plus the design rules the **build** writes (`eprj3.pcb.DesignRules`), so no file of the
+  owner's is committed; `REVV1_PLACE_PROJECT=/path/to/saved.eprj2 pytest tests/test_route.py` runs
+  the same tests on a real save.
+- ✔ **`--draw DIR` writes one PNG per board of the COPPER** — pours as washes with their edges
+  drawn, every trace at its real width in its layer's colour, every via as a ring, the bodies as
+  thin grey boxes for context, and a line at the partition on the board that has one. The numbers
+  say a pour stops at 167.7 mm; the picture says whether that is the end you meant.

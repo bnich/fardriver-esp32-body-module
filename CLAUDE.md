@@ -48,9 +48,11 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   `tests/fixtures/lcsc.json` — what LCSC says each ordered code is (part number, maker, package,
   symbol pins, footprint title). The tests hold the design to it offline and hold it to the live
   library where reachable, so a code pointing at the wrong part, or a stale fixture, fails.
-- **The build writes `build-eprj3/layout-rules.txt`:** the HV net class (1.25 mm, IPC-2221B B2) over
-  POWER's pack-voltage nets. The generated PCBs carry only the board-wide 0.2 mm, so the
-  owner sets the class up in the editor before routing. Never try to emit it into the project.
+- **The generated PCBs carry only the board-wide 0.2 mm** (JLC's capability template), and
+  `build-eprj3/layout-rules.txt` states the HV net class (1.25 mm, IPC-2221B B2) over POWER's
+  pack-voltage nets. ⭐ **`tools/route.py --rules` now writes every class INTO the project** — a
+  named `RULE` per category plus one `RULE_SELECTOR` per member net, the form the editor's own
+  `Example_3D Shell Design.eprj2` carries. 📄 `layout/PROCESS.md` Part 2 R0.
 - After the owner exports a board's netlist from EasyEDA (to `~/Downloads`), prove it:
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only

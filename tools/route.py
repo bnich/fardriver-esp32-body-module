@@ -1135,34 +1135,14 @@ def _rail_pour_net(ix, board):
 
 def v12_pour_box(pl, ix, board):
     """The layer-3 `V12` pour of `board` (R1), or None where the board has no
-    12 V bus to pour.  ⚠️ `place.v12_pour` is the canonical definition -- it is
-    what the amended check 11 measures -- and this defers to it whenever the
-    placement engine carries it.  The fallback computes the same rectangle from
-    `place.v12_bus`: the u-extent over the drivers' and the feed's own
-    `PWR12` pads, and the v-extent of the driver nearest the feed, which is the
-    strip the line stands in."""
-    canonical = getattr(place, "v12_pour", None)
-    if canonical is not None:
-        got = canonical(pl, ix, board)
-        return None if got is None else got[0]
-    names, feed_ref = place.v12_bus(ix, board)
-    items = pl.placed(board)
-    drivers = [items[r] for r in names if r in items]
-    feed = items.get(feed_ref)
-    if not drivers or feed is None:
-        return None
-    frame, pwr12 = pl.frame(board), ix.classes["PWR12"]
+    12 V bus to pour.
 
-    def bus_pads(p):
-        return [(u, v) for num, u, v in p.pads(frame)
-                if ix.items[p.refdes].pin_net.get(num) in pwr12]
-    feed_pads = bus_pads(feed)
-    if not feed_pads or not all(bus_pads(p) for p in drivers):
-        return None
-    fu = sum(u for u, _ in feed_pads) / len(feed_pads)
-    ref = min(drivers, key=lambda p: (abs(p.box.cu - fu), place._ref_key(p.refdes)))
-    us = [u for p in drivers for u, _ in bus_pads(p)] + [u for u, _ in feed_pads]
-    return place.Box(min(us), ref.box.v0, max(us), ref.box.v1)
+    ⛔ ONE FACT, ONE HOME: the rectangle is `place.v12_pour`'s, because that is
+    what the amended check 11 MEASURES.  A pour written from a second
+    derivation would let the placement check pass on a span the pour does not
+    have."""
+    got = place.v12_pour(pl, ix, board)
+    return None if got is None else got[0]
 
 
 def _pour_record(frame, net, layer, box, name, order):

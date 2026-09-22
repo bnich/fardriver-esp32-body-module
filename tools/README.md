@@ -78,6 +78,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
 | `place.py` | Places the four boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
+| `route.py` | Part 2 of `layout/PROCESS.md`, a sibling of `place.py` that reads the design through it and owns the copper: `--rules` writes the net classes and design rules into every PCB document, `--pours` the planes (GND on layer 2 everywhere, cut back at POWER's partition), `--heavy` the runs whose width and path the rules decide — refusing by name rather than routing round an obstacle — `--check-routing` the DRC by those classes (never writes, exits 1), `--strip-routing` takes a bad autoroute off, `--draw` draws the copper |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived

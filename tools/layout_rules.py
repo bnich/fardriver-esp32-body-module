@@ -2,13 +2,12 @@
 
     python3 -m tools.layout_rules          # print them; build_project writes them too
 
-The PCB documents carry one board-wide clearance (0.2 mm, JLC's capability),
-because the editor-saved record form of a net class and its rule is not known
-from any file here -- and a guessed record can corrupt the project. Copper at
-pack voltage needs more, so the class is derived here and the owner creates it
-in the editor before routing: PCB -> Design -> Net Class, a class named HV with
-the nets below; Design Rules -> Safe Spacing, a rule at HV_CLEARANCE_MM,
-applied to that class.
+A generated PCB document carries one board-wide clearance (0.2 mm, JLC's
+capability). Copper at pack voltage needs more, so the class is derived here.
+`tools/route.py --rules` writes it into the project (PROCESS.md Part 2 R0), and
+this text is what the owner enters by hand instead: PCB -> Design -> Net Class,
+a class named HV with the nets below; Design Rules -> Safe Spacing, a rule at
+HV_CLEARANCE_MM, applied to that class.
 
 The same holds for a drawn land's keep-out (the Tag-Connect pads): the maker's
 drawing asks for an area no track or via crosses, which the owner draws as a
@@ -58,7 +57,8 @@ def keepouts(d) -> list[str]:
 
 def text(d=None) -> str:
     d = d or netlist.current()
-    out = [f"Before routing POWER, in the editor: PCB -> Design -> Net "
+    out = [f"Before routing POWER: `tools/route.py --rules` writes this class into "
+           f"the project. By hand in the editor instead: PCB -> Design -> Net "
            f"Class, a class named {HV_CLASS} holding the nets below; then Design "
            f"Rules -> Safe Spacing, a rule of {HV_CLEARANCE_MM} mm applied to "
            f"{HV_CLASS}. The generated boards carry only the board-wide 0.2 mm.",
