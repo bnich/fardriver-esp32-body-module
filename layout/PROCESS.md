@@ -59,11 +59,11 @@ a part goes next to the pins it shares nets with, nearest the terminal its signa
 
 | Band | Front (v, mm) | Holds | Rule |
 |---|---|---|---|
-| **1 · face** | 0 | the harness row | `edge_budget` order, 1 mm gaps (4 mm where the row changes voltage class), centred in the 242 less the two 7 mm M3 corners, or `--anchor left`/`right`; the plug side of each body faces the edge; the 3.50 mm row (`J314`) on the underside of OUTPUTS shares the face |
+| **1 · face** | 0 | the harness row | `edge_budget` order, 1 mm gaps (4 mm where the row changes voltage class), centred in the 242 less the two 7 mm M3 corners, or `--anchor left`/`right`; the plug side of each body faces the edge. ⚠️ **ONE strip for BOTH faces**: a terminal is through-hole, so `J314` under OUTPUTS takes the same length of edge as one on top — its pins would otherwise land in the 12 V terminals' bodies. A header that does not fit the strip is left UNPLACED |
 | **2 · protection** | row depth + 2 | each terminal's TVS, series R, pull-ups, clamps, and the class-A cap one hop behind them | directly behind ITS terminal |
 | **3 · function** | 19 | drivers, switches, expanders, the buck, the chokes and bricks, and every IC of the same part number as one of them | over the terminals they serve; their passives follow them |
 | **4 · brain / power** | 30 | the S3, its LDO and supervisor, the CAN transceiver, every inter-board connector footprint | the S3's antenna end at the back edge; `J307`/`J308` flush to the back edge; `J406`/`J407` at the mates' X,Y |
-| **under** | — | the 7 bottom parts, by the netlist's `side` | `U201`/`U202` with the HV group; `J314` at the face; `J311` under the middle of the V12 drivers, `J312` where its signals are; `J406`/`J407` at the mates' X,Y |
+| **under** | — | the 7 bottom parts, by the netlist's `side` | `U201`/`U202` with the HV group; `J314` in the face strip; `J311` as near the middle of the V12 drivers as its pins allow — they may not come up inside their bodies (check 17) — `J312` where its signals are; `J406`/`J407` at the mates' X,Y |
 
 **Bands are fronts, not walls.** A part is pulled toward its band's front and charged for the
 distance it ends up from it — three times a sideways step behind the front, four times ahead of
@@ -99,11 +99,13 @@ at the check's 1.25 mm floor and says so — the built-in revision.
 
 ## What the tool checks after placing — and refuses on
 
-A placement the tool writes has passed every one of these, or it does not write. Each is numbered
-in the tool's output, every constant in `place.py` says what it protects, and `tests/test_place.py`
-proves each check fires on a placement that breaks it. The first nine are the placement's own;
-**the last seven exist because the board must be routed afterwards (owner, 2026-09-22) —
-placement decides whether routing is possible.**
+A placement the tool writes has passed every one of these **and has every part placed**, or it does
+not write: a part with nowhere to go is reported by refdes with the reason it had none, and is never
+squeezed somewhere illegal. Each check is numbered in the tool's output, every constant in
+`place.py` says what it protects, and `tests/test_place.py` proves each check fires on a placement
+that breaks it. The first nine are the placement's own; **checks 10–16 exist because the board must
+be routed afterwards (owner, 2026-09-22) — placement decides whether routing is possible**; check 17
+is the board itself, which has two faces and one set of holes.
 
 1. **Inside the outline**, clear of the four M3 corners: a 7 × 7 mm washer square at each hole
    centre, read from the file.
@@ -137,7 +139,11 @@ placement decides whether routing is possible.**
 11. **The 12 V bus on OUTPUTS is a line**: the centroid of the V12-fed ICs (`U301 U302 U303 U305`)
     within 15 mm of the contact that feeds them (`J311`), and all of them facing one way, so `V12`
     is one straight pour, not a tree. Which ICs and which contact come from the copper: the net
-    `U201`'s `+V` is on.
+    `U201`'s `+V` is on. ⚠️ **This now pulls against check 17**: `J311`'s four pins come up through
+    the top face, so the feed may not sit under the driver line, and the engine gets it only to
+    17.5 mm on the owner's footprints. Either the drivers leave a gap for those pins or the bus is
+    fed from the end of the line — an owner's decision. ⛔ The 15 mm is not relaxed to hide it: it
+    is the length of an 11.39 A pour.
 12. **The ground plane** (152 pins on OUTPUTS, 108 LOGIC, 58 POWER — never traces): no through-hole
     connector longer than 40 mm laid across the board's short axis. `J308`/`J406` (2 × 29, 73.66 mm)
     lie along the board, flush to the back edge, where a row of holes cuts a plane least.
@@ -155,6 +161,18 @@ placement decides whether routing is possible.**
     to edge) of the nearest IC on that rail; the engine hands the ICs on a rail its 100 nFs in turn.
 16. **`J408` reachable**: on top, nothing within 5 mm of either end along its long axis — the cable
     plug's body and its exit; the drawing does not say which end, so both are kept.
+17. **A through-hole part crosses the board**: no body on either face may come within
+    `PIN_PROTRUSION` (1 mm) of a through-hole pad on the other one, because that pad is copper on
+    both faces and the pin tip and its solder fillet stand ~3 mm proud of the far one. It protects
+    the pin: a terminal's pins may not end up inside another terminal's plastic, a brick's case or
+    an IC's body. **Only the pads cross** — a part may stand over a through-hole part's *body* on
+    the other side (a 0603 over the brick's case is fine), and two surface-mount parts may overlap
+    in plan freely. Two through-hole parts on opposite faces therefore may never overlap at all.
+    The engine keeps the wider `CLEAR` (1.6 mm) from a pad on the other face, so a trace can still
+    pass between the pin and its neighbour. ⛔ This is the rule the first placement broke while
+    passing all 16 of the checks above: `J312`'s 24 pins inside `J308`'s 58, `J311`'s inside
+    `U301`/`U302`, `J314`'s inside `J303`, `J406`'s inside the S3, and both bricks' inside the
+    through-hole parts on POWER's top face.
 
 Every comparison allows a micrometre: the file holds mils to four decimals, and a coordinate
 written and read back may move by nanometres.
@@ -169,19 +187,30 @@ flow rather than being bolted on.
 ## The loop — repeatable
 
 ```
-tools/place.py --stack                 # place OUTPUTS, LOGIC, POWER in that order; check; write
+tools/place.py --stack --draw pics/    # place OUTPUTS, LOGIC, POWER in that order; check; write
                                        #   → ~/Documents/EasyEDA-Pro/projects/revv1-module.eprj2
 owner opens it, looks, closes the editor
-tools/place.py --check                 # re-read the SAVED file; report every rule above
+tools/place.py --check --draw pics/    # re-read the SAVED file; report every rule above
+LOOK AT pics/*.png                     # ✔ a required step, not a decoration
 tools/place.py --stack --keep J302 J305 # re-place, holding the owner's hand-moved parts fixed
 ```
 
 - `--stack` reads the saved `.eprj2` (the owner's file — so hand-moved parts are known), places
   every part **not in `--keep`**, checks, writes back, and writes `layout/<BOARD>-placement.md`.
-  ⛔ It refuses if the editor is open. `--file` and `--out` point it elsewhere; `--docs` says where
+  ⛔ It refuses if the editor is open, if any check fails, **or if any part had nowhere to go** —
+  and then names each one and why. `--file` and `--out` point it elsewhere; `--docs` says where
   the tables go.
 - `--check` never writes. It is the review step and the regression test: after the owner moves
   things by hand, `--check` says what broke.
+- ✔ **`--draw DIR` writes one PNG per board, and looking at it is a step of the process** — the
+  proposal for `--stack`, the file's own placement for `--check`, and on its own it just draws the
+  file and judges nothing. Outline, M3 washer squares, band fronts, every body as a box (top black,
+  under-board blue, pack voltage red, UNPLACED orange), every pad as a dot (GND green, HV red) with
+  a **ring where the pin goes through the board**, every refdes labelled. ⛔ **It caught what the
+  16 checks did not**: the first placement stood two faces inside each other and reported
+  `0 problem(s)`; the picture showed it at a glance. Numbers prove parts do not collide on the axis
+  they measured; a picture proves they are where you think. It is the one part of the tool that
+  needs Pillow, imported only when the flag is used.
 - `--keep` is how revision works: the owner fixes a part where they want it; the tool re-flows
   everything else around it. Repeat until the owner is satisfied.
 - **Every write goes through the same round trip the build uses** (`eprj2.read` → edit the
@@ -204,7 +233,8 @@ tool derived.
 
 ## Files
 
-- `tools/place.py` — the tool. Stdlib only (plus what `eprj2` needs to decrypt the file).
+- `tools/place.py` — the tool. Stdlib only (plus what `eprj2` needs to decrypt the file, and
+  Pillow for `--draw`).
 - `tests/test_place.py` — every check above proven to fire on a placement that breaks it, the
   engine proven to leave a clean one, and the writer proven to round-trip. The project under test
   is **synthetic** (the build's outline, pin-named pads from the netlist), so no file of the
