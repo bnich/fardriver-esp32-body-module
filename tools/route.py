@@ -341,10 +341,12 @@ class Copper:
     pours: list = field(default_factory=list)
     pads: list = field(default_factory=list)
 
-    #: `on_layer` and its bucket index, built once per layer.  Rebuilding the
-    #: list inside the router's inner loop cost 45 s of a 47 s run.
+    #: `on_layer`, its bucket index and the pin lands, each built once.
+    #: Rebuilding the layer list inside the router's inner loop cost 45 s of a
+    #: 47 s run.
     _by_layer: dict = field(default_factory=dict)
     _index: dict = field(default_factory=dict)
+    _lands: dict = field(default_factory=dict)
 
     def on_layer(self, layer):
         """Every piece of copper that exists on `layer`: the segments and pours
@@ -355,6 +357,23 @@ class Copper:
                                      + list(self.vias)
                                      + [p for p in self.pads if layer in p.layers])
         return self._by_layer[layer]
+
+    def pin_lands(self):
+        """{(refdes, pin): the box its pads together occupy} -- a PIN's land,
+        which is what a run lands on.  ⚠️ One pin can own several pads
+        (`U303.OUT1` owns two), and the point `nodes_of` aims a run at is their
+        mean, which falls BETWEEN them and inside neither.  Both the router and
+        `is_neck` have to agree on what "on the pad" means, or the tool writes
+        a neck its own check calls a thin bus -- which is what happened on
+        OUTPUTS' `AUX12V_1` the first time the clustered placement was routed."""
+        if not self._lands:
+            for p in self.pads:
+                key = (p.ref, p.pin)
+                b = self._lands.get(key)
+                self._lands[key] = p.box if b is None else place.Box(
+                    min(b.u0, p.box.u0), min(b.v0, p.box.v0),
+                    max(b.u1, p.box.u1), max(b.v1, p.box.v1))
+        return self._lands
 
     def near(self, layer, box, margin):
         """The copper of `layer` whose own u-range comes within `margin` of
@@ -699,8 +718,10 @@ def is_neck(c, s):
     a thin run that happens to start at a pad reads as one."""
     if s.length > NECK_MM + TOL:
         return False
+    lands = c.pin_lands()
     return any(p.net == s.net and s.layer in p.layers
-               and (_point_in(p.box, s.u0, s.v0) or _point_in(p.box, s.u1, s.v1))
+               and (_point_in(lands[(p.ref, p.pin)], s.u0, s.v0)
+                    or _point_in(lands[(p.ref, p.pin)], s.u1, s.v1))
                for p in c.pads)
 
 
@@ -1740,8 +1761,10 @@ def main(argv=None):
                     help=f"the .eprj2 to read (default: the editor's {place.PROJECT_FILE})")
     ap.add_argument("--out", default=None, help="where to write (default: --file, keeping .prev)")
     ap.add_argument("--rules-doc", default=None, metavar="PATH",
-                    help="also write the class table as text for hand entry (default: "
-                         "layout/<all boards>-rules.md is not written unless asked)")
+                    help="also write the whole class table, and each class's nets per board, as "
+                         "text for hand entry in the editor. Not written unless asked: the rules "
+                         "themselves go into the project, and a second copy of a table is a "
+                         "second thing to keep true")
     a = ap.parse_args(argv)
     writing = a.rules or a.pours or a.heavy or a.strip_routing
     if not (a.check_routing or writing or a.draw):

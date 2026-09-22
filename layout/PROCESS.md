@@ -696,18 +696,22 @@ a pin that no legal leg reaches is refused. A plain minimum spanning tree hung `
 nearest chip cap because that leg was 2 mm shorter, the 5 mm run hit `C211`, and the chain check 19
 measures went unrouted while the stubs between the chip caps got drawn.
 
-A run **necks** into the pad it lands on — a 5 mm bus cannot land on `J202`'s 3.96 mm pitch
+A run **necks** into the land it lands on — a 5 mm bus cannot land on `J202`'s 3.96 mm pitch
 otherwise, and a 2.0 mm `V5AUX` run cannot leave a 1.5 mm chip pad. The neck is at most
 `route.NECK_MM` (3 mm) long: 3 mm of a 1.5 mm neck in 1 oz copper is 0.985 mΩ, so the limited
 11.39 A drops 11.2 mV across it, and two necks spend under half the bus's whole 50 mV budget.
+⚠️ **A LAND, not a pad**: one pin can own several pads (`U303.OUT1` owns two) and the point a run
+is aimed at is their mean, which falls between them and inside neither, so both `--heavy` and
+`--check-routing` answer to the box a PIN's pads together occupy. Against a single pad's box the
+tool wrote a neck its own check then called a thin bus — `AUX12V_1`, 0.993 mm over 3.0 mm.
 ⛔ **There is no taper exemption in the obstacle test.** A `LINE` record has one width, so a leg
 "drawn" with the neck excused would be a full-width rectangle lying across the pad next door — a
 short in the saved file, and copper the tool's own check would then refuse.
 
 A refusal names the pair and what stopped it, and the owner necks it by hand or moves the part with
-`--stack --keep`. **On the placement of 2026-09-22** the tool wrote 21 runs on POWER — four
-legs of the 12 V bus, four of its ground twin and thirteen of the 84 V chain — 14 on OUTPUTS, 16 on
-CTRL and none on LOGIC, and refused 23 · 32 · 14 · 0. Two things the refusals say, and both are findings rather than noise:
+`--stack --keep`. **On the placement of 2026-09-22** the tool wrote **21 runs on POWER** — four
+legs of the 12 V bus, four of its ground twin and thirteen of the 84 V chain — **29 on OUTPUTS**,
+**14 on CTRL** and **none on LOGIC**, and refused 23 · 17 · 16 · 0. What the refusals say:
 
 - ⚠️ **The HV class's 1.25 mm cannot be met between the 84 V gate network's own parts.** Twenty-one
   of POWER's 23 refusals are one 84 V net's run passing within 1.25 mm of another 84 V net's pad —
@@ -716,9 +720,10 @@ CTRL and none on LOGIC, and refused 23 · 32 · 14 · 0. Two things the refusals
   clearance by the voltage *between* two conductors, which for a gate node and its source is about
   13 V and not 160. ⬜ **Open, and the owner's call:** either a second rule for pairs inside the
   84 V group, or those parts move.
-- **Most of OUTPUTS' 32 refusals are the pre-clustering placement**, where a channel runs 121 mm
-  and its straight line crosses three other parts. They should thin out once check 20's clustering
-  placement is in the file; re-run and see.
+- ⭐ **Clustering the drivers is what the channels needed.** Routed against the placement before
+  check 20, OUTPUTS took 14 runs and refused 32, and its `V12` pour spanned 38 mm; against the
+  clustered one it takes **29 and refuses 17**, and the pour spans **122.5 mm** — the driver line
+  the pour is supposed to be. Placement decides whether routing is possible, measured.
 
 ## Step R3 — the routed board is checked, not admired (`tools/route.py --check-routing`)
 
@@ -728,8 +733,9 @@ offender per class with the count beside it, and exits 1.
 
 - **Width** — every segment at least its class's minimum. Two exemptions, both from R0 itself: a
   class whose copper may be a POUR is exempt where the pour is, and a **neck** is exempt. ⚠️ A neck
-  is two conditions together — at most `NECK_MM` long **and** one end on a pad of its own net. Drop
-  the second and a whole thin bus reads as a chain of necks.
+  is two conditions together — at most `NECK_MM` long **and** one end on the LAND of a pin of its
+  own net. Drop the second and a whole thin bus reads as a chain of necks; make it a single pad
+  rather than the pin's land and a real neck reads as a thin bus.
 - **Clearance** — edge to edge, the **stronger** of the two nets' class figures: segment to
   segment, segment to pad, and a via to anything. A via's barrel crosses every layer, so it is the
   one object compared against copper on all of them. ⛔ Pad to pad is not checked: two pads of a

@@ -247,6 +247,28 @@ def test_a_neck_too_long_is_not_a_neck(fresh, ix):
     assert any("class PWR12 width" in p for p in _problems(project, pl, ix, "POWER"))
 
 
+def test_a_neck_landing_between_two_pads_of_one_pin_is_still_a_neck():
+    """⭐ THE REGRESSION. One pin can own several pads (`U303.OUT1` owns two),
+    and the point `--heavy` aims a run at is their mean -- which falls BETWEEN
+    them and inside neither. Testing "on a pad" against a single pad's box
+    made the tool write a neck its own check then called a thin bus:
+    `AUX12V_1`, 0.993 mm over 3.0 mm, the first time the clustered placement
+    was routed. The land of a PIN is what both of them answer to.
+
+    ⚠️ The synthetic project cannot catch this -- its footprints give every
+    pin one pad -- which is why this one is built by hand."""
+    left = route.Pad("U303", "OUT1", "CH", place.Box(9.0, 9.6, 9.8, 10.4), (1,), False)
+    right = route.Pad("U303", "OUT1", "CH", place.Box(10.2, 9.6, 11.0, 10.4), (1,), False)
+    c = route.Copper("OUTPUTS", None, pads=[left, right])
+    mean_u = (left.u + right.u) / 2
+    assert not route._point_in(left.box, mean_u, 10.0)
+    assert not route._point_in(right.box, mean_u, 10.0)
+    neck = route.Seg("CH", 1, mean_u + 3.0, 10.0, mean_u, 10.0, 0.8)
+    assert route.is_neck(c, neck)
+    far = route.Seg("CH", 1, mean_u + 9.0, 10.0, mean_u + 6.0, 10.0, 0.8)
+    assert not route.is_neck(c, far)
+
+
 def test_a_thin_run_that_touches_no_pad_is_not_a_neck(fresh, ix):
     """The second half of the neck rule: short is not enough."""
     project, pl = fresh
