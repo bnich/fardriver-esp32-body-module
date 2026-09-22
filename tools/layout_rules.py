@@ -25,8 +25,10 @@ HV_CLASS = "HV"
 
 
 def hv_nets(d, board: str) -> list[str]:
-    """Every net on `board` that can sit at pack voltage: typed 84V, or joined
-    to one through copper, a switch, a choke or a diode (rules BD-2's walk)."""
+    """Every net on `board` that can sit at pack voltage: typed 84V, joined to
+    one through copper, a switch, a choke or a diode (rules BD-2's walk), or
+    SOLVED above the 12 V rail by its resistors (rules.hv_nets_solved) -- so a
+    mistyped divider mid-node keeps its 1.25 mm (H15)."""
     ix = rules._index(d)
     hv, _errs = rules._hv_nets(ix)
     on_board = {n.name for n in d.nets

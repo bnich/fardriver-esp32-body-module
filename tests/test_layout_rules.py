@@ -38,3 +38,43 @@ def test_the_tag_connect_keep_out_reaches_the_owner():
     line = next(l for l in text.splitlines() if "J408" in l)
     assert "LOGIC" in line and "x -1.27 to 1.27, y -0.635 to 0.635" in line
     assert "0.51 mm" in line
+
+
+def test_a_mistyped_divider_node_keeps_its_place_in_the_class():
+    """H15: KEY_SENSE_MID (held at 84 V through R107) retyped 12V left every
+    gate green and layout-rules.txt one net short. The class is drawn from the
+    SOLVED voltage as well as the label and the BD-2 walk, so it stays at 14 --
+    and VR-DOMAIN names the mistype."""
+    from tools import rules
+    d = netlist.current()
+    before = layout_rules.hv_nets(d, "POWER")
+    assert len(before) == 14 and "KEY_SENSE_MID" in before
+    for name in ("KEY_SENSE_MID", "D13_EN_MID", "D13_PD", "D13_PD_MID", "KSW"):
+        bad = d.replace_net(name, domain="12V")
+        assert layout_rules.hv_nets(bad, "POWER") == before, name
+        line = next(l for l in layout_rules.text(bad).splitlines() if l.startswith("  POWER:"))
+        assert line.count(",") == 13 and name in line
+        errs = [e for e in rules.check_all(bad) if e.startswith("VR-DOMAIN: net")]
+        assert len(errs) == 1 and f"net {name!r} is typed 12V (12 V) but its copper solves to 84 V" in errs[0]
+    assert [e for e in rules.check_all(d) if e.startswith("VR-DOMAIN: net")] == []
+
+
+def test_the_class_is_drawn_from_solved_voltage_not_only_from_the_walk():
+    """Take the solved term away and the retype shrinks the class: the walk
+    alone does not reach through resistors (that is what H15 was)."""
+    from tools import rules
+    d = netlist.current().replace_net("KEY_SENSE_MID", domain="12V")
+    ix = rules._index(d)
+    solved = rules.hv_nets_solved(ix)
+    assert "KEY_SENSE_MID" in solved and "held at 'KSW' = 84 V" in solved["KEY_SENSE_MID"]
+    assert set(solved) == {"D13_EN_MID", "D13_GATE", "D13_PD", "D13_PD_MID", "HV_BPLUS",
+                           "HV_C1_N", "HV_C1_P", "HV_C2_HOLD", "HV_C2_HOLD_IN", "HV_C2_N",
+                           "HV_C2_P", "HV_SW", "KEY_SENSE_MID", "KSW"}
+    walked, _ = rules._hv_nets(rules._index(netlist.current()))
+    assert set(layout_rules.hv_nets(d, "POWER")) == set(walked)
+    # ⚠️ Two returns are in the class by LABEL alone: HV_C1_N and HV_C2_N are
+    # the converters' isolated -Vin, reached by no walk and solved by no
+    # resistor. Retyped, nothing here would notice; recorded, not closed.
+    for name in ("HV_C1_N", "HV_C2_N"):
+        bad = netlist.current().replace_net(name, domain="12V")
+        assert name not in layout_rules.hv_nets(bad, "POWER")

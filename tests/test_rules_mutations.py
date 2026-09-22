@@ -312,6 +312,23 @@ def test_m39b_the_internal_pulldown_table_is_what_keeps_diag_en_quiet(monkeypatc
     assert any("DIAG_EN" in e for e in fired(D, "D14"))
 
 
+# ── H15: a net's label is held to the voltage its copper solves to ───────────
+def test_h15_a_pack_voltage_node_typed_12v_is_named():
+    errs = fired(D.replace_net("KEY_SENSE_MID", domain="12V"), "VR-DOMAIN")
+    assert errs == ["VR-DOMAIN: net 'KEY_SENSE_MID' is typed 12V (12 V) but its copper "
+                    "solves to 84 V (typed 12V, but held at 'KSW' = 84 V through R107 "
+                    "with no path to ground). Every part on it is rated against the "
+                    "label, and the HV net class is drawn from it."]
+    assert fired(D, "VR-DOMAIN") == []
+
+
+def test_h15_a_12_v_lamp_output_typed_3v3_is_named_too():
+    """The same class one rail down: TAIL_STOP is held at 12 V through R345."""
+    errs = fired(D.replace_net("TAIL_STOP", domain="3V3"), "VR-DOMAIN")
+    assert any(e.startswith("VR-DOMAIN: net 'TAIL_STOP' is typed 3V3 (3.3 V) but its copper "
+                            "solves to 12 V") for e in errs), errs
+
+
 # ── BUS-ORDER on the real crossings: order for a pair, keying for a cable ────
 def _rebus(d, iface, nets):
     """Both halves of an interface re-tabled onto `nets`, contact for contact."""

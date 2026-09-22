@@ -561,9 +561,35 @@ def _via(path: list[str]) -> str:
 
 
 # ── BD-2 / BD-4: where 84 V is allowed to be ─────────────────────────────────
+#: A net whose SOLVED voltage exceeds the highest low-voltage rail is
+#: pack-derived: nothing on this design sits between the 12 V rail and the
+#: pack, so a mid-node of the 84 V string -- held at 84 V through a resistor
+#: with no path to ground, or at 43 V by a divider -- is pack copper and takes
+#: the HV class whatever its label says. `_HV_JOIN` does not walk resistors, so
+#: until 2026-09-21 the four divider mid-nodes and KSW were in the class ONLY
+#: by being typed 84V: retyped 12V, integrity, every rule and every test
+#: passed and layout-rules.txt lost the net (H15).
+HV_ABOVE_V = DOMAIN_VOLTS["12V"]
+#: The solver rounds to 3 places; a label is held to within this of the copper.
+_DOMAIN_TOL_V = 0.05
+
+
+def hv_nets_solved(ix: _Ix) -> dict[str, str]:
+    """Every net whose solved voltage (`volts`) exceeds HV_ABOVE_V, with why."""
+    out = {}
+    for n in ix.d.nets:
+        if ix.is_gnd(n.name):
+            continue
+        v, why = ix.volts(n.name)
+        if v is not None and v > HV_ABOVE_V + _DOMAIN_TOL_V:
+            out[n.name] = why or f"typed {n.domain}"
+    return out
+
+
 def _hv_nets(ix: _Ix) -> tuple[dict[str, list[str]], list[str]]:
-    """Every net that can sit at pack voltage: typed 84V, or DC-joined to one
-    through a FET channel, inductor, fuse, diode or choke winding."""
+    """Every net that can sit at pack voltage: typed 84V, DC-joined to one
+    through a FET channel, inductor, fuse, diode or choke winding, or SOLVED
+    above the 12 V rail by its resistors (`hv_nets_solved`)."""
     errs: list[str] = []
     hv: dict[str, list[str]] = {}
     for n in ix.d.nets:
@@ -579,7 +605,28 @@ def _hv_nets(ix: _Ix) -> tuple[dict[str, list[str]], list[str]]:
                         f"BD-2: net {other!r} is typed {dom} but is DC-joined "
                         f"to the 84 V net {n.name!r} through {_via(path)}. It "
                         f"carries pack voltage whatever its label says.")
+    for name in hv_nets_solved(ix):
+        hv.setdefault(name, [])
     return hv, errs
+
+
+def domain_levels(d: Design) -> list[str]:
+    """VR-DOMAIN, on the NET: its label is the working figure every part on it
+    is rated against and what draws the HV net class, so the copper's solved
+    voltage may not exceed it. A SIGNAL net declares nothing and is covered
+    per part by `voltage_ratings` (VR-DOMAIN); a GND net solves to 0."""
+    ix = _index(d)
+    errs = []
+    for n in d.nets:
+        dec = DOMAIN_VOLTS.get(n.domain)
+        if dec is None or ix.is_gnd(n.name):
+            continue
+        v, why = ix.volts(n.name)
+        if v is not None and v > dec + _DOMAIN_TOL_V:
+            errs.append(f"VR-DOMAIN: net {n.name!r} is typed {n.domain} ({dec:g} V) but "
+                        f"its copper solves to {v:g} V{why}. Every part on it is rated "
+                        f"against the label, and the HV net class is drawn from it.")
+    return errs
 
 
 def bd2_voltage_domain_containment(d: Design) -> list[str]:
@@ -2038,6 +2085,7 @@ def heights(d: Design) -> list[str]:
 
 ALL_RULES = (
     bd2_voltage_domain_containment,
+    domain_levels,
     d10_key_wire_is_only_listened_to,
     supply_pins,
     ground_pins,
