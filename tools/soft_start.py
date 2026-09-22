@@ -956,12 +956,13 @@ def main(argv=None, c: Circuit | None = None) -> int:
           f"     a {risk.pulse_s*1e3:.0f} ms equal-energy pulse. ⛔ FIRMWARE "
           f"CONTRACT: the aux outputs are released on KEY_SENSE going inactive, "
           f"inside the {risk.hold_s*1e3:.0f} ms hold.\n"
-          f"     A RESET is NOT the exposure: expander #3's pins come out of reset "
-          f"as inputs, the TPS4H160B INx pull-downs are internal and the TPS2553\n"
-          f"     enables are pulled to GND, so a watchdog reset or any restart "
-          f"sheds the load by itself (D14: all lights OFF at key-on, every gate\n"
-          f"     biases OFF). The exposure is a HANG that holds the outputs ON and "
-          f"does not trip the watchdog, through the whole decay.\n"
+          f"     A RESET is NOT the exposure -- BECAUSE every expander's RESET rides the "
+          f"S3's EN net (IO-22): an S3 reset resets the chip that commands every aux\n"
+          f"     output, every bit returns to an input, the TPS4H160B INx pull-downs and "
+          f"the TPS2553 EN pull-downs take over (D14), and the load sheds within the\n"
+          f"     reset. The exposure is a HANG that holds the outputs ON without tripping "
+          f"the watchdog, through the SHORTEST hold: {risk.hold_s*1e3:.0f} ms is the fast\n"
+          f"     FET at this voltage; a slow FET at the LVC holds ~300 ms.\n"
           f"  ✔ M17: scope a deliberate key-off under load.")
     print()
 

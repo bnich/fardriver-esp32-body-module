@@ -50,12 +50,11 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   `python3 -m tools.tel_check BOARD ~/Downloads/Netlist_BOARD_<date>.tel`. It must print
   "identical", and exits 1 on any pin on the wrong net or any wrong footprint. ⚠️ A proof holds only
   for the netlist it was taken from: after a netlist change, every board it touches is re-exported
-  and re-proven. ✅ **All three boards proven identical on 2026-09-21 against commit `e31aa2b`** —
-  POWER 40 nets / 198 pins (`F201` off the PCB as intended), OUTPUTS 107 / 492, LOGIC 97 / 451. The
-  pin counts fell 17 on POWER and OUTPUTS from the 09-20 proof, exactly `PWR-OUT` 23 → 4 and `CTRL`
-  22 → 24, and the export shows `J202` on contacts 1·2·4·5 with 3 absent — JST's numbering, the key
-  gap in the copper. ⛔ **This proof dies the moment `netlist.py` changes.** Re-export and re-prove
-  every board the change touches; never carry the ✅ forward.
+  and re-proven. ⛔ **No board is proven against the current netlist.** The audit fixes of 2026-09-21
+  changed the netlist on all three boards — STACK is 2 × 29 (LOGIC, OUTPUTS), the VH land drills 1.73
+  (POWER, OUTPUTS), `J303`/`J305` are 10- and 12-way (OUTPUTS), and the expanders' RESETs ride `EN`.
+  Every board must be re-exported and re-proven before its layout is trusted. ⛔ **A proof dies the
+  moment `netlist.py` changes.** Never carry a ✅ forward; state the commit it was taken against.
 
 - `tools.integrity` asks whether the netlist is a circuit at all — every pin of every part lands on a
   net, every inter-board net has real connector contacts. `tools/rules.py` asks whether it obeys the
@@ -94,7 +93,7 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   `tests/test_rules.py` for `BUS-ORDER`. A new rule is not a rule until a test shows it firing on
   the defect it names.
 - **Board-to-board: four interfaces on two junctions — two MATED PAIRS and two CABLES (D27/IO-20).**
-  OUTPUTS ↔ LOGIC carries the pairs, **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 28, every signal
+  OUTPUTS ↔ LOGIC carries the pairs, **`PWR-LOGIC`** (1 × 9) and **`STACK`** (2 × 29, every signal beside a ground, `EN` the 29th
   beside a ground), stamped Hong Cheng / BOOMELE halves mating insulator-to-insulator at **11.0 mm**
   (STACK's 11.04 is the hard stop): the lower half stands on OUTPUTS, the upper half hangs **under**
   LOGIC, its footprint generated PRE-MIRRORED (`…-UNDER`), placed on the bottom layer. A
@@ -125,7 +124,7 @@ python3 -m tools.jlc_bom       # the JLC BOM, what is ordered loose, what the ow
   12 V row and the INPUTS row. **Each dangerous group owns its pitch**, because the three dangerous
   mismates are a 5 V device in a 12 V header, a FarDriver lead anywhere else, and the pack plug
   anywhere else. Within the shared 3.81 mm family a smaller plug seats offset in a larger header, so
-  **no 12 V terminal may share a size with an input terminal** — 2, 4, 4, 4, 5, 7 against 3, 6, 8, 8,
+  **no 12 V terminal may share a size with an input terminal** — and no two 12 V terminals may share a size either (IO-24): 2, 4, 5, 7, 10, 12 against 3, 6, 8, 8,
   9 (`tests/test_interconnect.py`, `tests/test_rows.py`). A parked terminal keeps its footprint, not
   its header.
 
@@ -208,10 +207,14 @@ a 2.6× margin. ⛔ **This is the only place in the design where a firmware beha
 inside its rating — never write it as a feature, and never let a change lengthen the decay or raise
 the tap current without re-running `tools/soft_start.py`.**
 
-- ✅ **A watchdog reset, or any restart, sheds the load by itself:** expander #3's pins come out of
-  reset as inputs, the `TPS4H160B` `INx` pull-downs are internal, and the `TPS2553` enables are
-  pulled to GND. **The exposure is narrowly a hang that holds the outputs on and does not trip the
-  watchdog**, through the whole decay.
+- ✅ **A watchdog reset, or any restart, sheds the load — because every expander's `RESET` rides the
+  S3's `EN` net (IO-22, 2026-09-21).** An S3 reset resets the chip that commands every aux output;
+  every bit returns to an input and the drivers' own pull-downs take over (D14). ⛔ Before IO-22 the
+  expanders' resets were pull-ups to `V3P3` and nothing else — an S3 restart left them driving what
+  they last drove, and `V3P3` is the last rail to fall at key-off, so nothing else reset them either.
+  `EN` reaches expander #3 down a 29th STACK signal. **The exposure is narrowly a hang that holds
+  the outputs on and does not trip the watchdog**, through the **shortest** hold — ~300 ms at the
+  LVC with a slow FET, not the 774 ms fast-FET figure.
 - `tools/soft_start.py` gates on the shed case and prints the un-shed bound beside it as the residual
   risk it is. ⬜ **M17** scopes a deliberate key-off under load.
 

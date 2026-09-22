@@ -215,8 +215,9 @@ that hold, so the decay carries the base load plus the 5 V buck's standing draw 
 `EN`-to-`PVIN` tie makes unsheddable — and **this part's SOA margin depends on that firmware
 behaviour**. The un-shed case is printed beside the gate as the **residual risk** it is: hold the
 outputs on through the decay and the bound is over the line again. A reset is not that exposure —
-every driver enable comes out of reset pulled down, so a restart sheds the load by itself; a hang
-that holds the outputs on without tripping the watchdog is what is left. `key_off_decay()`
+every expander's `RESET` rides the S3's `EN` net (IO-22), so an S3 reset resets the chip that commands
+the aux outputs and the drivers' pull-downs take over; a hang that holds the outputs on without
+tripping the watchdog is what is left, through the shortest hold (~300 ms at the LVC, slow FET). `key_off_decay()`
 integrates the decay beside the bound, which lands a little under it and puts the equal-energy pulse
 **past the SOA table's 100 ms row**, so the DC line is the right row and not a stand-in for a
 missing one. The `KeyOff` docstring says what a further refinement would take: a converter

@@ -707,10 +707,12 @@ where it is so — ⛔ do not write it as a feature:
 | **shed** — the base load and the buck's standing draw, 0.63 A at the tap | **~53 W** at 84 V, 38 W at 60 V | ✅ **×2.6** (×3.6 at 60 V) |
 | **not shed** — all eight held on, 1.93 A at the tap | **162 W**; integrating the decay gives 147 W over 21.3 J, a 145 ms equal-energy pulse, past the SOA table's 100 ms row | ⛔ **over it** |
 
-- ✅ **A watchdog reset, or any restart, sheds the load by itself:** expander #3's pins come out of
-  reset as inputs, the `TPS4H160B` `INx` pull-downs are internal, and the `TPS2553` enables are
-  pulled to GND (D14). **The exposure is narrowly a hang that holds the outputs on and does not trip
-  the watchdog**, through the whole decay.
+- ✅ **A watchdog reset, or any restart, sheds the load — because every expander's `RESET` rides the
+  S3's `EN` net (IO-22, 2026-09-21).** An S3 reset resets the chip that commands every aux output;
+  every bit returns to an input and the `TPS4H160B` `INx` and `TPS2553` `EN` pull-downs take over
+  (D14). `EN` reaches expander #3 down a 29th STACK signal. **The exposure is narrowly a hang that
+  holds the outputs on and does not trip the watchdog**, through the **shortest** hold — ~300 ms at
+  the LVC with a slow FET; the 774 ms often quoted is the fast FET at 84 V.
 - ⚠️ The 53 W is itself a **bound** — 0.63 A across the whole pack. The converters are constant power,
   so the real figure is ~36 W if they quit at their 43 V input floor; ⬜ TDK publishes no
   under-voltage shutdown for the CN-B110, so that floor is an assumption, and a brick still
@@ -1649,7 +1651,7 @@ standing on POWER's top face, the OUTPUTS half hanging under OUTPUTS into the ga
   cannot reject.
 - **`PWR-LOGIC`**, OUTPUTS `J307` ↔ LOGIC `J407` — 9 contacts: the logic 5 V, 3.3 V back down for the
   expander bus, `KEY_SENSE`, and a ground between each. LOGIC takes no 12 V.
-- **`STACK`**, OUTPUTS `J308` ↔ LOGIC `J406` — **2 × 28**, odd contacts signals and even contacts
+- **`STACK`**, OUTPUTS `J308` ↔ LOGIC `J406` — **2 × 29**, odd contacts signals (the 29th is the S3's `EN`, IO-22) and even contacts
   ground. ⛔ **Its pinout is derived from `_STACK_SIGNALS` in `tools/netlist.py` and nowhere else** —
   never hand-patch it, and never quote a row count from this document:
 

@@ -110,8 +110,10 @@ EasyEDA Pro project. No board is laid out yet.
   soft-start switch, stays on for ~0.8 s after key-off; with all eight aux outputs still on it would
   carry a 162 W bound against a 138 W derated DC SOA line. **The firmware releases every aux output
   when key sense goes inactive**, which brings it to ~53 W. A watchdog reset or any restart sheds the
-  load by itself, because every driver enable comes out of reset pulled down; the exposure is a hang
-  that holds the outputs on without tripping the watchdog. `tools/soft_start.py` gates on it.
+  load too, because **every expander's `RESET` rides the S3's `EN` net** — an S3 reset resets the chip
+  that commands every aux output, and the drivers' own pull-downs take over. The exposure is a hang
+  that holds the outputs on without tripping the watchdog, through the shortest hold (~300 ms at the
+  cutoff voltage with a slow FET). `tools/soft_start.py` gates on it.
 - **Service.** No USB port: first flash, the console and recovery when OTA fails run over UART0, on a
   Tag-Connect TC2030-NL land on LOGIC — bare pads in the ESP-Prog's order, reached with a
   `TC2030-IDC-NL` cable ([BOM](docs/bom.md) A8). Later updates go over WiFi.
@@ -125,7 +127,7 @@ EasyEDA Pro project. No board is laid out yet.
   hand-soldered, and the parts that must lie flat or clip in, which are ordered loose with the boards
   ([BOM](docs/bom.md#jlc-assembly--the-custom-boards)).
 - **Board-to-board.** Two junctions. OUTPUTS ↔ LOGIC is rigid: two mated 2.54 mm pairs (`PWR-LOGIC`
-  1 × 9 and `STACK` 2 × 28, every signal beside a ground) whose butting insulators set that gap at
+  1 × 9 and `STACK` 2 × 29, every signal beside a ground) whose butting insulators set that gap at
   11.0 mm. POWER ↔ OUTPUTS is **cabled**, because no stocked connector spans the gap the 22 mm
   chokes force: the whole 12 V load crosses on **four heavy conductors into a keyed JST VH
   connector** — `V12` and `GND` on 16 AWG at 8.47 A each, into contacts JST rates at 10 A with that
@@ -155,12 +157,12 @@ EasyEDA Pro project. No board is laid out yet.
   layout proves it, and proves the size the box has to hold. Layout has room to grow the boards to
   **43.35 × 246 mm** before the cavity gate fails. ⚠️ The wall is the exception to that order: it is
   an input to the board width, and today's 41.84 mm board tolerates a wall up to **3.75 mm**.
-- ✅ **The EasyEDA project is proven against this netlist.** All three boards were re-imported after
-  the cabled crossings, their netlists exported and checked identical with `python3 -m tools.tel_check`
-  on **2026-09-21** — POWER 40 nets / 198 pins, OUTPUTS 107 / 492, LOGIC 97 / 451, every outline
-  41.84 × 242 mm. ⚠️ A proof holds only for the netlist it was taken from: any change to
-  `tools/netlist.py` means re-exporting and re-proving every board it touches. **No board is laid
-  out yet** — layout is the next step, and the enclosure is drawn after it (D27/IO-19).
+- ⛔ **The EasyEDA project is NOT proven against this netlist.** The 2026-09-21 audit fixes changed
+  all three boards (STACK 2 × 29, the VH drill, two 12 V terminal sizes, the expander resets on
+  `EN`), which voids the proof taken that morning. Each board must be re-imported, its netlist
+  exported and checked identical with `python3 -m tools.tel_check` before any layout is trusted.
+  **No board is laid out yet** — layout is the next step, and the enclosure is drawn after it
+  (D27/IO-19).
 
 ---
 
