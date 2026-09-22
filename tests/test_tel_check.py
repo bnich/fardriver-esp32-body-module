@@ -144,13 +144,24 @@ def _tel_text(packages, nets):
 
 
 def test_a_true_export_of_every_board_is_identical_with_every_footprint_compared():
+    """⚠️ Every board in the ORDER, read off `board_params` rather than typed:
+    CTRL joined it at IO-26 and a typed triple would have left the newest board
+    -- the one nothing has ever been exported from -- out of the one check that
+    proves an export matches the netlist.
+
+    ⚠️ The floor is per-board and it is 20, not 50: POWER shed the controller
+    row to CTRL and carries 39 placed items now, and CTRL itself 22. What the
+    floor is for is catching an export that came back nearly empty, and any
+    number under the smallest real board does that."""
+    from tools import board_params as bp
     d = netlist.current()
     fx = lcsc_fixture.load()
-    for board in ("POWER", "OUTPUTS", "LOGIC"):
+    assert bp.STACK_ORDER == ("POWER", "OUTPUTS", "LOGIC", "CTRL")
+    for board in bp.STACK_ORDER:
         packages, nets = _export(d, board, fx)
         r = tel_check.compare(d, board, tel_check.Tel(packages, nets), fx)
         assert r.ok, (board, r.problems[:5])
-        assert r.footprints == len(packages) > 50, board
+        assert r.footprints == len(packages) > 20, board
 
 
 def test_seventeen_smf18a_on_the_wrong_land_fail_even_with_their_record_nulled(tmp_path, capsys):

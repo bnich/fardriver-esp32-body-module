@@ -2080,8 +2080,8 @@ def _bodies(d: Design):
     ⛔ it is not "has an interface": a CABLED crossing's half mates with nothing
     across the gap, so its height sets no board spacing and it stands in the gap
     above its face like any other body (`board_params._pairs`). Reading it the
-    old way told the owner that J202, J105, J311 and J312 each set a spacing,
-    four times, about four connectors joined by looms."""
+    old way told the owner that J202 and J311 each set a spacing, about two
+    connectors joined by a loom."""
     for p in d.parts:
         yield p.refdes, p.mpn, p.board, p.side, p.height_mm, p.height_confirmed, False
     for c in d.connectors:

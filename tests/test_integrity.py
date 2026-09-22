@@ -316,13 +316,15 @@ def test_a_cable_end_retabled_onto_other_contacts_is_caught_on_the_real_netlist(
     from tools import netlist
     d = netlist.current()
     assert [(p.pin, p.net) for p in d.connector("J311").pins] == \
-        [("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE")]
-    bad = _retabled(d, "J311", {"1": "5", "2": "4", "4": "2", "5": "1"})
+        [("1", "V12"), ("2", "GND"), ("3", "GND"), ("4", "V5"), ("5", "KEY_SENSE")]
+    bad = _retabled(d, "J311", {"1": "5", "2": "4", "3": "3", "4": "2", "5": "1"})
     assert [(p.pin, p.net) for p in bad.connector("J311").pins] == \
-        [("5", "V12"), ("4", "GND"), ("2", "V5"), ("1", "KEY_SENSE")]
+        [("5", "V12"), ("4", "GND"), ("3", "GND"), ("2", "V5"), ("1", "KEY_SENSE")]
     errs = problems(bad, "interface")
     assert "interface: contact 1 of PWR-OUT carries 'V12' on J202.1 but 'KEY_SENSE' " \
         "on J311.1 -- a cable is wired contact for contact" in errs, errs
+    # Four of the five move; contact 3 is GND at both ends either way round,
+    # which is the honest count and not a rounder one.
     assert len([e for e in errs if "of PWR-OUT carries" in e]) == 4
 
 
@@ -334,7 +336,8 @@ def test_a_cable_table_written_in_another_order_is_the_same_copper():
     d = netlist.current()
     j = d.connector("J202")
     by = {p.pin: p for p in j.pins}
-    same = d.replace_connector("J202", pins=tuple(by[k] for k in ("5", "4", "2", "1")))
+    same = d.replace_connector(
+        "J202", pins=tuple(by[k] for k in ("5", "4", "3", "2", "1")))
     assert integrity.check(same) == []
 
 

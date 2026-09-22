@@ -95,15 +95,15 @@ def test_without_a_library_only_generated_footprints_are_bound():
     project.add_board("OUTPUTS")
     sheet = project.boards[0].schematic.sheets[0]
     bs = emit_board(design, "OUTPUTS", sheet)
-    assert set(bs.footprints_bound) == {"J307", "J308", "J311", "J312"}
+    assert set(bs.footprints_bound) == {"J307", "J308", "J311"}
     assert "Q301" in bs.footprints_unbound
 
 
 def test_the_inter_board_connectors_get_a_2_54_mm_header_pattern():
-    """Three of the four crossings are 2.54 mm families -- PWR-LOGIC's and
-    STACK's Hong Cheng pair and CTRL's box header -- so their land is the
-    2.54 mm grid whatever their bodies do above it.  ⛔ The fourth is not:
-    PWR-OUT is a 3.96 mm JST wafer, which the test below covers."""
+    """Three of the four crossings are 2.54 mm families -- PWR-LOGIC's, STACK's
+    and CTRL-STACK's Hong Cheng / BOOMELE pairs -- so their land is the 2.54 mm
+    grid whatever their bodies do above it.  ⛔ The fourth is not: PWR-OUT is a
+    3.96 mm JST wafer, which the test below covers."""
     design, sheet, bs = _emit("OUTPUTS", {})
     fps = _docs(sheet)["FOOTPRINT"]
     by_title = {d[1][1]["title"]: d for d in fps}
@@ -144,11 +144,21 @@ def vh_drill_problems(conn):
     return out
 
 
-def test_the_keyed_power_header_leaves_its_omitted_post_empty():
-    """⭐ The key is COPPER, not a note. `B4P(5-3)-VH` is a five-wide wafer with
-    the third post omitted, so the land must have four holes on a five-position
-    3.96 mm grid with the middle one absent, drilled for a □1.14 post -- not
-    the ø1.0 that suits the 0.64 mm posts every 2.54 mm family here uses.
+def test_the_power_header_lands_every_post_it_carries():
+    """⭐ The land is derived from the CONTACT TABLE, and IO-27 changed it: the
+    header is the plain five-circuit `B5P-VH`, not the `B4P(5-3)-VH` with its
+    third post omitted, because cavity 3 now carries the second GND. So the
+    land is five holes on the 3.96 mm grid with NONE absent -- and it is the
+    contact numbers, not a typed title, that say so: the generator leaves a
+    position empty exactly where the numbering skips one.
+    ⚠️ The keying did not go with the post. JST's post-omitted page gives
+    polarity to an omission at the 2nd or (N-1)th circuit and says a symmetric
+    one gives none, and the third of five was symmetric: the wafer's LOCK RAMP
+    was always what polarised this connector.
+
+    The drill is unchanged, and it is checked as a FIT, not a number: it is
+    the □1.14 post that sets it, not the count. Not the ø1.0 that suits the
+    0.64 mm posts every 2.54 mm family here uses.
 
     The drill is checked as a FIT, not a number. The post's diagonal is 1.14 ×
     √2 = 1.612 mm; JLC finishes a hole as much as 0.08 under the drill, so the
@@ -158,18 +168,17 @@ def test_the_keyed_power_header_leaves_its_omitted_post_empty():
     is (2.43 - 1.73) / 2 = 0.35 mm, over JLC's 0.25 minimum, because
     `header()` grows the pad with the drill.
 
-    Protects: the one thing that makes this connector keyed at all, and that a
-    low-tolerance batch takes the header. A 1x4 land would take four evenly
-    spaced holes, the part would not go in it, and every net check would still
-    pass."""
+    Protects: that a low-tolerance batch takes the header, and that the land
+    follows the contacts. A 1x4 land would take four evenly spaced holes, the
+    part would not go in it, and every net check would still pass -- which is
+    what the mutation below still shows."""
     d = netlist.current()
     for ref in ("J202", "J311"):
         j = d.connector(ref)
         title, pads, _shared, _outline = footprint_lib.generated(j)
-        assert title == "HDR-TH_1X5(5-3)-P3_96MM"
+        assert title == "HDR-TH_1X5-P3_96MM"
         assert [(p.num, p.x_mm) for p in pads] == [
-            ("1", -7.92), ("2", -3.96), ("4", 3.96), ("5", 7.92)]
-        assert not any(p.x_mm == 0.0 for p in pads), "the key position is empty"
+            ("1", -7.92), ("2", -3.96), ("3", 0.0), ("4", 3.96), ("5", 7.92)]
         assert vh_drill_problems(j) == []
         assert all(p.hole_mm - JLC_HOLE_UNDER_MM == pytest.approx(1.65)
                    for p in pads), "JLC's low side is meant to land on JST's minimum"
@@ -181,25 +190,38 @@ def test_the_vh_drill_check_fails_a_hole_that_does_not_take_the_post():
     under the 1.612 diagonal. And a 2.0 drill is over JST's 1.75: `header()`
     keeps the 0.35 ring at any drill, so the band is what bounds it above."""
     d = netlist.current()
+    ways = len(d.connector("J202").pins)
     low = d.replace_connector("J202", hole_mm=1.65)
     problems = vh_drill_problems(low.connector("J202"))
-    assert len(problems) == 4 and all("under the post's 1.612 diagonal" in p
-                                      for p in problems), problems
+    assert len(problems) == ways and all("under the post's 1.612 diagonal" in p
+                                         for p in problems), problems
     wide = d.replace_connector("J202", hole_mm=2.0)
     problems = vh_drill_problems(wide.connector("J202"))
-    assert len(problems) == 4 and all("over JST's 1.75 maximum" in p
-                                      for p in problems), problems
+    assert len(problems) == ways and all("over JST's 1.75 maximum" in p
+                                         for p in problems), problems
 
 
-def test_the_land_fills_the_key_in_when_the_contacts_are_renumbered():
-    """⚠️ THE MUTATION for the test above. Number the same four contacts 1-4 --
-    which is what anyone reading 'a 4-way connector' would do -- and the
-    generator spaces four holes evenly across a four-position body. The key is
-    gone, silently, and only the contact numbers ever said it was there."""
+def test_the_land_leaves_a_position_empty_when_the_contacts_skip_one():
+    """⚠️ THE MUTATION for the test above, and it is the design's OWN history:
+    take the second GND back off and the wafer is a B4P(5-3) again -- four
+    contacts numbered 1, 2, 4, 5 on a five-position body. The generator reads
+    the hole in the numbering and leaves the middle land empty, and the title
+    says which position is missing. ⛔ Number those same four 1-4, which is
+    what anyone reading 'a 4-way connector' would do, and it spaces four holes
+    evenly across a four-position body: a land the part does not go into, with
+    every net check still passing."""
     d = netlist.current()
-    filled = d.replace_connector("J202", pins=tuple(
-        replace(cp, pin=str(i + 1)) for i, cp in enumerate(d.connector("J202").pins)))
-    title, pads, _s, _o = footprint_lib.generated(filled.connector("J202"))
+    four = d.replace_connector("J202", pins=tuple(
+        cp for cp in d.connector("J202").pins if cp.pin != "3"))
+    title, pads, _s, _o = footprint_lib.generated(four.connector("J202"))
+    assert title == "HDR-TH_1X5(5-3)-P3_96MM"
+    assert [(p.num, p.x_mm) for p in pads] == [
+        ("1", -7.92), ("2", -3.96), ("4", 3.96), ("5", 7.92)]
+    assert not any(p.x_mm == 0.0 for p in pads), "the omitted position is empty"
+    renumbered = four.replace_connector("J202", pins=tuple(
+        replace(cp, pin=str(i + 1))
+        for i, cp in enumerate(four.connector("J202").pins)))
+    title, pads, _s, _o = footprint_lib.generated(renumbered.connector("J202"))
     assert title == "HDR-TH_1X4-P3_96MM"
     assert [p.x_mm for p in pads] == [-5.94, -1.98, 1.98, 5.94]
 

@@ -571,18 +571,24 @@ def test_the_density_verdict_word_on_the_area_line_agrees_with_the_exit(capsys):
     assert float(line.split()[4].rstrip("%")) > bf.DENSITY_LIMIT * 100
 
 
-def test_the_real_design_s_rows_do_not_fit_and_the_report_says_which(capsys):
-    """2026-09-22: with both faces in one strip, POWER's row plus the quarter
-    brick under it and OUTPUTS' 12 V row plus the 5 V row under it both overrun
-    the 228 mm edge; LOGIC fits. This pins the honest state until the owner's
-    row decision (design record IO-26) changes the netlist -- when it does,
-    this test is rewritten to the new fact, not deleted."""
+def test_the_real_design_s_rows_are_one_short_of_fitting_and_the_report_says_which(capsys):
+    """2026-09-22, after IO-26's first half: the controller row is a board of
+    its own, so POWER's strip is J101 plus the quarter brick it cannot sit in
+    front of, and it FITS. ⛔ ONE row is left over -- OUTPUTS, where the 12 V
+    row on top and the 5 V row underneath are one 259.68 mm strip against a
+    228 mm edge -- and IO-26's second half is what closes it: the 5 V block
+    and J314 leave this board. This pins the honest state until that lands;
+    when it does, this test is rewritten to the new fact, not deleted."""
     from tools import netlist
     over = {e.board: (e.over_mm, e.blockers) for e in bf.edge_budget(netlist.current())}
-    assert over["POWER"][0] > 0 and over["POWER"][1] == ("U201",)
+    assert set(over) == {"POWER", "OUTPUTS", "LOGIC", "CTRL"}
+    assert over["POWER"][0] < 0 and over["POWER"][1] == ("U201",)
     assert over["OUTPUTS"][0] > 0 and over["OUTPUTS"][1] == ()
-    assert over["LOGIC"][0] < 0
+    assert over["LOGIC"][0] < 0 and over["CTRL"][0] < 0
     code, out = run(capsys, netlist.current())
     assert code == 1
-    assert "row: POWER's 5 harness headers and U201 under them take 256 mm of the edge" in out
     assert "row: OUTPUTS's 7 harness headers take 260 mm of the edge" in out
+    # ...and it is the ONLY row verdict: exactly one problem, and it is that one.
+    assert [p for p in bf.problems(netlist.current()) if p.startswith("row:")] == \
+        bf.problems(netlist.current())
+    assert len(bf.problems(netlist.current())) == 1

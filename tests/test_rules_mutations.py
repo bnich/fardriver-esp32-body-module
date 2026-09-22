@@ -5,7 +5,7 @@ the rule named, and the real design must stay clean (test_design_clean.py).
 from dataclasses import replace
 
 from tools import netlist, rules
-from tools.model import Net, Part
+from tools.model import Net, Part, is_cabled
 
 D = netlist.current()
 
@@ -417,16 +417,21 @@ def test_m40_the_rigid_power_bus_passes_because_it_is_a_palindrome():
 
 
 def test_m40b_the_real_cable_passes_because_both_ends_are_keyed():
-    """⭐ The other half of the same rule, on the real design. PWR-OUT's four
+    """⭐ The other half of the same rule, on the real design. PWR-OUT's five
     conductors cannot be ordered so that a reversed mate is harmless — reversed,
     V12 meets KEY_SENSE whatever order they sit in — so what protects it is the
     connector: JST's locking wafer takes its housing one way round only. Take
     that claim off J202 and BUS-ORDER fires, naming the end that lost it.
 
     ⛔ This is the test that stops anyone 'simplifying' the rule into an
-    exemption for cables. An exemption passes this mutation."""
-    for ref in ("J202", "J311", "J105", "J312"):
-        assert D.connector(ref).keyed, ref
+    exemption for cables. An exemption passes this mutation.
+    ⚠️ ONE cable is left since IO-27 deleted the CTRL ribbon, so the halves are
+    read off the design rather than named: a list that still said J105/J312
+    would fail on a missing connector instead of on the rule."""
+    cabled = [c for c in D.connectors if is_cabled(c.interface)]
+    assert [c.refdes for c in cabled] == ["J202", "J311"]
+    for c in cabled:
+        assert c.keyed, c.refdes
     assert fired(D, "BUS-ORDER") == []
     errs = fired(D.replace_connector("J202", keyed=""), "BUS-ORDER")
     assert len(errs) == 1 and "J202" in errs[0], errs

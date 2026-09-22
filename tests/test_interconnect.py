@@ -44,6 +44,13 @@ def _halves(d, iface):
                   key=lambda c: order.index(c.board))
 
 
+def _crossings(d):
+    """The interfaces the DESIGN actually carries halves for. ⚠️ Not every name
+    in `model.CROSSING`: the table is the shape, and a crossing with no
+    connectors is a crossing this design does not have."""
+    return {c.interface for c in d.connectors if c.interface}
+
+
 def _nets(c):
     return [cp.net for cp in c.pins]
 
@@ -116,6 +123,12 @@ def test_a_power_bus_mated_one_contact_off_puts_no_rail_on_another(d):
 # lands on are now figures off JST's own drawing.
 #: PWR-OUT's nets that carry the whole 12 V load, out and back.
 HEAVY = ("V12", "GND")
+#: How many conductors each of them takes. ⭐ ONE out and TWO back (IO-27): the
+#: CTRL ribbon's 13 grounds carried ~79 % of the return and are gone, so a
+#: single GND crimp would be the one silent failure that puts the whole 8.47 A
+#: nowhere. The feed keeps one conductor because an open V12 crimp is a dead
+#: module, which is loud.
+RETURN_CONDUCTORS = {"V12": 1, "GND": 2}
 
 
 def test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d):
@@ -130,8 +143,16 @@ def test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d
     ⚠️ Derating: JST's VH drawing p.1 gives ONE current figure and no table
     against the number of circuits energised, so 10 A is the figure held to
     here; its −25…+85 °C range is stated to include the rise the current
-    causes, which is where a loaded connector is really bounded. Only two of
-    the four circuits carry it, and the other two carry ~0.6 A and ~0 A.
+    causes, which is where a loaded connector is really bounded. Three of the
+    five circuits carry it, and the other two carry ~0.6 A and ~0 A.
+
+    ⭐ TWO GND CONDUCTORS SINCE IO-27, and the figure each is held to is the
+    WHOLE load, not half of it. They share by conductance in service (~4.24 A
+    each), but the case that sizes them is ONE CRIMP OPEN: the survivor then
+    carries all 8.47 A, and an open crimp is silent. So the assertion below is
+    deliberately the same for one return conductor or two -- what the second
+    one buys is that the loom no longer has a single point of failure, now
+    that the CTRL ribbon's 13 grounds are gone.
     """
     load = power_budget.budget(d).load_12v_a
     assert load > 8, f"a load of {load:.2f} A would not test anything"
@@ -139,7 +160,7 @@ def test_the_cables_conductors_and_contacts_carry_every_amp_the_budget_derives(d
         assert c.contact_a, f"{c.refdes} states no per-contact rating"
         for net in HEAVY:
             carrying = [cp for cp in c.pins if cp.net == net]
-            assert len(carrying) == 1, (c.refdes, net)
+            assert len(carrying) == RETURN_CONDUCTORS[net], (c.refdes, net)
             assert load <= c.contact_a, (
                 f"{c.refdes}: {load:.2f} A on one contact rated "
                 f"{c.contact_a} A")
@@ -209,12 +230,16 @@ def test_the_brass_posts_are_bonded_at_one_end_only_so_one_return_is_sized(d):
     # ...and the conductor that IS the return says the same, from its own end.
     awg, _crimp, why = netlist.PWROUT_LOOM["GND"]
     assert awg == 16 and "ONLY sized return" in why and "IO-21" in why
-    # One GND conductor on the cable, so there is nothing to share it with.
+    # ⭐ TWO GND conductors on the cable since IO-27, and they are the whole
+    # return: the ribbon that used to carry ~79 % of it is gone, which is why
+    # the brass must still not become a third path.
     for c in _halves(d, "PWR-OUT"):
-        assert len([cp for cp in c.pins if cp.net == "GND"]) == 1, c.refdes
+        assert len([cp for cp in c.pins if cp.net == "GND"]) == \
+            RETURN_CONDUCTORS["GND"], c.refdes
+    assert "IO-27" in brass.source and "no third path" in brass.source
 
 
-def test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d):
+def test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_posts_empty(d):
     """⛔ Audit C2: the BOM named a VHR-4N for a wafer that is a FIVE-circuit
     body with its third post omitted. JST's housing table (VH drawing p.2)
     gives the 4-circuit housing B = 15.78 against the wafer's 19.74: cavities
@@ -225,7 +250,10 @@ def test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_em
     and the cavities left empty ARE the posts the contact table omits -- both
     derived from the header's own tables, so neither can be typed apart from
     them again. And the two ends come from one place: the keyed string and
-    both halves' sources name the housing, and `jlc_bom` orders it."""
+    both halves' sources name the housing, and `jlc_bom` orders it.
+    ⚠️ Since IO-27 the contact table omits NOTHING: cavity 3 carries the second
+    GND, so the set of empty cavities is empty and the assertion is that it
+    matches, not that it is non-empty."""
     housing, circuits, empty = netlist.PWROUT_HOUSING
     halves = _halves(d, "PWR-OUT")
     assert halves, "no PWR-OUT half to hold the housing to"
@@ -242,11 +270,15 @@ def test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_em
         assert netlist._MATE_BY_REFDES[c.refdes] == housing, c.refdes
     ends = dict((mpn, qty) for mpn, qty, _ in netlist.pwrout_loom_ends())
     assert ends[f"JST {housing}"] == 2                      # one per end
-    # ...and a crimp on both ends of every conductor, by the contact JST gives
-    # that gauge: 4 heavy, 4 light.
-    for crimp, n in Counter(c for _, c, _ in netlist.PWROUT_LOOM.values()).items():
+    # ⭐ ...and a crimp on both ends of every CONDUCTOR, counted off the
+    # CONTACT table and not off the loom table's keys: two contacts carry GND
+    # since IO-27, and counting nets would have ordered four heavy crimps for
+    # three heavy conductors -- the second return arriving uncrimpable.
+    per_crimp = Counter(netlist.PWROUT_LOOM[net][1]
+                        for _pin, net in netlist._PWROUT_CONTACTS)
+    for crimp, n in per_crimp.items():
         assert ends[f"JST {crimp}"] == 2 * n, crimp
-    assert ends == {"JST VHR-5N": 2, "JST SVH-41T-P1.1": 4, "JST SVH-21T-P1.1": 4}
+    assert ends == {"JST VHR-5N": 2, "JST SVH-41T-P1.1": 6, "JST SVH-21T-P1.1": 4}
 
 
 def test_the_housing_check_fires_on_the_vhr_4n(d):
@@ -255,11 +287,13 @@ def test_the_housing_check_fires_on_the_vhr_4n(d):
     the wrong post anyway."""
     with mock.patch.object(netlist, "PWROUT_HOUSING", ("VHR-4N", 4, ("3",))):
         with pytest.raises(AssertionError, match="not 4 circuits long"):
-            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d)
-    # ...and the right size with the wrong cavity empty is the other half.
-    with mock.patch.object(netlist, "PWROUT_HOUSING", ("VHR-5N", 5, ("2",))):
+            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_posts_empty(d)
+    # ...and the right size with a cavity wrongly left empty is the other half.
+    # ⚠️ Cavity 3 is the one IO-27 filled, so leaving it empty in the housing is
+    # a housing that cannot take the second return.
+    with mock.patch.object(netlist, "PWROUT_HOUSING", ("VHR-5N", 5, ("3",))):
         with pytest.raises(AssertionError, match="but the wafer omits"):
-            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_post_s_cavity_empty(d)
+            test_the_pwrout_housing_is_the_body_s_size_with_the_omitted_posts_empty(d)
 
 
 def test_every_cabled_half_has_a_cable_end_bought_with_it(d):
@@ -270,21 +304,22 @@ def test_every_cabled_half_has_a_cable_end_bought_with_it(d):
     Protects: every cabled half names its mate, the mate is either an LCSC
     part ordered loose (`_LOOSE_BY_MPN`, so the fixture and `jlc_bom` carry
     it) or the PWR-OUT housing (owner-buy, `pwrout_loom_ends`), and nothing
-    names a mate for a half that is not cabled."""
+    names a mate for a half that is not cabled.
+    ⚠️ ONE cable is left since IO-27 deleted the ribbon, and its mate is the
+    owner-buy housing rather than an LCSC part -- which is why both branches
+    of the `or` below stay."""
     cabled = {c.refdes for c in d.connectors if is_cabled(c.interface)}
-    assert cabled == set(netlist._MATE_BY_REFDES), (
+    assert cabled == set(netlist._MATE_BY_REFDES) == {"J202", "J311"}, (
         f"mates for {set(netlist._MATE_BY_REFDES) ^ cabled}")
     off_lcsc = {mpn.removeprefix("JST ") for mpn, _, _ in netlist.pwrout_loom_ends()}
     for ref, mpn in netlist._MATE_BY_REFDES.items():
         assert mpn in netlist._LOOSE_BY_MPN or mpn in off_lcsc, (ref, mpn)
-    # The socket: one per header, its LCSC code in the catalogue the fixture
-    # is built from, and on the order list with both headers named.
-    code, maker, per, _ = netlist._LOOSE_BY_MPN["FC-2.54-24P"]
-    assert (code, per) == ("C5274612", 1) and maker.endswith("FC-2.54-24P")
-    assert netlist.lcsc_catalogue()[code] == maker
+    # ⛔ And the ribbon's own cable end is GONE from the order, not merely
+    # unreferenced: an IDC socket still booked for a loom that no longer
+    # exists is a part the owner buys for nothing.
+    assert "FC-2.54-24P" not in netlist._LOOSE_BY_MPN
     from tools import jlc_bom
-    line = next(l for l in jlc_bom.loose_list(d).splitlines() if l.startswith(code))
-    assert " x2 " in line and "J105" in line and "J312" in line
+    assert "FC-2.54-24P" not in jlc_bom.loose_list(d)
     assert "VHR-5N" in jlc_bom.loom_list()
 
 
@@ -295,8 +330,8 @@ def test_every_cabled_half_is_positively_keyed(d):
     that makes a reversed mate harmless. Rule BUS-ORDER says the same thing on
     the real design; this holds the FEATURE to being named from a drawing,
     which is the only form of it anybody can check on the bench."""
-    assert CABLES, "no cabled crossing left to check"
-    for iface in CABLES:
+    assert set(CABLES) & _crossings(d), "no cabled crossing left to check"
+    for iface in set(CABLES) & _crossings(d):
         for c in _halves(d, iface):
             assert c.keyed, f"{c.refdes} ({iface}) names no keying"
             assert any(w in c.keyed for w in ("notch", "lock", "key")), c.refdes
@@ -327,6 +362,52 @@ def test_key_sense_meets_its_adc_pin_through_1k_with_100nf_at_the_pin(d):
     assert pin_net.gpio == "GPIO1"
 
 
+def test_the_spines_pinouts_are_derived_from_their_signal_lists(d):
+    """⛔ THE PINOUT IS NEVER TYPED, on either spine. Both are built by
+    `_signal_gnd_pins` from a list of signals -- contact 2i+1 the signal, 2i+2
+    the ground across the row from it -- so the contact a net lands on, the
+    contact count, the body length and the LCSC size all follow the list.
+
+    THE MUTATION, and it is the whole test: reverse the signal list and rebuild
+    the pinout. Every signal moves to a different contact, the grounds stay
+    where they are, and the body is unchanged -- which is what "derived" means
+    and what a typed table could not do. ⚠️ It is run on CTRL-STACK AND on
+    STACK, because CTRL-STACK is new and STACK is the one that has been
+    renumbered twice; a builder shared by two spines has to be proven on both.
+    """
+    for iface, signals in (("CTRL-STACK", netlist._flat(netlist._CTRL_STACK_SIGNALS)),
+                           ("STACK", netlist._STACK_SIGNALS)):
+        live = [cp.net for cp in _halves(d, iface)[0].pins]
+        built = [cp.net for cp in netlist._signal_gnd_pins(signals)]
+        assert live == built, iface
+        assert built[0::2] == list(signals) and set(built[1::2]) == {"GND"}
+        turned = [cp.net for cp in netlist._signal_gnd_pins(signals[::-1])]
+        assert turned != built and turned[0::2] == list(signals)[::-1]
+        assert turned[1::2] == built[1::2], "the grounds do not move"
+        assert len(turned) == len(built) == 2 * len(signals)
+
+
+def test_the_two_spines_take_the_same_family_across_the_same_stop(d):
+    """⭐ CTRL-STACK is STACK one deck up (IO-27): the same Hong Cheng socket
+    series on the lower board's TOP face, the same BOOMELE strip cut to length
+    under the upper board, and the same 8.5 + 2.54 = 11.04 mm insulator-to-
+    insulator stop. That is why one HIWA TP-11 part number and one 10.94-11.04
+    selection window serve both gaps -- a second mated height would need a
+    second pillar and a second window to measure into."""
+    stack, ctrl = _halves(d, "STACK"), _halves(d, "CTRL-STACK")
+    for lower, upper in (stack, ctrl):
+        assert (lower.side, upper.side) == ("top", "bottom")
+        assert (lower.height_mm, upper.height_mm) == (8.5, 2.54)
+        assert lower.height_confirmed and upper.height_confirmed
+    assert stack[0].lcsc != ctrl[0].lcsc, "different sizes, different sockets"
+    assert stack[1].lcsc == ctrl[1].lcsc == "C2333", "one strip, two lengths"
+    gaps = {(g.below, g.above): g for g in board_params.layer_gaps(d)}
+    for key in (("OUTPUTS", "LOGIC"), ("LOGIC", "CTRL")):
+        assert gaps[key].gap_mm == pytest.approx(11.04), key
+        assert gaps[key].standoff.name == "HIWA TP-11"
+        assert gaps[key].standoff.seating == "shimmed"
+
+
 def test_a_mated_pairs_upper_half_lands_pad_for_pad_over_its_mate(d):
     """A PAIR's upper half is placed on the underside, which the editor mirrors.
     Its footprint is generated pre-mirrored, so after the flip (and at most a
@@ -347,8 +428,8 @@ def test_a_cabled_crossing_gets_two_ordinary_unmirrored_footprints(d):
     """Pre-mirroring exists to line a half up with the MATE under it.  A cable
     has no such mate, so mirroring it would only move its pads off where the
     netlist puts them: both halves get the same plain land pattern."""
-    assert CABLES, "no cabled crossing left to check"
-    for iface in CABLES:
+    assert set(CABLES) & _crossings(d), "no cabled crossing left to check"
+    for iface in set(CABLES) & _crossings(d):
         lo, up = _halves(d, iface)
         lo_fp, up_fp = footprint_lib.generated(lo), footprint_lib.generated(up)
         assert "-UNDER" not in lo_fp[0] and "-UNDER" not in up_fp[0], iface
@@ -364,7 +445,7 @@ def test_the_under_gate_is_the_crossing_kind_not_the_face(d):
     them: move a cabled one to the TOP and it is still not pre-mirrored, while
     the mated one on the same face still earns the mirror.  What earns it is
     having a mate to line up with."""
-    cabled = _halves(d, CABLES[0])[1]
+    cabled = _halves(d, sorted(set(CABLES) & _crossings(d))[0])[1]
     assert cabled.side == "bottom"                      # ...as its gap requires
     assert "-UNDER" not in footprint_lib.generated(cabled)[0]
     assert "-UNDER" not in footprint_lib.generated(replace(cabled, side="top"))[0]

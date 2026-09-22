@@ -114,7 +114,7 @@ def test_the_envelope_the_pcb_outline_is_cut_to():
 TWELVE_V_ROW_MM = 220.28
 
 
-def test_the_edges_are_stated_by_hand_and_two_of_them_overrun_the_board():
+def test_the_edges_are_stated_by_hand_and_one_of_them_overruns_the_board():
     """The row is arithmetic, not a heuristic, so it is one of the two things
     BOARD_L answers to -- and since 2026-09-22 it is ONE strip per board edge,
     both faces, between the M3 corners (228.0 mm of the 242): a harness
@@ -123,6 +123,10 @@ def test_the_edges_are_stated_by_hand_and_two_of_them_overrun_the_board():
     on a 41.84 board, cannot sit behind POWER's row and takes its 58.3 mm too.
     The first placement put J314's pins inside J303-J305's bodies and J101's
     pins into U201's case, and every check passed; the picture showed it.
+
+    ⭐ IO-26 SPLIT POWER'S ROW IN TWO, which is what the four-board stack was
+    for. POWER's edge was 256.34 mm and is 115.18; the controller row it lost
+    is CTRL's 140.16 mm, on a board of its own.
 
     THE 12 V ROW (IO-24, amended 2026-09-21), header by header:
       J301  4 x 3.81 + 10.48 =  25.72
@@ -133,42 +137,50 @@ def test_the_edges_are_stated_by_hand_and_two_of_them_overrun_the_board():
       J313  7 x 3.81 + 10.48 =  37.15   bodies 215.28
       five HEADER_GAPs of 1.0            +  5.00 = 220.28 mm
     and the 5 V row J314, 8 x 3.50 + 10.40 = 38.40, one more gap: 259.68 mm on
-    a 228 mm edge, 31.68 over.
-    POWER: 55.88 + 25.4 + 35.56 + 20.32 + 55.88 = 193.04 of headers and four
-    gaps = 197.04, plus U201's 58.3 and a gap = 256.34 mm, 28.34 over. (U202 is
-    25.4 deep: 41.84 - 13.0 = 28.84 mm stand behind a 13 mm row, so it sits
-    behind the row and costs nothing.)
+    a 228 mm edge, 31.68 over. ⚠️ THE ONE ROW STILL OVER, and it is the next
+    task's (IO-26 2a): the 5 V block leaves OUTPUTS and takes J314 with it.
+    POWER: J101's 6 x 7.62 + 10.16 = 55.88, plus U201's 58.3 under it and a
+    gap = 115.18 mm, 50.5 % of the edge. (U202 is 25.4 deep: 41.84 - 12.15 =
+    29.69 mm stand behind J101's row, so it sits behind and costs nothing.)
+    CTRL: 25.40 + 35.56 + 20.32 + 55.88 = 137.16 of headers and three gaps =
+    140.16 mm, 61.5 %.
     LOGIC: 185.94 mm, 81.6 % of the edge -- inside the 90 % design margin.
 
-    ⚠️ THIS IS THE HONEST STATE, NOT A TARGET. board_fit fails POWER and
-    OUTPUTS on it and the gate stops there. Which row changes is the owner's
-    decision (design record IO-26); when the netlist changes, this test is
-    rewritten to the new arithmetic, not deleted. What the options score, for
-    the next person: J314 moved to LOGIC's edge makes LOGIC 225.34 (98.8 %,
-    inside 228 by 2.66 mm) and OUTPUTS 220.28 (96.6 %); dropping J405's parked
-    footprint alone brings POWER to 199.24 (87.4 %); dropping J310 alone
-    leaves it 235.02, still over.
     Protects: that the edge arithmetic is stated where a person can check it,
-    and that the two overruns cannot be forgotten while IO-26 is open."""
+    and that the one overrun left cannot be forgotten."""
     from tools import board_fit as bf, netlist
     edges = {e.board: e for e in bf.edge_budget(netlist.current())}
     assert bf.EDGE_USABLE == pytest.approx(228.0)
+    assert list(edges) == ["POWER", "OUTPUTS", "LOGIC", "CTRL"]
     twelve_v = sum((25.72, 29.53, 48.58, 18.10, 56.20, 37.15)) + 5 * 1.0
     assert twelve_v == pytest.approx(TWELVE_V_ROW_MM, abs=0.01)
     assert edges["OUTPUTS"].length_mm == pytest.approx(twelve_v + 1.0 + 38.40, abs=0.01)
     assert edges["OUTPUTS"].headers[-1] == "J314" and edges["OUTPUTS"].blockers == ()
     assert edges["OUTPUTS"].over_mm == pytest.approx(31.68, abs=0.01)
-    assert edges["POWER"].length_mm == pytest.approx(197.04 + 1.0 + 58.3, abs=0.01)
+    assert edges["POWER"].length_mm == pytest.approx(55.88 + 1.0 + 58.3, abs=0.01)
     assert edges["POWER"].blockers == ("U201",)
-    assert edges["POWER"].over_mm == pytest.approx(28.34, abs=0.01)
+    assert edges["POWER"].headers == ("J101",)
+    assert edges["CTRL"].length_mm == pytest.approx(
+        sum((25.40, 35.56, 20.32, 55.88)) + 3 * 1.0, abs=0.01)
+    assert edges["CTRL"].blockers == ()
     assert edges["LOGIC"].length_mm == pytest.approx(185.94, abs=0.01)
-    assert edges["LOGIC"].length_mm <= 0.90 * bf.EDGE_USABLE          # the one row inside its margin
-    assert edges["LOGIC"].length_mm + 1.0 + 38.40 <= bf.EDGE_USABLE   # where J314 could go
+    # Three of the four are inside the 90 % design margin; the fourth is the
+    # 12 V + 5 V strip, and the 5 V row moving off it is what closes this.
+    for board in ("POWER", "LOGIC", "CTRL"):
+        assert edges[board].length_mm <= 0.90 * bf.EDGE_USABLE, board
+    assert edges["OUTPUTS"].length_mm - 38.40 - 1.0 <= bf.EDGE_USABLE
 
 
 def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
-    """The pack is what BOARD_L was set by. POWER top binds: 215.54 mm against
-    0.90 x 242.0 = 217.80, so 2.26 mm of slack.
+    """The pack is what BOARD_L was set by. POWER top binds: 164.29 mm against
+    0.90 x 242.0 = 217.80, so 53.51 mm of slack.
+
+    ⭐ IT WAS 215.54 UNTIL IO-26, 2.26 mm inside the tripwire. The controller
+    row and its eighteen conditioning parts left POWER for CTRL, and the loom's
+    38.08 mm box header went with the ribbon, so the binding face shed 51 mm of
+    pack in one commit. ⛔ That slack is NOT a licence to narrow the board: the
+    pack cliff is a property of the WIDTH and sits at 40.84 mm whatever the
+    length does (see the cliff tests below).
 
     ⚠️ THIS TRIPWIRE WAS A STRICT XFAIL for the length of IO-20's parts task:
     the cabled crossings put a 38.08 x 8.4 box header and a 19.74 x 8.5 keyed
@@ -194,18 +206,18 @@ def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
     worst = max(bf.area_budget(netlist.current()),
                 key=lambda s: -1.0 if s.pack_mm is None else s.pack_mm)
     assert (worst.board, worst.side) == ("POWER", "top")
-    assert worst.pack_mm == pytest.approx(215.54, abs=0.01)     # where it stands
+    assert worst.pack_mm == pytest.approx(164.29, abs=0.01)     # where it stands
     assert worst.pack_mm <= 0.90 * bp.BOARD_L          # the tripwire
-    assert 0.90 * bp.BOARD_L - worst.pack_mm == pytest.approx(2.26, abs=0.01)
+    assert 0.90 * bp.BOARD_L - worst.pack_mm == pytest.approx(53.51, abs=0.01)
 
 
 def test_the_worst_density_keeps_the_10_percent_the_envelope_was_chosen_for():
     """The same search held every face to 0.90 x DENSITY_LIMIT = 0.675. POWER
-    top binds again: 6243.18 mm² of bodies in 41.84 x 242.0 - 196 = 9929.28 mm²
-    of usable side = 0.6288, which clears 0.675 by 0.0462 -- 16.2 % of headroom
-    against the 0.75 board_fit fails at. ⚠️ It was 0.6611 on the 40 x 241 board
-    IO-20's cabled crossings left behind, 0.0139 inside the tripwire; the wider
-    envelope is what bought it back.
+    top binds again: 4151.5 mm² of bodies in 41.84 x 242.0 - 196 = 9929.28 mm²
+    of usable side = 0.4181, which clears 0.675 by 0.2569. ⚠️ It was 0.6288
+    until IO-26 moved the controller row off this face, and 0.6611 on the
+    40 x 241 board IO-20's cabled crossings left behind, 0.0139 inside the
+    tripwire; the wider envelope is what bought that back.
 
     Protects: the headroom routing, courtyards and creepage come out of. Density
     is not what set the envelope (at 41.84 mm it wanted only L >= 225.74), so it
@@ -216,7 +228,7 @@ def test_the_worst_density_keeps_the_10_percent_the_envelope_was_chosen_for():
     worst = max(bf.area_budget(netlist.current()), key=lambda s: s.density)
     assert (worst.board, worst.side) == ("POWER", "top")
     assert worst.density <= 0.90 * bf.DENSITY_LIMIT    # the tripwire
-    assert worst.density == pytest.approx(0.6288, abs=0.0005)   # where it stands
+    assert worst.density == pytest.approx(0.4181, abs=0.0005)   # where it stands
 
 
 # --- the pack CLIFF: derived from the packer, not typed ----------------------
@@ -345,7 +357,12 @@ def cliff_problems(d) -> list[str]:
     edge, face, below, above = pack_cliff(d)
     # An infinite figure below the step is not a long pack: it is a body that
     # cannot be placed at all on a board that narrow, which is a wall and not a
-    # step. Say that, rather than printing "inf mm".
+    # step. Say that, rather than printing "inf mm" -- and name the face that
+    # BLOCKS rather than the one with the longest pack at the edge, because
+    # below a wall they are usually not the same face (today the wall is the
+    # quarter brick on POWER's underside and the longest pack is POWER top).
+    if not math.isfinite(below):
+        face = _worst_pack(d, round(edge - SWEEP_MM, 2))[1]
     fall = (f"falls {below - above:.2f} mm across that step"
             if math.isfinite(below) else
             "cannot be placed at all below it -- a body fits in neither "
@@ -366,150 +383,185 @@ def cliff_problems(d) -> list[str]:
     return []
 
 
+def deeper_brick(mm: float):
+    """The real netlist with `mm` added to U201's DEPTH across the board.
+
+    ⚠️ Its depth, not the longer side `grown_body` grows: what a body costs the
+    WIDTH is its short side, and the quarter brick's 37.2 mm is what the guard
+    now answers to. A mutation aimed at the wrong axis moves nothing and
+    "passes"."""
+    from tools import netlist
+    d = netlist.current()
+    w, l = d.part("U201").footprint_mm
+    return d.replace_part("U201", footprint_mm=(w, l + mm))
+
+
 def test_the_pack_cliff_is_derived_from_the_packer():
     """⭐ THE CLIFF, as a CHECKED property rather than a paragraph.
 
     WHAT IT PROTECTS. `board_fit`'s shelf pack steps in the board's width,
     because a body either fits beside another across the board or it does not.
-    ⚠️ WHICH TWO BODIES MAKE THE STEP IS NOT A CONSTANT. It was the Y-caps:
-    C203-C206 are 12.5 x 18.5, so 18.5 + 2 x COURTYARD = 19.50 across each and
-    two paired at 39.00 EXACTLY. Since IO-20 it is C207, the 19.1 mm polymer
-    bulk cap at 20.10 across, pairing with J202, the keyed power header at
-    19.74 + 2 x COURTYARD = 20.74 -- and 20.10 + 20.74 = 40.84. Below that
-    width they take a shelf each and POWER top packs into 225.13 mm; at it they
-    share one and the same face packs into 218.23 mm, a 6.90 mm step.
+    ⚠️ WHAT MAKES THE NEAREST STEP IS NOT A CONSTANT, and it has changed TWICE.
+    It was two Y-caps pairing at 39.00 mm; IO-20 made it C207's 20.10 mm
+    courtyard pairing with J202's 20.74 at 40.84; and since IO-26 took the
+    controller row and the ribbon's box header off POWER's top face, that face
+    packs so short (164.29 mm against the 221.40 a 246 mm board carries at
+    90 %) that BOTH sides of every pairing step above 38.20 mm are carryable.
+
+    ⭐ SO THE NEAREST DISCONTINUITY IS NO LONGER A STEP, IT IS A WALL: the
+    quarter brick U201 is 37.2 mm deep and with a COURTYARD either side needs
+    38.20 mm of board. Below that it fits in NEITHER orientation, POWER's
+    underside cannot be placed at all, and there is no far side to the fall.
+    The guard already had the words for it, and now it needs them.
 
     ⛔ Nothing here types a width as the answer. `pack_cliff` sweeps down the
     width from BOARD_W and asks the packer at every 0.01 mm, so the guard
-    finds the step wherever the geometry puts it -- which is how it found this
-    one after the two bodies that made the old one stopped being the binding
-    pair. The mutation tests below move it deliberately, from both bodies and
-    from the courtyard."""
-    from tools import netlist
+    finds the edge wherever the geometry puts it -- which is how it found this
+    one after the pair that made the old step stopped binding. The mutations
+    below move it deliberately, from the brick and from the courtyard."""
+    from tools import board_fit as bf, netlist
     edge, face, below, above = pack_cliff(netlist.current())
-    assert face == "POWER top"
-    assert edge == pytest.approx(40.84, abs=0.01)          # where the step IS
-    assert (below, above) == (pytest.approx(225.13), pytest.approx(218.23))
-    assert below - above == pytest.approx(6.90, abs=0.01)   # ...and how tall
-    # ...and no length the cavity allows absorbs the pack below it:
-    assert below / 0.90 > _cavity_board_caps()[0]
+    assert edge == pytest.approx(38.20, abs=0.01)          # where the edge IS
+    # ...and it is the brick's own width, derived, not a pairing of two bodies.
+    brick = netlist.current().part("U201").footprint_mm
+    assert edge == pytest.approx(min(brick) + 2 * bf.COURTYARD, abs=0.01)
+    assert (face, above) == ("POWER top", pytest.approx(198.28, abs=0.01))
+    assert below == math.inf, "a wall has no far side"
+    assert _worst_pack(netlist.current(), round(edge - SWEEP_MM, 2))[1] == \
+        "POWER bottom (U201 does not fit)"
 
 
 def test_the_board_stands_clear_of_the_cliff():
-    """⚠️ WHY A BOARD MUST NOT SIT ON THE STEP. A board on the edge is one where
-    any growth in a body, or in COURTYARD, re-shapes BOTH plan axes -- the width
-    walks up and the length follows the pack. The clearance is 1.0 mm and it has
-    no slack of its own by construction: it IS the purchase, not a percentage of
-    it. Spending any of it is meant to be a decision, which is what this says.
+    """⚠️ WHY A BOARD MUST NOT SIT ON THE EDGE. A board on it is one where any
+    growth in a body, or in COURTYARD, re-shapes BOTH plan axes -- the width
+    walks up and the length follows the pack. The clearance the owner bought on
+    2026-09-20 is 1.0 mm, and it is a FLOOR: the guard fires below it.
 
-    ⚠️ THIS WAS A STRICT XFAIL for the length of IO-20's parts task: the step
-    moved from 39.00 mm (two Y-caps pairing) to 40.84 (C207 pairing with the new
-    J202), 0.84 mm ABOVE the 40.0 mm board, so the board was on the wrong side
-    of it. The envelope search is what answered it -- 41.84 is 40.84 + the
-    millimetre, exactly as 40.0 was 39.00 + it -- and the marker is gone rather
-    than loosened."""
+    ⚠️ THE BOARD HAS MORE THAN THAT TODAY, and the reason is worth stating
+    rather than quietly banking. BOARD_W = 41.84 was chosen as 40.84 + the
+    millimetre, 40.84 being where C207 and J202 paired. IO-26 emptied POWER's
+    top face and that step stopped binding, so the nearest edge fell to the
+    brick's 38.20 mm wall and the same 41.84 mm board now stands 3.64 mm above
+    it. ⬜ That is 2.64 mm of width the envelope search could hand back to the
+    cavity, which has only 1.51 mm of slack across -- an OWNER decision and a
+    re-run of the search in `board_params`, not something to nudge here.
+    ⛔ Do NOT narrow the board to 39.20 to "restore" the millimetre: the wall
+    is the brick, and 1.0 mm above a body that fits in neither orientation
+    below it is a different and much worse place to stand than 1.0 mm above a
+    pairing step, which still has a far side."""
     from tools import netlist
     edge, _face, _below, _above = pack_cliff(netlist.current())
-    assert bp.BOARD_W - edge == pytest.approx(1.0, abs=1e-9), \
-        f"the step is at {edge:.2f} mm"
+    clear = bp.BOARD_W - edge
+    assert clear >= 1.0, f"the edge is at {edge:.2f} mm"
+    assert clear == pytest.approx(3.64, abs=0.01)        # where it stands
     assert cliff_problems(netlist.current()) == []
 
 
 def test_the_guard_reports_a_board_below_the_cliff(board_width):
     """⚠️ THE MUTATION, direction one: the board's own width, which the guard
     must answer to, in both of the shapes a too-narrow board takes. Every
-    board_fit gate is green at 40.0 mm AND at 41.0 -- that is exactly why this
-    guard has to exist -- while one is below the step and the other 0.16 mm
-    above it, so the guard is the only thing that says the envelope needs
+    board_fit gate is green at 39.0 mm AND at 38.0 -- that is exactly why this
+    guard has to exist -- while one is 0.80 mm above the edge and the other
+    below it, so the guard is the only thing that says the envelope needs
     re-running and by how much.
 
-    ⚠️ 40.0 x 241.0 is not a hypothetical width: it is the envelope IO-20's
-    cabled crossings were left standing on, and this is the message that said
-    so."""
+    ⚠️ Neither width is hypothetical: 38.0 is under the quarter brick's own
+    37.2 mm plus its courtyards, so POWER's underside cannot be laid out at
+    all, and the pack budget still passes because the packer is asked about
+    each FACE and reports the one it cannot place as a blocker, not as a
+    length."""
     from tools import board_fit as bf, netlist
     d = netlist.current()
+
     def but_the_rows(problems):
-        # the ROWS verdict is open on its own account (IO-26) at every width here
+        # the ROWS verdict is open on its own account (IO-26 2a) at every width
         return [p for p in problems if not p.startswith("row:")]
     assert but_the_rows(bf.problems(d)) == []            # 41.84 mm: it builds
     assert cliff_problems(d) == []                       # ...and it is clear
-    board_width(40.0)
-    assert but_the_rows(bf.problems(d)) == []            # 40.0 mm: it still builds
-    (at_40,) = cliff_problems(d)
-    assert at_40.startswith("cliff above the board:")
-    assert "steps at 40.84 mm" in at_40 and "BOARD_W is 40.00" in at_40
-    assert "packs into 225.13 mm" in at_40 and "Re-run the envelope search" in at_40
-    board_width(41.0)
-    assert but_the_rows(bf.problems(d)) == []            # ...and it still builds
-    (at_41,) = cliff_problems(d)
-    assert at_41.startswith("cliff clearance:")          # above it, but not by 1 mm
-    assert "steps at 40.84 mm" in at_41 and "BOARD_W is 41.00" in at_41
-    assert "0.16 mm above it" in at_41
+    board_width(39.0)
+    (at_39,) = cliff_problems(d)
+    assert at_39.startswith("cliff clearance:")          # above it, but not by 1 mm
+    assert "steps at 38.20 mm" in at_39 and "BOARD_W is 39.00" in at_39
+    assert "0.80 mm above it" in at_39
+    assert "POWER bottom (U201 does not fit) cannot be placed at all" in at_39
+    board_width(38.0)
+    (at_38,) = cliff_problems(d)
+    assert at_38.startswith("cliff above the board:")
+    assert "steps at 38.20 mm" in at_38 and "BOARD_W is 38.00" in at_38
+    assert "cannot be placed at all" in at_38
+    assert "Re-run the envelope search" in at_38
 
 
-def test_the_cliff_follows_the_bodies_that_make_it(grown_y_caps, grown_body):
-    """⚠️ THE MUTATION, direction two, and the one that proves the step is
-    DERIVED: move the bodies that pair at it and the step has to move with
-    them. ⭐ TWO DIFFERENT PAIRS, deliberately — the binding pair changed once
-    already (IO-20), and a mutation aimed only at the Y-caps would have gone on
-    "proving" the guard while it had stopped answering to them.
+def test_the_cliff_follows_the_bodies_that_make_it(grown_y_caps):
+    """⚠️ THE MUTATION, direction two, and the one that proves the edge is
+    DERIVED: move the body that makes it and the edge has to move with it.
 
-      C207 +0.50  20.10 -> 20.60 across, pairing with J202's 20.74 at 41.34.
-                  Still below the board, but only 0.50 mm below: a CLEARANCE
-                  problem, the mildest of the guard's three answers.
-      C207 -1.00  19.10 across, pairing at 39.84 -- 2.00 mm clear, and the
-                  guard goes SILENT. The one mutation here that proves the
-                  guard can be satisfied as well as fail.
-      Y-caps +1.5 21.00 mm across each, pairing at 42.00, ABOVE the board and
-                  displacing the pair that makes today's step. This is not a
-                  clearance: the boards have to be re-shaped, and the guard says
-                  so in different words."""
-    near = grown_body("C207", 0.5)
-    assert pack_cliff(near)[0] == pytest.approx(41.34, abs=0.01)
+      U201 +2.8   the brick 40.0 mm deep, its wall at 41.00 -- still below the
+                  board, but only 0.84 mm below: a CLEARANCE problem, the
+                  mildest of the guard's three answers.
+      U201 -2.2   35.0 mm deep, wall at 36.00 -- 5.84 mm clear, and the guard
+                  goes SILENT. The one mutation here that proves the guard can
+                  be satisfied as well as fail.
+      U201 +3.7   40.9 mm deep, wall at 41.91, ABOVE the board: not a clearance
+                  at all, the boards have to be re-shaped, and the guard says
+                  so in different words.
+
+    ⭐ AND ONE NEGATIVE, which is the point of a derived guard. Growing the four
+    Y-caps by 8 mm each -- the bodies that made the step before IO-20, and half
+    of the pair the guard answered to before IO-26 -- moves the edge NOT AT
+    ALL. A mutation aimed at yesterday's binding body would have gone on
+    "proving" this guard while it had stopped answering to it, which is the
+    failure `grown_y_caps` was written to catch and is now the thing it
+    demonstrates."""
+    near = deeper_brick(2.8)
+    assert pack_cliff(near)[0] == pytest.approx(41.00, abs=0.01)
     (tight,) = cliff_problems(near)
     assert tight.startswith("cliff clearance:")
-    assert "steps at 41.34 mm" in tight and "0.50 mm above it" in tight
+    assert "steps at 41.00 mm" in tight and "0.84 mm above it" in tight
 
-    clear = grown_body("C207", -1.0)
-    assert pack_cliff(clear)[0] == pytest.approx(39.84, abs=0.01)
-    assert cliff_problems(clear) == []                   # 2.00 mm clear
+    clear = deeper_brick(-2.2)
+    assert pack_cliff(clear)[0] == pytest.approx(36.00, abs=0.01)
+    assert cliff_problems(clear) == []                   # 5.84 mm clear
 
-    over = grown_y_caps(1.5)
-    assert pack_cliff(over)[0] == pytest.approx(42.00, abs=0.01)
+    over = deeper_brick(3.7)
     (past,) = cliff_problems(over)
     assert past.startswith("cliff above the board:")
-    assert "steps at 42.00 mm" in past and "BOARD_W is 41.84" in past
-    assert "packs into 228.53 mm" in past               # ...and what that costs
+    assert "steps at 41.91 mm" in past and "BOARD_W is 41.84" in past
+    assert "cannot be placed at all" in past
     assert "Re-run the envelope search" in past
+
+    unmoved = grown_y_caps(8.0)
+    assert pack_cliff(unmoved)[0] == pytest.approx(38.20, abs=0.01)
+    assert cliff_problems(unmoved) == []
 
 
 def test_the_courtyard_is_in_the_same_sum_and_moves_the_cliff_too(monkeypatch):
-    """The step is (19.10 + 19.74) + 4 x COURTYARD -- two bodies, two
-    courtyards each -- so the courtyard is as load-bearing as either body is,
-    and it grows EVERY body, not two.
+    """The edge is the brick's 37.2 mm plus a COURTYARD on each side, so the
+    courtyard is as load-bearing as the body is -- and it grows EVERY body, not
+    one, which is why it reaches the guard's fourth answer as well.
     ⛔ COURTYARD is not a dial (it is IPC-7351's most generous excess); this
-    mutates it only to show the guard answers to it, and it reaches all three
-    of the guard's answers on its own. While that pair still binds, each
-    0.05 mm moves the step 0.20 mm: 0.45 puts it at 40.64 (1.20 mm clear, and
-    SILENT) and 0.55 at 41.04 (0.80 mm, a CLEARANCE problem). ⚠️ By 0.65 the sum
-    no longer predicts it -- 42.60, not 41.44 -- because every other body has
-    grown too and a different pair binds; the guard still finds it, ABOVE the
-    board, which is the point of deriving rather than typing. ⚠️ At 0.70 there
-    is no step left to find -- the widest board the measured cavity allows no
-    longer closes the pack -- and `pack_cliff` says THAT instead of returning a
+    mutates it only to show the guard answers to it. While the brick's wall is
+    what binds, each 0.05 mm moves the edge 0.10 mm: 0.45 puts it at 38.10
+    (3.74 mm clear, and SILENT) and 1.45 at 40.85 (0.99 mm, a CLEARANCE
+    problem, just). ⚠️ By 1.50 the sum no longer predicts it -- 42.50, not
+    40.20 -- because every other body has grown too and a pairing step above
+    the board binds instead; the guard still finds it, ABOVE the board, which
+    is the point of deriving rather than typing. ⚠️ At 2.00 there is no edge
+    left to find -- the widest board the measured cavity allows no longer
+    closes the pack -- and `pack_cliff` says THAT instead of returning a
     number, which is the answer that matters."""
     from tools import board_fit as bf, netlist
     d = netlist.current()
     monkeypatch.setattr(bf, "COURTYARD", 0.45)
-    assert pack_cliff(d)[0] == pytest.approx(40.64, abs=0.01)
-    assert cliff_problems(d) == []                       # 1.20 mm clear
-    monkeypatch.setattr(bf, "COURTYARD", 0.55)
-    assert pack_cliff(d)[0] == pytest.approx(41.04, abs=0.01)
+    assert pack_cliff(d)[0] == pytest.approx(38.10, abs=0.01)
+    assert cliff_problems(d) == []                       # 3.74 mm clear
+    monkeypatch.setattr(bf, "COURTYARD", 1.45)
+    assert pack_cliff(d)[0] == pytest.approx(40.85, abs=0.01)
     assert cliff_problems(d)[0].startswith("cliff clearance:")
-    monkeypatch.setattr(bf, "COURTYARD", 0.65)
-    assert pack_cliff(d)[0] == pytest.approx(42.60, abs=0.01)
+    monkeypatch.setattr(bf, "COURTYARD", 1.50)
+    assert pack_cliff(d)[0] == pytest.approx(42.50, abs=0.01)
     assert cliff_problems(d)[0].startswith("cliff above the board:")
-    monkeypatch.setattr(bf, "COURTYARD", 0.70)
+    monkeypatch.setattr(bf, "COURTYARD", 2.00)
     with pytest.raises(AssertionError, match="no longer fits the box"):
         pack_cliff(d)
 
@@ -597,20 +649,22 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
               13.20 FLOOR->POWER (U201's 12.7 brick on its 0.5 pad)
             + 30.00 POWER->OUTPUTS (the Shuntian M3X30 standoff, which SETS it)
             + 11.04 OUTPUTS->LOGIC (J308+J406, the STACK pair that stops)
-            +  8.25 LOGIC->LID (J410's 7.25 + 1.0 clearance)
-            +  3 x 1.6 of PCB                                     =  67.29
-              so 67.29 + 6.0                                      =  73.29
+            + 11.04 LOGIC->CTRL (J411+J501, the CTRL-STACK pair, the same stop)
+            +  9.30 CTRL->LID (J405's 8.3 + 1.0 clearance)
+            +  4 x 1.6 of PCB                                     =  80.98
+              so 80.98 + 6.0                                      =  86.98
 
     ⚠️ The TALL figure is asserted beside the plan axes because it must NOT move
     WITH them: the stack is derived from heights alone. It was 68.39 at 48 x 219,
-    at 39 x 239 and at 40 x 241 -- three envelopes, one height. What moved it to
-    73.29 is the standoff term, which took POWER->OUTPUTS from the 25.10 the
-    obstructions needed to the 30.0 the M3x30 posts give: +4.90, and the plan
-    axes did not move a micron for it."""
+    at 39 x 239 and at 40 x 241 -- three envelopes, one height. The standoff
+    term took it to 73.29 (POWER->OUTPUTS from the 25.10 the obstructions
+    needed to the 30.0 the M3x30 posts give), and IO-26's fourth board to
+    86.98: a PCB, an 11.04 mm mated gap and a 9.30 mm lid gap, less the 8.25
+    LOGIC->LID it replaced. The plan axes did not move a micron for either."""
     from tools import netlist
     along, across, tall = bp.cavity_required(netlist.current())
     assert (along, across) == pytest.approx((256.0, 68.49))
-    assert tall == pytest.approx(73.29, abs=0.01)
+    assert tall == pytest.approx(86.98, abs=0.01)
     # ...and the measurement they are judged against, so a drift in EITHER bites.
     assert (bp.CAVITY_L, bp.CAVITY_W, bp.CAVITY_H) == (260.0, 70.0, 100.0)
     assert bp.cavity_overruns(netlist.current()) == ()      # it fits, on all three
@@ -1191,9 +1245,17 @@ def test_a_short_standoff_longer_than_the_gap_un_seats_the_connectors():
     delivered piece is measured and the long ones rejected before fitting."""
     from tools import netlist
     d = restand(netlist.current(), "HIWA TP-11", height_mm=11.5)
-    (over,) = [p for p in bp.stack_height(d).problems if "HIWA TP-11" in p]
-    assert "is 11.50 mm against a 11.04 mm gap" in over
-    assert "un-seats them by 0.46 mm of their engagement" in over
+    # ⭐ TWICE, since IO-27: one part number stands in BOTH 11.04 mm gaps, so a
+    # long piece un-seats the STACK pairs and the CTRL-STACK pair alike. That
+    # is the cost of one window, and it is the right cost -- a second length
+    # would be a second thing to mismeasure.
+    over = [p for p in bp.stack_height(d).problems if "HIWA TP-11" in p]
+    assert len(over) == 2, over
+    assert {p.split(":")[0] for p in over} == {"gap OUTPUTS->LOGIC",
+                                               "gap LOGIC->CTRL"}
+    for one in over:
+        assert "is 11.50 mm against a 11.04 mm gap" in one
+        assert "un-seats them by 0.46 mm of their engagement" in one
     assert not bp.stack_height(d).ok
 
 
@@ -1210,19 +1272,26 @@ def test_a_shim_thicker_than_the_shortfall_holds_the_boards_apart():
     for thick, lift in ((2.4, "2.36"), (0.5, "0.46")):
         nut = Standoff("HIWA PN-3", "C115937", 8, thick, (), "shim", "a nut")
         stack = bp.stack_height(replace(d, standoffs=d.standoffs + (nut,)))
-        (over,) = [p for p in stack.problems if "PN-3" in p]
-        assert f"the HIWA PN-3 shim is {thick:.2f} mm" in over
-        assert "may take up at most the 0.04 mm" in over
-        assert f"holds the boards {lift} mm apart" in over
-        assert "un-seats J307+J407 and J308+J406" in over
+        # A shim stands between no two decks, so it is bounded in EVERY gap a
+        # short standoff holds -- both 11.04 mm gaps since IO-27.
+        over = [p for p in stack.problems if "PN-3" in p]
+        assert len(over) == 2, over
+        for one in over:
+            assert f"the HIWA PN-3 shim is {thick:.2f} mm" in one
+            assert "may take up at most the 0.04 mm" in one
+            assert f"holds the boards {lift} mm apart" in one
+        assert "un-seats J307+J407 and J308+J406" in over[0]
+        assert "un-seats J411+J501" in over[1]
         assert not stack.ok
     # Control: a shim that fits the shortfall is no verdict, and the selection
     # window moves down by what it takes up.
     fits = Standoff("washer", "C0", 4, 0.04, (), "shim", "fits")
     stack = bp.stack_height(replace(d, standoffs=d.standoffs + (fits,)))
     assert stack.ok
-    note = next(n for n in stack.notes if "HIWA TP-11" in n)
-    assert "shimmed by 0.04 mm" in note and "between 10.90 and 11.00 mm" in note
+    notes = [n for n in stack.notes if "HIWA TP-11" in n]
+    assert len(notes) == 2, notes
+    for note in notes:
+        assert "shimmed by 0.04 mm" in note and "between 10.90 and 11.00 mm" in note
 
 
 def test_a_short_standoff_needs_a_chosen_pair_to_be_short_of():
@@ -1357,22 +1426,22 @@ def test_a_connector_under_a_board_gets_a_keep_out_like_a_part():
     """BD-14 on connectors, not just parts. J311 hangs 10.9 mm under OUTPUTS
     into the POWER->OUTPUTS gap, which the M3x30 standoffs set to 30.0 mm. So
     30.0 - 10.9 - 1.0 = 18.1 mm is the tallest thing that may stand under it,
-    and the 22.0 mm chokes do not qualify. J312's 8.6 mm leaves 20.4, which
-    they still do not.
+    and the 22.0 mm chokes do not qualify.
 
-    ⚠️ J314 no longer earns one, and the arithmetic is the reason rather than a
-    change of heart: 30.0 - 7.0 - 1.0 = 22.0, and L101/L102 are 22.0 exactly,
-    so the terminal and the chokes clear each other by precisely CLEARANCE.
-    That note existed against the 25.1 mm gap the obstructions used to set; the
-    standoff bought the 4.9 mm that retired it."""
+    ⚠️ It is the ONLY one left, and both of the others went for arithmetic
+    reasons rather than a change of heart. J314: 30.0 - 7.0 - 1.0 = 22.0, and
+    L101/L102 are 22.0 exactly, so the terminal and the chokes clear each other
+    by precisely CLEARANCE -- that note existed against the 25.1 mm gap the
+    obstructions used to set, and the standoff bought the 4.9 mm that retired
+    it. J312: the CTRL ribbon is DELETED (IO-27), and its 8.6 mm box header
+    under OUTPUTS with it."""
     from tools import netlist
     stack = bp.stack_height(netlist.current())
     note = next(n for n in stack.notes if n.startswith("keep-out: J311"))
     assert "hangs 10.9 mm under OUTPUTS" in note
     assert "taller than 18.1 mm" in note and "L101" in note and "L102" in note
-    assert any(n.startswith("keep-out: J312") and "taller than 20.4 mm" in n
-               for n in stack.notes)
-    assert not any(n.startswith("keep-out: J314") for n in stack.notes)
+    assert [n for n in stack.notes if n.startswith("keep-out:")] == [note]
+    assert not netlist.current().has("J312")
 
 
 def test_only_a_mated_halfs_keep_out_is_a_note_about_nothing():

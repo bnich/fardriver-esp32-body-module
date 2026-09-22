@@ -120,15 +120,21 @@ def test_a_tenth_contact_on_the_nine_way_pwr_logic_is_caught(fixture):
 
 
 def test_the_cut_strip_may_be_longer_than_stack_but_not_shorter(fixture):
+    """⚠️ ONE strip part number, cut to TWO lengths since IO-27: 2×24 for
+    STACK at J406 and 2×11 for CTRL-STACK at J501. Both are checked, because
+    the exemption is the strip's, not one refdes's."""
     d = netlist.current()
+    for ref, want in (("J406", 48), ("J501", 22)):
+        j = d.connector(ref)
+        assert j.lcsc in lcsc_fixture.CUT_TO_LENGTH, ref
+        assert len(fixture[j.lcsc]["symbol_pins"]) == 80 > len(j.pins) == want
     j = d.connector("J406")
-    assert j.lcsc in lcsc_fixture.CUT_TO_LENGTH
-    assert len(fixture[j.lcsc]["symbol_pins"]) == 80 > len(j.pins) == 58
     too_many = d.replace_connector("J406", pins=j.pins + tuple(
-        ConnPin(str(n), "GND") for n in range(59, 82)))
+        ConnPin(str(n), "GND") for n in range(len(j.pins) + 1, 82)))
     errs = lcsc_fixture.check(too_many, fixture)
     assert errs == ["J406: 81 contacts cut from C2333, whose strip has 80 (a 2×40 "
-                    "strip cut to STACK's 2×29 (netlist._FAB_CONN J406))"]
+                    "strip cut to STACK's 2×24 at J406 and to CTRL-STACK's "
+                    "2×11 at J501 (netlist._FAB_CONN))"]
 
 
 @pytest.mark.parametrize("ours, theirs, same", [
@@ -189,7 +195,7 @@ def test_packages_compare_by_stated_alias_or_equality(ours, theirs, same):
     ("Samsung CL21B105KBFNNNE, X7R", "CL21B105KBFNNNE", "Samsung"),
     ("BOOMELE(Boom Precision Elec) 2.54-2*40P", "2.54-2*40P", "BOOMELE"),
     ("Hong Cheng HC-PM254-8.5H-1x9PZ", "HC-PM254-8.5H-1x9PZ", "Hong"),
-    ("JST B4P(5-3)-VH(LF)(SN)", "B4P(5-3)-VH(LF)(SN)", "JST"),
+    ("JST B5P-VH(LF)(SN)", "B5P-VH(LF)(SN)", "JST"),   # parentheses in the MPN
     ("Diodes BSS127S-7", "BSS127H6327XTSA2", None),   # the table names another part
 ])
 def test_the_maker_word_is_read_out_of_the_table_string(table, mpn, maker):
@@ -254,7 +260,7 @@ def test_a_placed_part_with_no_footprint_on_record_fails_the_fixture_check(fixtu
     from tools import padmap
     d = netlist.current()
     nulls = {c for c, r in fixture.items() if r["footprint"] is None}
-    assert len(nulls) == 22
+    assert len(nulls) == 20
     placed = {padmap.footprint_source(x) for x in (*d.parts, *d.connectors) if x.assembly == "jlc"}
     assert not nulls & placed
     assert lcsc_fixture.check(d, fixture) == []

@@ -6,16 +6,14 @@ from tools.model import CROSSING
 
 
 def test_four_boards_bottom_to_top():
-    """⚠️ CTRL joined the ORDER with the stack model (IO-26 task 1); the parts
-    move onto it in task 2, and `test_every_item_sits_on_one_of_them` below is
-    what says which boards the netlist has actually filled."""
     assert bp.STACK_ORDER == ("POWER", "OUTPUTS", "LOGIC", "CTRL")
+    assert netlist.BOARDS == bp.STACK_ORDER, "one order, and `board` answers to it"
 
 
 def test_every_item_sits_on_one_of_them():
     d = netlist.current()
-    assert {x.board for x in (*d.parts, *d.connectors)} == {"POWER", "OUTPUTS", "LOGIC"}
-    assert bp.stack_boards(d) == ("POWER", "OUTPUTS", "LOGIC")
+    assert {x.board for x in (*d.parts, *d.connectors)} == set(bp.STACK_ORDER)
+    assert bp.stack_boards(d) == bp.STACK_ORDER, "every board is a deck"
 
 
 def test_pack_voltage_stays_on_power():

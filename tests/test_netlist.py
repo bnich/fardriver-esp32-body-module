@@ -758,12 +758,13 @@ STACK_CONTRACT = {
     "LGT_STOP",
     "DIAG_EN", "SEL", "SEH", "CS1", "CS2", "FAULT1", "FAULT2", "HORN_CMD",
     "FAN_CMD", "BUZZ_CMD", "V12_SENSE",
-    # the motor cut: the command out, the 100 kΩ-isolated copy back (IO-8)
-    "BL_CMD", "BL_SENSE",
-    # relayed on to CTRL and the controller row on POWER (IO-5): the serial
-    # pair, the boost command, ACC+ divided down (LOW with the key on means the
-    # controller is not alive) and the parked display's CAN pair
-    "UART1_TX", "UART1_RX", "BOOST_CMD", "ACC_SENSE", "CANH", "CANL",
+    # ⭐ The THREE TELLTALES, and the only nets on the whole spine that neither
+    # start nor end on LOGIC (IO-27). TT_L, TT_R and TT_HL are the TURN_L,
+    # TURN_R and HL_HIGH lamp feeds behind R426-R428 on OUTPUTS, so the
+    # telltale follows the LAMP and not the command; J405 is on CTRL, one deck
+    # above LOGIC, so each one rides this spine up and CTRL-STACK up again,
+    # crossing LOGIC on copper with no part on it.
+    "TT_L", "TT_R", "TT_HL",
     # the I²C bus, DOWN to expander #3, which commands the aux block on
     # OUTPUTS (IO-1). One bus for all three expanders: no native pin is free
     # for a second.
@@ -783,10 +784,13 @@ STACK_CONTRACT = {
     # (rule BUS-ORDER). The spine carries signals and grounds.
 }
 
-#: CTRL, POWER ↔ OUTPUTS: the controller row's signals, every one beside a
-#: ground. Eight of them carry on to LOGIC across STACK; the three telltales
-#: stop here, because the lamp feeds that drive them are on OUTPUTS.
-CTRL_CONTRACT = {
+#: CTRL-STACK, LOGIC ↔ CTRL: the controller row's signals, every one facing a
+#: ground across the row. ⭐ Eight of them used to take TWO crossings each --
+#: the CTRL ribbon up to OUTPUTS and STACK on to LOGIC -- and take ONE now that
+#: the row is a board of its own (IO-27). The three telltales are the other way
+#: round: their lamp feeds are on OUTPUTS, so they are the only members that
+#: also ride STACK.
+CTRL_STACK_CONTRACT = {
     "BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX", "UART1_RX", "BOOST_CMD",
     "CANH", "CANL", "TT_L", "TT_R", "TT_HL",
 }
@@ -801,6 +805,7 @@ def test_stack_is_one_row_per_signal_and_carries_exactly_the_contracted_nets(d):
     every even one a ground, and no empty contact to grow a signal into by
     accident."""
     ends = _interface(d, "STACK")
+    assert len(STACK_CONTRACT) == 24, "IO-27: 29 per row less eight, plus three"
     assert {c.board for c in ends} == {"OUTPUTS", "LOGIC"}
     for c in ends:
         assert len(c.pins) == 2 * len(STACK_CONTRACT)
@@ -874,64 +879,56 @@ def test_the_vh_wafer_body_is_the_rule_its_series_drawing_tabulates(ways, length
     assert netlist.vh_body(ways) == pytest.approx((length, 8.5))
 
 
-@pytest.mark.parametrize("per_row,length", [(5, 20.30), (12, 38.08), (20, 58.4)])
-def test_the_box_header_body_is_the_rule_printed_on_its_drawing(per_row, length):
-    """Zhouri prints '2.54*N/2+7.6±0.2' on the part itself, N being the contact
-    count: the shroud adds 7.6 mm over the pin field."""
-    assert netlist.dc3_body(per_row) == pytest.approx((length, 8.4))
+def test_ctrl_stack_is_one_row_per_signal_and_carries_the_controller_row(d):
+    """2 × 11 for eleven signals, every one facing a ground across the row, and
+    the CAN pair on two ADJACENT columns.
 
-
-def test_a_signal_list_that_outgrows_its_connector_is_refused_not_truncated():
-    """⚠️ The guard inside the shared function, not at the call site. `_flanked`
-    lays signals out with a ground either side; one more signal than the
-    connector has ways must RAISE, because padding or truncating drops the last
-    signal silently -- and the last signal is the one a reader adds."""
-    eleven = ("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K")
-    assert len(netlist._flanked(eleven, 24)) == 24
-    with pytest.raises(ValueError, match="need 25 contacts"):
-        netlist._flanked(eleven + ("L",), 24)
-
-
-def test_ctrl_carries_the_controller_row_with_a_ground_on_both_sides(d):
-    """24 ways for 11 signals and 13 grounds, and every signal with a ground
-    on BOTH sides of it along the ribbon.
-
-    Protects: the reason 24 ways were taken over 22 when the DC3 family turned
-    out to have no 22-way member. 22 ways force G S G S … G S and the last
-    signal keeps a ground on one side only; paying two ways buys the flanking
-    and leaves contact 23 free for a twelfth signal that would still be
-    flanked. If anyone ever trims this back to the signal count, the thing that
-    was bought is what goes."""
-    ends = _interface(d, "CTRL")
-    assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
+    Protects: the pinout is DERIVED from `_CTRL_STACK_SIGNALS` the way STACK's
+    is from `_STACK_SIGNALS` -- same builder, same rule -- so the connector
+    cannot grow a contact a signal does not have, and cannot lose the ground
+    that faces one. ⚠️ It replaced a 24-way IDC ribbon whose 13 grounds were a
+    rated RETURN (IO-23); nothing here carries current, because the return
+    moved to PWR-OUT's second 16 AWG conductor (IO-27)."""
+    ends = _interface(d, "CTRL-STACK")
+    assert {c.board for c in ends} == {"LOGIC", "CTRL"}
     for c in ends:
+        assert len(c.pins) == 2 * len(CTRL_STACK_CONTRACT)
+        assert {cp.net for cp in c.pins} - {"GND"} == CTRL_STACK_CONTRACT
+        grounds = [cp for cp in c.pins if cp.net == "GND"]
+        assert len(grounds) == len(CTRL_STACK_CONTRACT), "alternating grounds"
         nets = [cp.net for cp in c.pins]
-        assert len(nets) == 24 and len(nets) % 2 == 0, "2 × 12, an IDC size"
-        assert set(nets) - {"GND"} == CTRL_CONTRACT
-        assert nets.count("GND") == 13
-        for i, net in enumerate(nets):
-            if net == "GND" or {nets[i - 1], net} == {"CANH", "CANL"}:
-                continue
-            before = nets[i - 1] if i else None
-            after = nets[i + 1] if i + 1 < len(nets) else None
-            if {net, after} == {"CANH", "CANL"}:
-                after = nets[i + 2]          # the pair is flanked as a block
-            assert before == "GND" and after == "GND", (c.refdes, i + 1, net)
-        assert c.footprint_mm == pytest.approx(netlist.dc3_body(len(nets) // 2))
+        for i in range(0, len(nets), 2):
+            assert nets[i] != "GND" and nets[i + 1] == "GND", (c.refdes, i)
+        # The differential pair takes two NEIGHBOURING columns, so both halves
+        # see the same neighbours: contacts 2i+1 and 2i+3, grounds under each.
+        h, l = nets.index("CANH"), nets.index("CANL")
+        assert l == h + 2, (h, l)
+        socket = c.board == "LOGIC"          # the header is the cut strip
+        want = netlist.hc_body(len(CTRL_STACK_CONTRACT), rows=2, socket=socket,
+                               cut=not socket)
+        assert c.footprint_mm == pytest.approx(want), c.refdes
     assert ends[0].pins == ends[1].pins, "the two halves must mate pin for pin"
 
 
-def test_what_crosses_ctrl_and_stack_both_is_relayed_not_duplicated(d):
-    """A net that starts on LOGIC and ends on POWER crosses both interfaces. It
-    is ONE net with two crossings, and `interface` names the lower one, so a
-    reader looking for the crossing finds the whole path."""
-    relayed = CTRL_CONTRACT & STACK_CONTRACT
-    assert relayed == {"BL_CMD", "BL_SENSE", "ACC_SENSE", "UART1_TX",
-                       "UART1_RX", "BOOST_CMD", "CANH", "CANL"}
+def test_what_crosses_both_spines_is_relayed_not_duplicated(d):
+    """A net that starts on OUTPUTS and ends on CTRL crosses both spines. It is
+    ONE net with two crossings, and `interface` names the LOWER one, so a
+    reader looking for the crossing finds the whole path.
+
+    ⭐ THE SET SHRANK FROM EIGHT TO THREE AT IO-27, and swapped ends. It used
+    to be the eight signals relayed up from the controller row on POWER; the
+    row is a board of its own now and mates onto LOGIC directly, so those eight
+    cross once. What is left is the three telltales, which relay the other way:
+    their lamp feeds are on OUTPUTS and J405 is on CTRL, two decks up."""
+    relayed = CTRL_STACK_CONTRACT & STACK_CONTRACT
+    assert relayed == {"TT_L", "TT_R", "TT_HL"}
     for name in sorted(relayed):
         n = d.net(name)
-        assert n.interface == "CTRL", name
-        assert {d.board_of(r) for r, _ in n.pins} >= {"POWER", "LOGIC"}, name
+        assert n.interface == "STACK", name
+        assert {d.board_of(r) for r, _ in n.pins} >= {"OUTPUTS", "CTRL"}, name
+    # ...and every OTHER member of the pair's contract crosses ONCE.
+    for name in sorted(CTRL_STACK_CONTRACT - relayed):
+        assert d.net(name).interface == "CTRL-STACK", name
 
 
 def test_no_rail_rides_a_signal_spine(d):
@@ -939,28 +936,34 @@ def test_no_rail_rides_a_signal_spine(d):
     which reads SUPPLY_PINS): reversed or mirrored, a spine lands every contact
     on a ground, so a rail on one is a short across the interface."""
     from tools import rules
-    spines = {"STACK", "CTRL"}
+    spines = {"STACK", "CTRL-STACK"}
     for c in d.connectors:
         if c.interface in spines:
             assert not (rules.rails(d) & {cp.net for cp in c.pins}), c.refdes
 
 
-def test_pwr_out_is_four_conductors_numbered_as_the_maker_numbers_them(d):
-    """One conductor per net, and the CONTACT NUMBERS are JST's.
+def test_pwr_out_is_five_conductors_numbered_as_the_maker_numbers_them(d):
+    """One conductor per contact, and the CONTACT NUMBERS are JST's.
 
-    Protects the key. The body is five circuits wide with the third post
-    omitted, so its circuits are 1, 2, 4, 5 — and the hole in that numbering is
-    what makes `footprint_lib` leave the third position empty. Renumber them
-    1-4 and the design still passes every net check while the board gets four
-    evenly spaced holes and no key at all. The CURRENT is held elsewhere:
-    tests/test_interconnect.py sizes the conductor and the contact against
+    ⭐ FIVE since IO-27, and the fifth is the point: the CTRL ribbon's 13
+    grounds carried ~79 % of the 12 V return (IO-23) and the ribbon is gone, so
+    this loom is the sole return. The wafer's cavity 3 was the one the old
+    B4P(5-3) body left out, and it takes a SECOND 16 AWG GND -- ~4.24 A per
+    conductor in service, the whole 8.47 A on the survivor with one crimp open,
+    inside a 10 A contact. The body is fully populated now, so the header is
+    the plain B5P-VH.
+    The heavy pair sits adjacent, so the current goes out and comes back
+    through neighbouring contacts. The CURRENT is held elsewhere:
+    tests/test_interconnect.py sizes the conductors and the contacts against
     tools/power_budget.py."""
     ends = _interface(d, "PWR-OUT")
     assert {c.board for c in ends} == {"POWER", "OUTPUTS"}
     for c in ends:
         assert [(cp.pin, cp.net) for cp in c.pins] == [
-            ("1", "V12"), ("2", "GND"), ("4", "V5"), ("5", "KEY_SENSE")], c.refdes
+            ("1", "V12"), ("2", "GND"), ("3", "GND"), ("4", "V5"),
+            ("5", "KEY_SENSE")], c.refdes
         assert c.pitch_mm == 3.96 and c.footprint_mm == netlist.vh_body(5)
+        assert c.lcsc == "C160318" and "B5P-VH" in c.source
     assert ends[0].pins == ends[1].pins
 
 
@@ -1024,12 +1027,15 @@ def swap_pins(design, refdes, a, b):
     return move_pin(move_pin(design, refdes, a, net_b), refdes, b, net_a)
 
 
-def renumbered_pwr_out(design):
-    """PWR-OUT's contacts renumbered 1-4: the key filled in, quietly."""
+def one_gnd_pwr_out(design):
+    """PWR-OUT back to ONE ground conductor -- the loom as it stood before
+    IO-27, with the ribbon's 13 grounds still there to carry ~79 % of the
+    return. They are gone, so this is the whole 12 V return on one crimp with
+    nothing behind it, and it reads as a tidier connector."""
     out = design
     for c in _interface(design, "PWR-OUT"):
         out = out.replace_connector(c.refdes, pins=tuple(
-            replace(cp, pin=str(i + 1)) for i, cp in enumerate(c.pins)))
+            cp for cp in c.pins if cp.pin != "3"))
     return out
 
 
@@ -1157,9 +1163,10 @@ DEFECTS = [
     ("a harness wire straight onto a GPIO",
      lambda d: move_pin(d, "U401", "IO18", "UART1_RX_WIRE"),
      test_no_harness_wire_meets_the_mcu_or_an_expander_without_a_series_element, {}),
-    ("the keyed body renumbered 1-4, which fills in the key",
-     renumbered_pwr_out,
-     test_pwr_out_is_four_conductors_numbered_as_the_maker_numbers_them, {}),
+    ("the loom back to one ground conductor, the ribbon having taken 79 % of "
+     "the return away with it",
+     one_gnd_pwr_out,
+     test_pwr_out_is_five_conductors_numbered_as_the_maker_numbers_them, {}),
     ("a confirmed height with nothing behind it",
      lambda d: d.replace_part("R110", height_confirmed=True),
      test_a_confirmed_height_names_the_pdf_and_the_page, {}),
