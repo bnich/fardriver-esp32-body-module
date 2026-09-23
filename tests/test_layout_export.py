@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import math
 import shutil
 
 import pytest
@@ -74,12 +73,17 @@ def test_every_board_has_its_four_copper_layers_in_stack_order(exported):
 
 def test_every_netclass_figure_is_routes(exported):
     """One fact, one home: a width or a clearance typed a second time here
-    would drift from the figure `tools/route.py` writes into the editor."""
+    would drift from the figure `tools/route.py` writes into the editor.  A
+    current class states no width -- pcbl derives it -- except HV's floor."""
     table = {c.name: c for c in layout_export.CLASSES}
     for row in exported.doc["netclasses"]:
         c = table[row["name"]]
-        assert (row["min_width_mm"], row["clearance_mm"]) == \
-            (c.width_mm, {"default": c.clearance_mm})
+        assert row["clearance_mm"] == {"default": c.clearance_mm}
+        if row["name"] in layout_export.RISE_C and row["name"] not in \
+                layout_export.WIDTH_FLOORS:
+            assert "min_width_mm" not in row, row["name"]
+        else:
+            assert row["min_width_mm"] == c.width_mm
 
 
 def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
@@ -93,45 +97,60 @@ def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
 
 def test_vias_are_stated_on_ch12_and_pwr5aux_and_no_other(exported):
     """No HV via: a pack-voltage barrel would need a 1.25 mm antipad through
-    each inner GND plane."""
+    each inner GND plane.  What one via carries is pcbl's to derive from the
+    hole, the board's plating and the class's rise: the class states none."""
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
     viad = {n for n, row in rows.items() if row.get("via_mm")}
     assert viad == set(layout_export.VIA_CLASSES) & set(rows)
     assert "HV" not in viad
     for n in viad:
-        assert rows[n]["via_mm"] == [0.6, 0.3] and rows[n]["via_current_a"] == 0.70
+        assert rows[n]["via_mm"] == [0.6, 0.3]
+    assert not any("via_current_a" in row for row in rows.values())
 
 
-def test_the_via_count_is_the_class_current_over_one_via(exported):
-    """CH12 at its strongest channel's limit, 2.32 A: four vias.  PWR5AUX at
-    four 5 V limiters together, 5.55 A: eight."""
+def test_each_current_class_states_one_current_and_its_rise(exported):
+    """CH12 / CH5 at their strongest channel's limit, PWR5AUX at four 5 V
+    limiters together, PWR12 at the limited 12 V load, HV at the pack tap in
+    that case -- each with the rise `route` sized it for."""
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
-    need = {n: math.ceil(rows[n]["current_a"] / rows[n]["via_current_a"])
-            for n in layout_export.VIA_CLASSES if n in rows}
-    assert need == {"CH12": 4, "PWR5AUX": 8}
-    assert rows["CH12"]["current_a"] == pytest.approx(2.323)
-    assert rows["PWR5AUX"]["current_a"] == pytest.approx(5.553)
+    got = {n: (rows[n]["current_a"], rows[n]["rise_c"]) for n in rows if "current_a" in rows[n]}
+    assert got == {"HV": (pytest.approx(2.58), 10.0), "PWR12": (pytest.approx(11.386), 20.0),
+                   "PWR5AUX": (pytest.approx(5.553), 20.0),
+                   "CH12": (pytest.approx(2.323), 10.0), "CH5": (pytest.approx(1.388), 10.0)}
+    assert rows["HV"]["min_width_mm"] == route.HV.width_mm
 
 
-def test_one_via_is_ipc2221_internal_at_the_barrel_rounded_down():
-    area = math.pi * (0.3 / 0.0254) * (0.018 / 0.0254)
-    assert area == pytest.approx(26.3, abs=0.05)
-    assert 0.024 * 10 ** 0.44 * area ** 0.725 == pytest.approx(0.707, abs=0.001)
-    assert layout_export.via_current_a() == 0.70
-    assert layout_export.via_current_a(rise_c=20.0) > 0.70, "the figure moves with its inputs"
+def test_every_board_states_the_fab_copper(exported):
+    assert {(b["copper_um"], b["via_plating_um"]) for b in exported.doc["boards"]} == \
+        {(35.0, 18.0)}
 
 
-def test_a_ch12_channel_with_no_derivable_limit_is_refused(design, ix, monkeypatch):  # noqa: F811
+def test_a_channel_with_no_derivable_limit_is_refused(design, ix, monkeypatch):  # noqa: F811
     from tools import power_budget
     monkeypatch.setattr(power_budget, "_channel_limit_a",
                         lambda d, net: (None, f"{net}: no limiter"))
-    with pytest.raises(SystemExit, match="CH12 via current"):
+    with pytest.raises(SystemExit, match="CH12 current"):
+        layout_export._class_current_a(design, ix)
+
+
+def test_an_underivable_limited_case_is_refused(design, ix, monkeypatch):  # noqa: F811
+    from tools import power_budget
+    real = power_budget.limit_case
+
+    def broken(d=None):
+        lim = real(d)
+        lim.tap_a = None
+        return lim
+    monkeypatch.setattr(power_budget, "limit_case", broken)
+    with pytest.raises(SystemExit, match="PWR12 / HV current"):
         layout_export._class_current_a(design, ix)
 
 
 def test_the_class_currents_are_read_off_the_circuit(design, ix):  # noqa: F811
     assert layout_export._class_current_a(design, ix) == \
-        {"CH12": pytest.approx(2.323), "PWR5AUX": pytest.approx(5.553)}
+        {"CH12": pytest.approx(2.323), "CH5": pytest.approx(1.388),
+         "PWR5AUX": pytest.approx(5.553), "PWR12": pytest.approx(11.386),
+         "HV": pytest.approx(2.58)}
 
 
 def test_every_board_states_routes_pour_inset(exported):
