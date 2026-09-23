@@ -101,14 +101,16 @@ def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
     assert laid, "no class is laid by rule"
 
 
-def test_vias_are_stated_on_ch12_and_pwr5aux_and_no_other(exported):
+def test_vias_are_stated_on_ch12_pwr5aux_and_the_signal_classes_only(exported):
     """No HV via: a pack-voltage barrel would need a 1.25 mm antipad through
-    each inner GND plane.  What one via carries is pcbl's to derive from the
+    each inner GND plane.  The signal classes the signal router lays carry
+    one, or a net with pads on both faces cannot be completed.  What one via carries is pcbl's to derive from the
     hole, the board's plating and the class's rise: the class states none."""
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
     viad = {n for n, row in rows.items() if row.get("via_mm")}
     assert viad == set(layout_export.VIA_CLASSES) & set(rows)
     assert not viad & {"HV", "HVSIG"}
+    assert {"DIFF", "SENSE", "default"} & set(rows) <= viad
     for n in viad:
         assert rows[n]["via_mm"] == [0.6, 0.3]
     assert not any("via_current_a" in row for row in rows.values())

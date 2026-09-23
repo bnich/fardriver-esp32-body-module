@@ -338,7 +338,7 @@ def _used_classes(classes) -> set:
     return used
 
 
-#: The via the class-copper router may use on the classes of `VIA_CLASSES`:
+#: The via the routers may use on the classes of `VIA_CLASSES`:
 #: 0.6 mm pad, 0.3 mm finished hole -- JLCPCB's standard via, no extra charge.
 VIA_MM = (0.6, 0.3)
 #: The fab stack's copper, stated once for every board (JLCPCB's
@@ -376,8 +376,10 @@ RISE_C = {route.HV.name: 10.0, route.PWR12.name: 20.0, route.PWR5AUX.name: 20.0,
 #: The classes that state a via.  ⛔ No HV via: a pack-voltage barrel through
 #: the inner GND planes needs a 1.25 mm antipad in each, and HV stays on the
 #: faces (`route.HV`).  PWR12 is a bus carried by a pour, CH5 has room on its
-#: face.
-VIA_CLASSES = ("PWR5AUX", "CH12")
+#: face.  The signal classes -- DIFF, SENSE and default, which pcbl's signal
+#: router lays -- take the same standard via: a board with parts on both
+#: faces cannot join a top pad to a bottom one without it.
+VIA_CLASSES = ("PWR5AUX", "CH12", "DIFF", "SENSE", "default")
 
 
 def _class_current_a(d, ix) -> dict:
