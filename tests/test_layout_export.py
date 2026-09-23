@@ -73,17 +73,23 @@ def test_every_board_has_its_four_copper_layers_in_stack_order(exported):
 
 def test_every_netclass_figure_is_routes(exported):
     """One fact, one home: a width or a clearance typed a second time here
-    would drift from the figure `tools/route.py` writes into the editor.  A
-    current class states no width -- pcbl derives it -- except HV's floor."""
+    would drift from the figure `tools/route.py` writes into the editor.
+    EVERY class states `route`'s width -- a current class too, whose stated
+    width pcbl widens where IPC-2221 says more and never narrows."""
     table = {c.name: c for c in layout_export.CLASSES}
     for row in exported.doc["netclasses"]:
         c = table[row["name"]]
         assert row["clearance_mm"] == {"default": c.clearance_mm}
-        if row["name"] in layout_export.RISE_C and row["name"] not in \
-                layout_export.WIDTH_FLOORS:
-            assert "min_width_mm" not in row, row["name"]
-        else:
-            assert row["min_width_mm"] == c.width_mm
+        assert row["min_width_mm"] == c.width_mm, row["name"]
+
+
+def test_the_current_classes_state_their_route_widths(exported):
+    """⭐ The stated widths are the design's: CH12 1.00 and CH5 0.80 stand
+    though IPC-2221 would allow 0.97 and 0.48 at their currents."""
+    rows = {row["name"]: row for row in exported.doc["netclasses"]}
+    assert {n: rows[n]["min_width_mm"] for n in ("HV", "HVSIG", "PWR12", "PWR5AUX",
+                                                 "CH12", "CH5")} == \
+        {"HV": 0.5, "HVSIG": 0.5, "PWR12": 5.0, "PWR5AUX": 2.0, "CH12": 1.0, "CH5": 0.8}
 
 
 def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
@@ -91,7 +97,7 @@ def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
     is `route.heavy_classes`, never typed here."""
     laid = {row["name"] for row in exported.doc["netclasses"] if row.get("class_copper")}
     used = {row["name"] for row in exported.doc["netclasses"]}
-    assert laid == {c.name for c in route.heavy_classes()} & used
+    assert laid == ({c.name for c in route.heavy_classes()} | {"HVSIG"}) & used
     assert laid, "no class is laid by rule"
 
 
@@ -102,7 +108,7 @@ def test_vias_are_stated_on_ch12_and_pwr5aux_and_no_other(exported):
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
     viad = {n for n, row in rows.items() if row.get("via_mm")}
     assert viad == set(layout_export.VIA_CLASSES) & set(rows)
-    assert "HV" not in viad
+    assert not viad & {"HV", "HVSIG"}
     for n in viad:
         assert rows[n]["via_mm"] == [0.6, 0.3]
     assert not any("via_current_a" in row for row in rows.values())
@@ -117,7 +123,7 @@ def test_each_current_class_states_one_current_and_its_rise(exported):
     assert got == {"HV": (pytest.approx(2.58), 10.0), "PWR12": (pytest.approx(11.386), 20.0),
                    "PWR5AUX": (pytest.approx(5.553), 20.0),
                    "CH12": (pytest.approx(2.323), 10.0), "CH5": (pytest.approx(1.388), 10.0)}
-    assert rows["HV"]["min_width_mm"] == route.HV.width_mm
+    assert "current_a" not in rows["HVSIG"] and "rise_c" not in rows["HVSIG"]
 
 
 def test_every_board_states_the_fab_copper(exported):
@@ -183,8 +189,66 @@ def test_the_hv_region_takes_the_non_plane_grounds_as_neutral(exported, ix):  # 
     no plane carries -- `BASEPLATE` -- must be named, or C203/C204 read as
     straddlers and are turned round."""
     [region] = [c for c in exported.doc["constraints"] if c["kind"] == "region"]
-    assert region["board"] == "POWER" and region["classes"] == [route.HV.name]
+    assert region["board"] == "POWER" and region["classes"] == ["HV", "HVSIG"]
     assert region["neutral_nets"] == ["BASEPLATE"]
+
+
+# --- the pack-voltage classes, split by current ---------------------------------------
+#: What the load and pre-charge current flow through on POWER, by the circuit:
+#: B+ through the switch Q101 to HV_SW, both chokes (each with its return
+#: winding), D201 and the fuse into C2's hold.
+POWER_HV = ["HV_BPLUS", "HV_C1_N", "HV_C1_P", "HV_C2_HOLD", "HV_C2_HOLD_IN", "HV_C2_N",
+            "HV_C2_P", "HV_SW"]
+#: The gate drive, the key sense and the level shifter's string.
+SIGNAL_HV = ["D13_EN_MID", "D13_GATE", "D13_PD", "D13_PD_MID", "KEY_SENSE_MID", "KSW"]
+
+
+def test_the_power_hv_class_is_the_load_path(design, ix):  # noqa: F811
+    """Silent, and the answer: the walk from the converters' supply nets
+    finds the load path and nothing a zener, TVS or resistor hangs off it."""
+    hv = ix.hv["POWER"]
+    power = layout_export._hv_power_nets(design, hv)
+    assert sorted(power) == POWER_HV
+    assert sorted(hv - power) == SIGNAL_HV
+
+
+def test_each_hv_net_is_in_the_class_its_current_says(exported):
+    got = {n["name"]: n["net_class"] for n in exported.doc["nets"]
+           if n["name"] in POWER_HV + SIGNAL_HV}
+    assert got == {**{n: "HV" for n in POWER_HV}, **{n: "HVSIG" for n in SIGNAL_HV}}
+
+
+def test_a_return_winding_carries_the_load(design, ix):  # noqa: F811
+    """The chokes' second windings are reached ONLY by the return-winding
+    clause: nothing else the load flows through joins HV_C1_N / HV_C2_N to
+    the power nets.  Without the clause they would be laid at 0.5 mm."""
+    from tools import rules
+    rix = rules._index(design)
+    for n in ("HV_C1_N", "HV_C2_N"):
+        into = {other for other, part, *_ in rix.adj[n] if part.kind != "CMCHOKE"
+                and (rules._kind(part) in soft_start._DC_SHORT or part.kind in rules.FETS
+                     or part.kind == "D")}
+        assert not into & set(POWER_HV), n
+
+
+def test_both_hv_classes_are_pairwise_and_keep_one_clearance(exported):
+    rows = {row["name"]: row for row in exported.doc["netclasses"]}
+    for n in ("HV", "HVSIG"):
+        assert rows[n]["pairwise_by_voltage"] is True
+        assert rows[n]["clearance_mm"] == {"default": route.HV.clearance_mm}
+    assert not any(r.get("pairwise_by_voltage") for n, r in rows.items()
+                   if n not in ("HV", "HVSIG"))
+
+
+def test_a_board_whose_hv_nets_feed_no_supply_is_refused(design, monkeypatch):  # noqa: F811
+    """Fires: with no pack-voltage net feeding a SUPPLY pin every HV net would
+    be laid at the low-current width, the tap current through copper nobody
+    sized.  Refused, not exported."""
+    from tools import rules
+    fresh = place.Index(design)
+    monkeypatch.setattr(rules, "rails", lambda d: frozenset({"V12"}))
+    with pytest.raises(SystemExit, match="power HV class would be empty"):
+        layout_export._net_classes(fresh)
 
 
 def _net_row(exported, name):

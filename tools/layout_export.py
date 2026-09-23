@@ -22,7 +22,8 @@ read from where it already lives, and each block says where:
                width and via count are pcbl's to derive), and the boards'
                copper, `COPPER_UM` / `VIA_PLATING_UM`
   nets         every netlist net, in the class `route.net_class` gives it on
-               each board it is on; `supply` from `place.Index`'s grounds and
+               each board it is on, HV split by the current the circuit puts
+               through it (`_hv_power_nets`); `supply` from `place.Index`'s grounds and
                `rules.rails` (the nets that feed a part's SUPPLY pin); `order`,
                the netlist's own order of the net's pins, wherever it is not
                the parts' order -- which member a tie meets first
@@ -58,7 +59,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from tools import board_fit, eprj2, layout_rules, netlist, place, route
+from tools import board_fit, eprj2, layout_rules, netlist, place, route, rules, soft_start
 from tools import board_params as bp
 from tools.eprj3.pcb import M3_INSET_MM
 from tools.model import is_cabled
@@ -74,10 +75,24 @@ MIL_PER_MM = 1000 / 25.4
 COPPER_LAYER_TYPES = ("TOP", "BOTTOM", "SIGNAL", "PLANE")
 LAYER_TOP, LAYER_BOTTOM = 1, 2
 
+#: The LOW-CURRENT pack-voltage class: a pack-voltage net the load and
+#: pre-charge current do not flow through (the switch's gate drive, the key
+#: sense, the level shifter's string -- `_hv_power_nets` says which).
+#: Spacing and width are different facts: it keeps `route.HV`'s clearance and
+#: its pairwise-by-voltage rule, and its stated width is `route.HV`'s 0.5 mm,
+#: which no current widens.  Both figures are `route.HV`'s, never typed here.
+HV_SIGNAL = route.NetClass("HVSIG", route.HV.width_mm, route.HV.clearance_mm,
+                           "route.HV's clearance and stated width, carrying no load current")
+
+#: The pack-voltage classes: pairwise by voltage with each other and within
+#: each, laid by rule, and the classes POWER's HV partition holds.
+HV_CLASSES = (route.HV, HV_SIGNAL)
+
 #: `route`'s class table, strongest first -- the order `route._net_class`
-#: tries them in.  A net that is two classes on two boards states the
-#: strongest as its `net_class` and the others under `class_by_board`.
-CLASSES = (route.HV, route.PWR12, route.PWR5AUX, route.CH12, route.CH5,
+#: tries them in, with HV split by current (`HV_SIGNAL`).  A net that is two
+#: classes on two boards states the strongest as its `net_class` and the
+#: others under `class_by_board`.
+CLASSES = (route.HV, HV_SIGNAL, route.PWR12, route.PWR5AUX, route.CH12, route.CH5,
            route.DIFF, route.SENSE, route.RAIL, route.DEFAULT)
 
 #: The routability reach of each class check 20 binds (`place.net_limit`):
@@ -214,15 +229,75 @@ def _layer_names(project) -> dict:
 
 
 # --- the design ---------------------------------------------------------------------
+def _hv_power_nets(d, hv) -> set:
+    """The pack-voltage nets of `hv` the LOAD and PRE-CHARGE current flows
+    through: the power HV class.  Every other net of `hv` is `HV_SIGNAL`.
+
+    ⭐ THE RULE, from the circuit and never from a list of names: start at
+    every pack-voltage net that feeds a part's SUPPLY pin (`rules.rails` --
+    the converters' `+Vin`), and walk, inside `hv`, across what the current
+    flows through on its way there --
+      * a FET's channel, drain to source (`rules._Ix.adj` has only that pair);
+      * a choke, fuse or link (`soft_start._DC_SHORT`), and for a common-mode
+        choke BOTH windings: the second carries the converter's return, so
+        its pack-voltage net carries the same current back;
+      * a rectifier (kind `D`), either way: the pre-charge current comes in
+        through it and the ride-out holds on the far side.
+    It does NOT cross a zener or a TVS (they stand off), a resistor (a bias
+    or a divider: a load path through one would dissipate the load, and the
+    circuit has none) or a capacitor (no DC path).  So the gate drive, the
+    key sense and the level shifter's pull-down string are reached by no
+    walk: they carry micro- to milliamps, not the tap current."""
+    rix = rules._index(d)
+    seeds = sorted(set(rules.rails(d)) & hv)
+    power, queue = set(seeds), list(seeds)
+    while queue:
+        net = queue.pop()
+        for other, part, _flow, _a, _b in rix.adj.get(net, ()):
+            if part.dnp:
+                continue
+            carries = (rules._kind(part) in soft_start._DC_SHORT
+                       or part.kind in rules.FETS or part.kind == "D")
+            if not carries:
+                continue
+            reach = {other}
+            if part.kind == "CMCHOKE":          # the return winding carries it back
+                reach |= {n for pin in part.pins for n in rix.nets_of_pin(part.refdes, pin)}
+            for n in sorted(reach & hv - power):
+                power.add(n)
+                queue.append(n)
+    return power
+
+
 def _net_classes(ix) -> dict:
     """{net: {board: class name}} for every board the net is on, by
     `route.net_class` -- the class differs by board where the copper does
     (`V12` is PWR12 where it carries the loads, RAIL where it is one trace to
-    a converter).  A net on no placed part is {}."""
+    a converter).  A pack-voltage net the load current does not flow through
+    (`_hv_power_nets`) is `HV_SIGNAL` where `route` says HV.  A net on no
+    placed part is {}.
+
+    ⛔ A board with pack-voltage nets and not ONE on the load's path is
+    refused: every HV net would be laid at the low-current width, and the
+    tap current would run through copper nobody sized for it."""
+    power = {}
+    for b, hv in ix.hv.items():
+        if hv:
+            power[b] = _hv_power_nets(ix.d, hv)
+            if not power[b]:
+                raise SystemExit(f"layout_export: {b} has pack-voltage nets {sorted(hv)} and "
+                                 f"none feeds a SUPPLY pin through what the load current "
+                                 f"flows through: the power HV class would be empty")
     out = {}
     for n in ix.members:                    # the netlist's order: it is stated order
         boards = sorted({ix.items[r].board for r, _ in ix.members[n] if r in ix.items})
-        out[n] = {b: route.net_class(ix, b, n).name for b in boards}
+        per = {}
+        for b in boards:
+            c = route.net_class(ix, b, n)
+            if c is route.HV and n not in power.get(b, ()):
+                c = HV_SIGNAL
+            per[b] = c.name
+        out[n] = per
     return out
 
 
@@ -285,10 +360,17 @@ VIA_PLATING_UM = 18.0
 RISE_C = {route.HV.name: 10.0, route.PWR12.name: 20.0, route.PWR5AUX.name: 20.0,
           route.CH12.name: 10.0, route.CH5.name: 10.0}
 
-#: The classes whose `route` width is a FLOOR that is not about current, and
-#: stays stated beside the current: HV's 0.5 mm, "never a hair a nick opens"
-#: (`route.HV`).  Every other current class's width is the derived one.
-WIDTH_FLOORS = (route.HV.name,)
+#: ⭐ Every class states `route`'s width as its `min_width_mm`: that width is
+#: a design decision (CH12 1.00, CH5 0.80, PWR5AUX 2.00, PWR12 5.00, HV 0.50),
+#: and a standard may WIDEN it, never narrow it.  pcbl takes the larger of it
+#: and the width the class's current derives (its `Design.width_mm`), so
+#: IPC-2221 stands where it is wider -- PWR12 5.66, PWR5AUX 2.10, HV 1.12 --
+#: and the stated width stands where it is not -- CH12, CH5.
+#:
+#: The current is the CONTINUOUS design current at the limited case
+#: (`_class_current_a`).  Whether a run must also carry its protection's trip
+#: current (the OCP ceiling, `limit_case().ocp_*`) is the owner's hardware
+#: review, not a default here.
 
 
 #: The classes that state a via.  ⛔ No HV via: a pack-voltage barrel through
@@ -347,22 +429,21 @@ def _netclasses(used, currents) -> list:
             # from it, the class's rise and the board's copper
             row["current_a"] = currents[c.name]
             row["rise_c"] = RISE_C[c.name]
-            if c.name in WIDTH_FLOORS:
-                row["min_width_mm"] = c.width_mm
-        else:
-            row["min_width_mm"] = c.width_mm
+        row["min_width_mm"] = c.width_mm          # stated: widened, never narrowed
         row["clearance_mm"] = {"default": c.clearance_mm}
         if c.pour_ok:
             row["pour"] = True
-        if c is route.HV:
-            # the pairwise figure is IPC-2221B B2 at the two nets' own
-            # difference over the operating points `layout_hooks` answers
-            # (IO-29) -- 1.25 mm stands wherever either has none
+        if c in HV_CLASSES:
+            # pairwise within each HV class and across the two: IPC-2221B B2
+            # at the two nets' own difference over the operating points
+            # `layout_hooks` answers (IO-29) -- 1.25 mm stands wherever
+            # either has none
             row["pairwise_by_voltage"] = True
         if c.name in REACH:
             row["reach_mm"] = REACH[c.name]
-        if c in route.heavy_classes():
-            # the classes `route.py --heavy` lays by rule -- `pcbl route copper`
+        if c in route.heavy_classes() or c is HV_SIGNAL:
+            # the classes `route.py --heavy` lays by rule -- `pcbl route copper`;
+            # HV_SIGNAL is HV's own nets, which `--heavy` lays with HV
             row["class_copper"] = True
         if c.name in VIA_CLASSES:
             row["via_mm"] = list(VIA_MM)
@@ -514,7 +595,7 @@ def _regions(d, ix, boards) -> list:
             planes = {l["net"] for l in b["layers"] if l["kind"] == "plane"}
             on_board = {n for it in ix.on(b["name"]) for n in it.nets}
             row = {"kind": "region", "name": f"{b['name']}-HV", "board": b["name"],
-                   "classes": [route.HV.name], "strip_mm": place.HV_STRIP,
+                   "classes": [c.name for c in HV_CLASSES], "strip_mm": place.HV_STRIP,
                    "straddler": "member_pins_in", "edge_mm": place.HV_EDGE}
             neutral = sorted((ix.gnd & on_board) - planes)
             if neutral:
