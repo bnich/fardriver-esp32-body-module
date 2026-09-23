@@ -171,6 +171,38 @@ def test_a_constraint_naming_a_part_the_project_does_not_place_is_refused(
         layout_export.export(place.load(path), design)
 
 
+def test_the_stack_states_what_sets_each_gap_and_no_gap(exported, design):  # noqa: F811
+    """pcbl derives every gap; the export hands it the setters and board_params'
+    own figures, never a gap (a stated one would be a second home)."""
+    st = exported.doc["stack"]
+    assert "gaps" not in st
+    assert (st["available_mm"], st["clearance_mm"], st["tail_mm"]) == (
+        layout_export.bp.AVAIL_H, layout_export.bp.CLEARANCE, layout_export.bp.TAIL)
+    assert st["floor"] == {"liner_mm": layout_export.bp.FLOOR_LINER_T,
+                           "min_mm": layout_export.bp.FLOOR_STANDOFF_MIN,
+                           "seat": layout_export.bp.FLOOR_SEAT,
+                           "seat_pad_mm": layout_export.bp.THERMAL_PAD_T}
+    want = [(s.name, *s.between, s.height_mm, {"sets": "sets", "shimmed": "short"}[s.seating])
+            for s in design.standoffs if s.seating != "shim"]
+    assert [(s["name"], s["below"], s["above"], s["mm"], s["seating"])
+            for s in st["standoffs"]] == want
+    assert st["lid"] is True
+
+
+def test_lead_mm_is_stated_only_on_a_through_hole_footprint(exported, design):  # noqa: F811
+    fps = {f["name"]: f for f in exported.doc["footprints"]}
+    leads = {x.refdes: x.lead_mm for x in (*design.parts, *design.connectors)
+             if getattr(x, "lead_mm", None) is not None}
+    rows = {p["refdes"]: p for p in exported.doc["parts"]}
+    stated = [r for r in rows if "lead_mm" in rows[r]]
+    assert stated, "no part carries its leads"
+    for ref in stated:
+        assert rows[ref]["lead_mm"] == leads[ref]
+        assert any(p.get("crosses_board") for p in fps[rows[ref]["footprint"]]["pads"])
+    for ref in set(leads) & set(rows) - set(stated):
+        assert any(f"{ref} states lead_mm" in n for n in exported.notes), ref
+
+
 def test_the_export_validates_with_pcblayouts_loader(exported):
     model = pytest.importorskip("pcblayout.model")
     d = model.loads(exported.text())

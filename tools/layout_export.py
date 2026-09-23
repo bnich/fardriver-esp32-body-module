@@ -329,6 +329,8 @@ def _parts(d, ix, project, footprints, notes) -> list:
     ⚠️ The order is a fact of the design: pcbl breaks a tie by stated order,
     and legacy meets the parts in this one, so a sorted list would place tied
     parts differently from the placer it is held to."""
+    leads = {x.refdes: x.lead_mm for x in (*d.parts, *d.connectors)
+             if getattr(x, "lead_mm", None) is not None}
     out = []
     for it in ix.items.values():
         board = it.board
@@ -358,6 +360,15 @@ def _parts(d, ix, project, footprints, notes) -> list:
             row["body_mm"] = body
         if it.height is not None:
             row["height_mm"] = float(it.height)
+        lead = leads.get(it.refdes)
+        if lead is not None:
+            # pcbl gives a part tails only where its footprint has a pad that
+            # crosses the board; a lead on any other footprint is refused.
+            if any(p.get("crosses_board") for p in fp["pads"]):
+                row["lead_mm"] = float(lead)
+            else:
+                notes.append(f"part: {board} {it.refdes} states lead_mm {lead:g} but footprint "
+                             f"{comp.footprint} has no through-hole pad; lead not exported")
         if it.harness:
             row["attrs"] = {"harness": True}
         out.append(row)
@@ -596,13 +607,39 @@ def _keep_outs(ix, project) -> list:
     return out
 
 
-def _stack(d, boards) -> dict:
+#: The body module's standoff seatings, in pcbl's words: "shimmed" is a pillar
+#: specified SHORT of the pair's stop, which pcbl calls "short"; a "shim" is
+#: not a pillar at all and goes to `shims`.
+_SEATING = {"sets": "sets", "shimmed": "short"}
+
+
+def _stack(d, boards, notes) -> dict:
+    """What SETS each gap, never a gap: pcbl derives the gaps, the total and the
+    keep-outs from these and the parts' heights, as `board_params.layer_gaps`
+    does (📄 pcb-layout-tools docs/model.md, "Stack")."""
     names = {b["name"] for b in boards}
-    gaps = [{"below": g.below, "above": g.above, "mm": g.gap_mm,
-             "set_by": " ".join(s for s in g.set_by if s and s != "-")}
-            for g in bp.layer_gaps(d) if g.below in names and g.above in names]
-    return {"order": [b for b in bp.STACK_ORDER if b in names], "gaps": gaps,
-            "available_mm": bp.AVAIL_H}
+    order = [b for b in bp.STACK_ORDER if b in names]
+    decks = {bp.FLOOR_NAME, bp.LID_NAME, *order}
+    standoffs, shims = [], []
+    for s in d.standoffs:
+        if s.seating == "shim":
+            shims.append({"name": s.name, "mm": float(s.height_mm)})
+            continue
+        below, above = s.between
+        if below not in decks or above not in decks:
+            notes.append(f"stack: the {s.name} standoff stands {below} -> {above}, a board "
+                         f"the project does not place; not exported")
+            continue
+        standoffs.append({"name": s.name, "below": below, "above": above,
+                          "mm": float(s.height_mm), "seating": _SEATING[s.seating]})
+    out = {"order": order, "available_mm": bp.AVAIL_H, "clearance_mm": bp.CLEARANCE,
+           "tail_mm": bp.TAIL,
+           "floor": {"liner_mm": bp.FLOOR_LINER_T, "min_mm": bp.FLOOR_STANDOFF_MIN,
+                     "seat": bp.FLOOR_SEAT, "seat_pad_mm": bp.THERMAL_PAD_T},
+           "lid": True, "standoffs": standoffs}
+    if shims:
+        out["shims"] = shims
+    return out
 
 
 def export(project, d=None) -> Export:
@@ -640,7 +677,7 @@ def export(project, d=None) -> Export:
         "nets": _net_rows(ix, classes, [p["refdes"] for p in parts]),
         "parts": parts,
         "constraints": constraints,
-        "stack": _stack(d, boards),
+        "stack": _stack(d, boards, notes),
     }
     return Export(doc, notes)
 
