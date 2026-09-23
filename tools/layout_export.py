@@ -11,13 +11,13 @@ pack-voltage nets' operating points, which are code (`soft_start`), not data.
 read from where it already lives, and each block says where:
 
   boards       the project's own outline, holes and layer table; the inner
-               layers' nets by `route.pour_plan`'s rule (R1); `place.M3_KEEPOUT`
-               and `board_params.PCB_T`
+               layers' nets by `route.pour_plan`'s rule (R1); `place.M3_KEEPOUT`,
+               `route.POUR_INSET` and `board_params.PCB_T`
   footprints   the project's FOOTPRINT documents, read the way pcbl reads them
                (`_footprint`), so the design and the layout see one geometry
   netclasses   `route`'s class table, with `place.CHANNEL_REACH` /
                `place.SIGNAL_REACH` as the routability reach of the classes
-               check 20 binds
+               check 20 binds, and `class_copper` on `route.heavy_classes`
   nets         every netlist net, in the class `route.net_class` gives it on
                each board it is on; `supply` from `place.Index`'s grounds and
                `rules.rails` (the nets that feed a part's SUPPLY pin); `order`,
@@ -33,7 +33,8 @@ read from where it already lives, and each block says where:
                ADC filters, the CAN transceiver and the programming land; the
                brake corridor from `place.brake_terminal` / `place.i2c_pullups`;
                the heavy path from `place.v12_output`; the V12 pour from
-               `route.v12_line` / `place.v12_bus`; the antenna and service
+               `route.v12_line` / `place.v12_bus`; the ground twin from
+               `route._return_twin`'s rule; the antenna and service
                keep-outs from `place`'s zones
   stack        `board_params.STACK_ORDER`, `layer_gaps`, `AVAIL_H`
 
@@ -275,6 +276,9 @@ def _netclasses(used) -> list:
             row["pairwise_by_voltage"] = True
         if c.name in REACH:
             row["reach_mm"] = REACH[c.name]
+        if c in route.heavy_classes():
+            # the classes `route.py --heavy` lays by rule -- `pcbl route copper`
+            row["class_copper"] = True
         out.append(row)
     return out
 
@@ -319,7 +323,8 @@ def _boards(project, ix, notes) -> list:
                        {"name": layers[2], "kind": kind, "net": third},
                        {"name": layers[3], "kind": "signal"}],
             "holes": sorted([_exact(u), _exact(v)] for u, v in f.holes),
-            "hole_keepout_mm": place.M3_KEEPOUT})
+            "hole_keepout_mm": place.M3_KEEPOUT,
+            "pour_inset_mm": route.POUR_INSET})
     return out
 
 
@@ -447,9 +452,9 @@ def _interfaces(d, ix) -> list:
         ends = sorted(ends, key=lambda c: order[c.board])
         if len(ends) != 2:
             raise SystemExit(f"layout_export: cabled interface {iface} has {len(ends)} ends")
-        gap = next(g for g in gaps if (g.below, g.above) == (ends[0].board, ends[1].board))
-        out.append({"kind": "cable", "name": iface, "ends": [ends[0].refdes, ends[1].refdes],
-                    "gap_mm": gap.gap_mm})
+        # ⛔ no gap: pcbl derives the height the loom spans from the stack
+        # (`stack.cable_gap`), so a gap stated here would be a second home
+        out.append({"kind": "cable", "name": iface, "ends": [ends[0].refdes, ends[1].refdes]})
     return out
 
 
@@ -525,6 +530,26 @@ def _heavy_paths(ix) -> list:
             for b in theirs:
                 out.append({"kind": "heavy_path", "name": f"{src}.{a}-{away}.{b}",
                             "chain": [[src, a], [away, b]], "max_mm": place.HEAVY_PATH_MM})
+    return out
+
+
+def _twins(ix) -> list:
+    """The 12 V run's ground twin (`route._return_twin`): on a board that
+    carries the bus, each ground that reaches both the converter and the
+    contact the bus leaves by, over those two and the bus's other parts on
+    that ground, laid beside the run at `PWR12`'s width."""
+    out = []
+    for board in bp.STACK_ORDER:
+        src, away, parts = place.v12_output(ix, board)
+        if src is None or away is None or not route.carries_bus(ix, board):
+            continue
+        for net in sorted(n for n in ix.gnd
+                          if any(r == src for r, _ in ix.members.get(n, ()))
+                          and any(r == away for r, _ in ix.members.get(n, ()))):
+            refs = [src, away] + [r for r in parts
+                                   if r != away and net in ix.items[r].nets]
+            out.append({"kind": "twin", "name": f"{board}-{net}-RETURN", "board": board,
+                        "net": net, "beside": route.PWR12.name, "parts": refs})
     return out
 
 
@@ -659,7 +684,8 @@ def export(project, d=None) -> Export:
     exported = {p["refdes"] for p in parts}
     constraints = (_edge_groups(d, boards) + _clusters(ix, classes) + _regions(d, ix, boards)
                    + _keep_outs(ix, project) + _interfaces(d, ix) + _reaches(ix, notes)
-                   + _corridors(ix) + _heavy_paths(ix) + _pour_spans(ix, boards))
+                   + _corridors(ix) + _heavy_paths(ix) + _pour_spans(ix, boards)
+                   + _twins(ix))
     for c in constraints:
         refs = ([c.get("host"), c.get("satellite"), c.get("part"), c.get("lower"),
                  c.get("upper")] + list(c.get("parts", ())) + list(c.get("serves", ()))

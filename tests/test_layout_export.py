@@ -81,6 +81,40 @@ def test_every_netclass_figure_is_routes(exported):
             (c.width_mm, {"default": c.clearance_mm})
 
 
+def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
+    """`pcbl route copper` lays the classes `route.py --heavy` lays -- the list
+    is `route.heavy_classes`, never typed here."""
+    laid = {row["name"] for row in exported.doc["netclasses"] if row.get("class_copper")}
+    used = {row["name"] for row in exported.doc["netclasses"]}
+    assert laid == {c.name for c in route.heavy_classes()} & used
+    assert laid, "no class is laid by rule"
+
+
+def test_every_board_states_routes_pour_inset(exported):
+    assert {b["pour_inset_mm"] for b in exported.doc["boards"]} == {route.POUR_INSET}
+
+
+def test_the_cable_states_no_gap(exported):
+    """The loom's height is the stack's to derive (`stack.cable_gap`)."""
+    cables = [c for c in exported.doc["constraints"] if c["kind"] == "cable"]
+    assert cables and all("gap_mm" not in c for c in cables)
+
+
+def test_the_twin_is_routes_return_rule(exported, ix):  # noqa: F811
+    """The ground twin is stated where `route._return_twin` would lay one: the
+    board that makes the bus, each ground reaching the converter and the
+    contact it leaves by, over those and the bus parts on that ground."""
+    twins = [c for c in exported.doc["constraints"] if c["kind"] == "twin"]
+    assert [(t["board"], t["net"], t["beside"]) for t in twins] == [
+        ("POWER", "GND", route.PWR12.name)]
+    src, away, parts = place.v12_output(ix, "POWER")
+    [t] = twins
+    assert t["parts"][:2] == [src, away]
+    assert set(t["parts"][2:]) == {r for r in parts if "GND" in ix.items[r].nets} - {away}
+    assert len(set(t["parts"])) == len(t["parts"])
+    assert "BASEPLATE" not in {t["net"] for t in twins}
+
+
 def test_the_hv_region_takes_the_non_plane_grounds_as_neutral(exported, ix):  # noqa: F811
     """Ground is on both sides of POWER's partition (`place.hv_pins`); a ground
     no plane carries -- `BASEPLATE` -- must be named, or C203/C204 read as
