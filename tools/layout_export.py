@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass, field
 
@@ -260,7 +261,67 @@ def _used_classes(classes) -> set:
     return used
 
 
-def _netclasses(used) -> list:
+#: The via the class-copper router may use on the classes of `VIA_CLASSES`:
+#: 0.6 mm pad, 0.3 mm finished hole -- JLCPCB's standard via, no extra charge.
+VIA_MM = (0.6, 0.3)
+#: Via plating the fab states as its average (18 um), in mils -- the wall of
+#: the barrel, and the whole of its current-carrying copper.
+VIA_PLATING_MIL = 18e-3 / 25.4e-3
+#: The temperature rise a via may take: the 10 degC the channel classes are
+#: sized to (`route.CH12`), so a layer change runs no hotter than its tracks.
+VIA_RISE_C = 10.0
+
+
+def via_current_a(hole_mm: float = VIA_MM[1], plating_mil: float = VIA_PLATING_MIL,
+                  rise_c: float = VIA_RISE_C) -> float:
+    """What ONE via may carry: IPC-2221 for an INTERNAL conductor,
+    `I = 0.024 * dT^0.44 * A^0.725` (A in mil^2), with the barrel's cross-
+    section `A = pi * hole * plating` -- 26.3 mil^2 for a 0.3 mm hole in 18 um,
+    0.707 A at 10 degC, taken DOWN to 0.70 A.  Conservative three ways: the
+    internal constant is half the external one though a barrel reaches both
+    faces; the finished hole, not the plating's mean diameter, sets the
+    circumference; and the barrel's copper is taken at the fab's average
+    plating, not its typical."""
+    area = math.pi * (hole_mm / 25.4e-3) * plating_mil
+    return math.floor(0.024 * rise_c ** 0.44 * area ** 0.725 * 100) / 100
+
+
+#: The classes that state a via, and what sizes the cluster: the most any ONE
+#: net of the class can carry.  ⛔ No HV via: a pack-voltage barrel through the
+#: inner GND planes needs a 1.25 mm antipad in each, and HV stays on the faces
+#: (`route.HV`).  PWR12 is a bus carried by a pour, CH5 has room on its face.
+VIA_CLASSES = ("PWR5AUX", "CH12")
+
+
+def _class_current_a(d, ix) -> dict:
+    """{class: amps} for `VIA_CLASSES`, read off the circuit, never typed.
+
+    CH12: the highest current limit any of its channels has -- each channel's
+    own limiter at its ceiling (`power_budget._channel_limit_a`); a via sized
+    for the typical channel would be a fuse on the strongest.  PWR5AUX: the four
+    5 V channels' limiters at their ceiling together, `n5 x per_5v_a`
+    (`power_budget.limit_case`), which is what the 5 V bus feeds.  A figure the
+    circuit cannot give is a refusal, not a guess."""
+    from tools import power_budget as pb
+    out = {}
+    amps = []
+    for net in sorted(ix.classes.get("CH12", ())):
+        a, why = pb._channel_limit_a(d, net)
+        if why:
+            raise SystemExit(f"layout_export: CH12 via current: {why}")
+        amps.append(a)
+    if amps:
+        out["CH12"] = round(max(amps), 3)
+    lim = pb.limit_case(d)
+    if lim.per_5v_a is None or not lim.n5:
+        raise SystemExit(f"layout_export: PWR5AUX via current: the 5 V channels' limit is "
+                         f"not derivable ({'; '.join(lim.problems) or 'no 5 V channel'})")
+    out["PWR5AUX"] = round(lim.n5 * lim.per_5v_a, 3)
+    return out
+
+
+def _netclasses(used, currents=None) -> list:
+    currents = currents or {}
     out = []
     for c in CLASSES:
         if c.name not in used:
@@ -279,6 +340,12 @@ def _netclasses(used) -> list:
         if c in route.heavy_classes():
             # the classes `route.py --heavy` lays by rule -- `pcbl route copper`
             row["class_copper"] = True
+        if c.name in VIA_CLASSES and c.name in currents:
+            # a layer change of ceil(current / per-via) vias (`pcbl`'s
+            # `copper_via_current`): CH12 4, PWR5AUX 8
+            row["current_a"] = currents[c.name]
+            row["via_mm"] = list(VIA_MM)
+            row["via_current_a"] = via_current_a()
         out.append(row)
     return out
 
@@ -699,7 +766,7 @@ def export(project, d=None) -> Export:
         "version": 1,
         "boards": boards,
         "footprints": list(footprints.values()),
-        "netclasses": _netclasses(_used_classes(classes)),
+        "netclasses": _netclasses(_used_classes(classes), _class_current_a(d, ix)),
         "nets": _net_rows(ix, classes, [p["refdes"] for p in parts]),
         "parts": parts,
         "constraints": constraints,

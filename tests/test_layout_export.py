@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import shutil
 
 import pytest
@@ -88,6 +89,49 @@ def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
     used = {row["name"] for row in exported.doc["netclasses"]}
     assert laid == {c.name for c in route.heavy_classes()} & used
     assert laid, "no class is laid by rule"
+
+
+def test_vias_are_stated_on_ch12_and_pwr5aux_and_no_other(exported):
+    """No HV via: a pack-voltage barrel would need a 1.25 mm antipad through
+    each inner GND plane."""
+    rows = {row["name"]: row for row in exported.doc["netclasses"]}
+    viad = {n for n, row in rows.items() if row.get("via_mm")}
+    assert viad == set(layout_export.VIA_CLASSES) & set(rows)
+    assert "HV" not in viad
+    for n in viad:
+        assert rows[n]["via_mm"] == [0.6, 0.3] and rows[n]["via_current_a"] == 0.70
+
+
+def test_the_via_count_is_the_class_current_over_one_via(exported):
+    """CH12 at its strongest channel's limit, 2.32 A: four vias.  PWR5AUX at
+    four 5 V limiters together, 5.55 A: eight."""
+    rows = {row["name"]: row for row in exported.doc["netclasses"]}
+    need = {n: math.ceil(rows[n]["current_a"] / rows[n]["via_current_a"])
+            for n in layout_export.VIA_CLASSES if n in rows}
+    assert need == {"CH12": 4, "PWR5AUX": 8}
+    assert rows["CH12"]["current_a"] == pytest.approx(2.323)
+    assert rows["PWR5AUX"]["current_a"] == pytest.approx(5.553)
+
+
+def test_one_via_is_ipc2221_internal_at_the_barrel_rounded_down():
+    area = math.pi * (0.3 / 0.0254) * (0.018 / 0.0254)
+    assert area == pytest.approx(26.3, abs=0.05)
+    assert 0.024 * 10 ** 0.44 * area ** 0.725 == pytest.approx(0.707, abs=0.001)
+    assert layout_export.via_current_a() == 0.70
+    assert layout_export.via_current_a(rise_c=20.0) > 0.70, "the figure moves with its inputs"
+
+
+def test_a_ch12_channel_with_no_derivable_limit_is_refused(design, ix, monkeypatch):  # noqa: F811
+    from tools import power_budget
+    monkeypatch.setattr(power_budget, "_channel_limit_a",
+                        lambda d, net: (None, f"{net}: no limiter"))
+    with pytest.raises(SystemExit, match="CH12 via current"):
+        layout_export._class_current_a(design, ix)
+
+
+def test_the_class_currents_are_read_off_the_circuit(design, ix):  # noqa: F811
+    assert layout_export._class_current_a(design, ix) == \
+        {"CH12": pytest.approx(2.323), "PWR5AUX": pytest.approx(5.553)}
 
 
 def test_every_board_states_routes_pour_inset(exported):
@@ -245,10 +289,69 @@ def test_the_export_validates_with_pcblayouts_loader(exported):
 
 
 # --- the hook ------------------------------------------------------------------------
-def test_one_operating_point_per_soft_start_world(design):  # noqa: F811
+def _fuses(design):  # noqa: F811
+    return sorted(p.refdes for p in design.parts if p.kind == "FUSE" and not p.dnp)
+
+
+def test_one_operating_point_per_soft_start_world_and_one_per_fuse(design):  # noqa: F811
+    """The 24 soft-start worlds, in their order and unchanged, then one fault
+    point per fitted fuse -- nothing else."""
     points = layout_hooks.operating_points()
-    assert len(points) == len(soft_start.operating_points(design))
+    worlds = soft_start.operating_points(design)
+    names = list(points)
+    assert len(points) == len(worlds) + len(_fuses(design))
+    assert names[:len(worlds)] == [layout_hooks._name(w) for w in worlds]
+    ceiling = soft_start.pack_ceiling_v(design)
+    assert names[len(worlds):] == [f"{ceiling:g}V-on-{f}-open" for f in _fuses(design)]
     assert all(row.keys() == route.hv_node_voltages(design).keys() for row in points.values())
+    # the soft-start worlds are exactly soft_start's figures
+    ranges = route.hv_node_voltages(design)
+    for i, name in enumerate(names[:len(worlds)]):
+        assert all(points[name][n] == v[i] for n, v in ranges.items())
+
+
+def test_every_fuse_open_stands_the_pack_across_it(design):  # noqa: F811
+    """⚠️ Fuse open: the nets either side of every fuse are the pack's
+    do-not-exceed apart, and only the load side moves."""
+    points = layout_hooks.operating_points()
+    ceiling = soft_start.pack_ceiling_v(design)
+    assert _fuses(design) == ["F201"]
+    for f in _fuses(design):
+        row = points[f"{ceiling:g}V-on-{f}-open"]
+        a, b = (design.net_of(f, pin).name for pin in ("1", "2"))
+        assert abs(row[a] - row[b]) == ceiling
+        working = soft_start.hv_node_voltages(design, ceiling, True, False, 0.0)
+        moved = sorted(n for n in row if row[n] != working[n])
+        assert moved == ["HV_C2_HOLD"]
+
+
+def test_hv_sw_and_ksw_still_move_together_in_every_point(design):  # noqa: F811
+    """The fault point must not pull apart the pair the soft-start worlds keep
+    together: `HV_SW` and `KSW` swing as one."""
+    points = layout_hooks.operating_points()
+    assert max(abs(r["HV_SW"] - r["KSW"]) for r in points.values()) == 0.0
+
+
+def test_a_fuse_with_a_bypass_is_refused():
+    """Fires: a second path round the fuse means it never has the pack across
+    it; the point would state a difference the circuit cannot show."""
+    joins = [("TAP", "IN", "D1"), ("IN", "OUT", "F1"), ("TAP", "OUT", "R9")]
+    with pytest.raises(ValueError, match="F1 open still has both ends fed"):
+        layout_hooks._load_side("F1", "IN", "OUT", joins, ["TAP"])
+
+
+def test_a_fuse_on_no_supply_is_refused():
+    joins = [("X", "IN", "D1"), ("IN", "OUT", "F1")]
+    with pytest.raises(ValueError, match="F1 open still has neither end fed"):
+        layout_hooks._load_side("F1", "IN", "OUT", joins, ["TAP"])
+
+
+def test_a_fuse_load_side_is_everything_only_it_feeds():
+    """Silent, and the answer: the load side is the fuse's far net and what
+    hangs off it, and nothing the tap still reaches."""
+    joins = [("TAP", "IN", "D1"), ("IN", "OUT", "F1"), ("OUT", "LOAD", "L1"),
+             ("TAP", "OTHER", "R1")]
+    assert layout_hooks._load_side("F1", "IN", "OUT", joins, ["TAP"]) == {"OUT", "LOAD"}
 
 
 def test_the_hook_validates_with_pcblayout(exported):
