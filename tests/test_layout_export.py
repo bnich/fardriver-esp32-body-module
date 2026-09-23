@@ -90,11 +90,35 @@ def test_the_hv_region_takes_the_non_plane_grounds_as_neutral(exported, ix):  # 
     assert region["neutral_nets"] == ["BASEPLATE"]
 
 
-def test_a_net_two_classes_on_two_boards_is_reported(exported):
-    """The model holds one class per net; `V12` is PWR12 where the brick and
-    the driver line carry it and RAIL on LOGIC and CTRL.  The export takes the
-    stronger and SAYS so -- never silently."""
-    assert any(n.startswith("class: V12 ") for n in exported.notes)
+def _net_row(exported, name):
+    return next(n for n in exported.doc["nets"] if n["name"] == name)
+
+
+def test_a_net_two_classes_on_two_boards_states_each(exported, ix):  # noqa: F811
+    """`V12` is PWR12 where the brick and the driver line carry it and RAIL
+    where it is one trace to a converter.  The row states every board's class
+    as `route.net_class` gives it -- never one class everywhere, and never a
+    note in place of the statement."""
+    row = _net_row(exported, "V12")
+    boards = sorted({ix.items[r].board for r, _ in ix.members["V12"] if r in ix.items})
+    per = {b: route.net_class(ix, b, "V12").name for b in boards}
+    assert len(set(per.values())) > 1           # the case is real on this netlist
+    stated = {b: row.get("class_by_board", {}).get(b, row["net_class"]) for b in boards}
+    assert stated == per
+    assert not any(n.startswith("class: ") for n in exported.notes)
+
+
+def test_a_net_one_class_everywhere_names_no_board(exported):
+    assert "class_by_board" not in _net_row(exported, "GND")
+
+
+def test_supply_marks_the_grounds_and_the_rails_and_nothing_else(exported, ix):  # noqa: F811
+    """`supply` is what check 20 does not measure (`place.routed_nets`): the
+    grounds and every net feeding a part's SUPPLY pin."""
+    marked = {n["name"] for n in exported.doc["nets"] if n.get("supply")}
+    assert marked == (ix.gnd | ix.rails) & set(ix.members)
+    assert "BASEPLATE" in marked and "V5AUX" in marked
+    assert "EN" not in marked
 
 
 def test_a_constraint_naming_a_part_the_project_does_not_place_is_refused(

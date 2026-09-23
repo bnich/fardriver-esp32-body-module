@@ -18,7 +18,9 @@ read from where it already lives, and each block says where:
   netclasses   `route`'s class table, with `place.CHANNEL_REACH` /
                `place.SIGNAL_REACH` as the routability reach of the classes
                check 20 binds
-  nets         every netlist net, in the class `route.net_class` gives it
+  nets         every netlist net, in the class `route.net_class` gives it on
+               each board it is on; `supply` from `place.Index`'s grounds and
+               `rules.rails` (the nets that feed a part's SUPPLY pin)
   parts        `netlist.checked()`: board, side, kind, height, body, and the
                pin map padmap already made the footprint's own pad names
   constraints  the edge groups from `board_fit.edge_budget`; clusters from
@@ -65,8 +67,8 @@ COPPER_LAYER_TYPES = ("TOP", "BOTTOM", "SIGNAL", "PLANE")
 LAYER_TOP, LAYER_BOTTOM = 1, 2
 
 #: `route`'s class table, strongest first -- the order `route._net_class`
-#: tries them in, which is also how a net that is two classes on two boards
-#: is given ONE (the model has one class per net).
+#: tries them in.  A net that is two classes on two boards states the
+#: strongest as its `net_class` and the others under `class_by_board`.
 CLASSES = (route.HV, route.PWR12, route.PWR5AUX, route.CH12, route.CH5,
            route.DIFF, route.SENSE, route.RAIL, route.DEFAULT)
 
@@ -204,25 +206,45 @@ def _layer_names(project) -> dict:
 
 
 # --- the design ---------------------------------------------------------------------
-def _net_classes(ix, notes) -> dict:
-    """{net: class name}.  Per board the class is `route.net_class`'s; the
-    model has one class per net, so a net that is two classes on two boards
-    takes the strongest, and the difference is a finding."""
-    rank = {c.name: i for i, c in enumerate(CLASSES)}
-    boards_of = {}
-    for n, members in ix.members.items():
-        boards_of[n] = sorted({ix.items[r].board for r, _ in members if r in ix.items})
+def _net_classes(ix) -> dict:
+    """{net: {board: class name}} for every board the net is on, by
+    `route.net_class` -- the class differs by board where the copper does
+    (`V12` is PWR12 where it carries the loads, RAIL where it is one trace to
+    a converter).  A net on no placed part is {}."""
     out = {}
     for n in sorted(ix.members):
-        per = {b: route.net_class(ix, b, n).name for b in boards_of[n]}
-        if not per:
-            out[n] = route.DEFAULT.name
-            continue
-        out[n] = min(per.values(), key=rank.__getitem__)
-        if len(set(per.values())) > 1:
-            notes.append(f"class: {n} is {', '.join(f'{c} on {b}' for b, c in per.items())}; "
-                         f"one class per net in layout.yaml, so {out[n]} everywhere")
+        boards = sorted({ix.items[r].board for r, _ in ix.members[n] if r in ix.items})
+        out[n] = {b: route.net_class(ix, b, n).name for b in boards}
     return out
+
+
+def _net_rows(ix, classes) -> list:
+    """The `nets` block.  `net_class` is the strongest of the net's classes;
+    a board where it is another class is named under `class_by_board`.
+    `supply` is the circuit's statement of a supply or a return: a ground
+    (`ix.gnd`) or a net feeding a part's SUPPLY pin (`ix.rails`) -- what
+    check 20 does not measure (`place.routed_nets`)."""
+    rank = {c.name: i for i, c in enumerate(CLASSES)}
+    rows = []
+    for n in sorted(classes):
+        per = classes[n]
+        base = min(per.values(), key=rank.__getitem__) if per else route.DEFAULT.name
+        row = {"name": n, "net_class": base}
+        other = {b: c for b, c in per.items() if c != base}
+        if other:
+            row["class_by_board"] = other
+        if n in ix.gnd or n in ix.rails:
+            row["supply"] = True
+        rows.append(row)
+    return rows
+
+
+def _used_classes(classes) -> set:
+    """Every class a net row names: a net on no placed part is DEFAULT."""
+    used = {c for per in classes.values() for c in per.values()}
+    if any(not per for per in classes.values()):
+        used.add(route.DEFAULT.name)
+    return used
 
 
 def _netclasses(used) -> list:
@@ -351,7 +373,7 @@ def _clusters(ix, classes) -> list:
             pull = {}
             for net, _conn, _pin, weight in served:
                 if weight != 1.0:
-                    pull[classes[net]] = weight
+                    pull[classes[net][board]] = weight
             row = {"kind": "cluster", "name": f"{it.refdes}-SERVES", "host": it.refdes,
                    "serves": sorted({conn for _, conn, _, _ in served}, key=_ref_key)}
             if pull:
@@ -555,7 +577,7 @@ def export(project, d=None) -> Export:
         if pcb is not None:
             used |= {c.footprint for c in pcb.components.values()}
     footprints = {u: _footprint(u, project.footprints[u]) for u in sorted(used)}
-    classes = _net_classes(ix, notes)
+    classes = _net_classes(ix)
     boards = _boards(project, ix, notes)
     parts = _parts(d, ix, project, footprints, notes)
     exported = {p["refdes"] for p in parts}
@@ -575,8 +597,8 @@ def export(project, d=None) -> Export:
         "version": 1,
         "boards": boards,
         "footprints": list(footprints.values()),
-        "netclasses": _netclasses(set(classes.values())),
-        "nets": [{"name": n, "net_class": classes[n]} for n in sorted(classes)],
+        "netclasses": _netclasses(_used_classes(classes)),
+        "nets": _net_rows(ix, classes),
         "parts": parts,
         "constraints": constraints,
         "stack": _stack(d, boards),
