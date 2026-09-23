@@ -121,6 +121,49 @@ def test_supply_marks_the_grounds_and_the_rails_and_nothing_else(exported, ix): 
     assert "EN" not in marked
 
 
+def test_parts_and_nets_are_in_the_netlists_order(exported, ix):  # noqa: F811
+    """The order is a fact of the design: pcbl breaks a tie by stated order,
+    and legacy meets parts and nets in the netlist's.  A sorted list places
+    tied parts differently from the placer the export is held to."""
+    parts = [p["refdes"] for p in exported.doc["parts"]]
+    assert parts == [r for r in ix.items if r in set(parts)]
+    assert parts != sorted(parts)               # the case is real on this netlist
+    nets = [n["name"] for n in exported.doc["nets"]]
+    assert nets == list(ix.members)
+
+
+def test_a_nets_order_is_stated_only_where_it_differs_from_the_parts(exported, ix):  # noqa: F811
+    """`order` is the netlist's order of a net's members (`ix.members`), the
+    order legacy lends a band in; it is written only where part order would
+    say otherwise, and always names exactly the net's exported members."""
+    at = {p["refdes"]: i for i, p in enumerate(exported.doc["parts"])}
+    stated = 0
+    for row in exported.doc["nets"]:
+        met = list(dict.fromkeys(r for r, _ in ix.members[row["name"]] if r in at))
+        if "order" in row:
+            stated += 1
+            assert row["order"] == met
+            assert met != sorted(met, key=at.__getitem__)
+        else:
+            assert met == sorted(met, key=at.__getitem__)
+    assert stated                               # the case is real on this netlist
+
+
+def test_the_brake_corridor_is_stated_from_legacys_own_rule(exported, ix):  # noqa: F811
+    """Check 14's brake clause, as a generic `corridor`: the path from the
+    brake terminal to the module, the I2C pull-ups kept `CORRIDOR_CLEAR` off
+    it -- every figure read from `place`, never typed here."""
+    rows = [c for c in exported.doc["constraints"] if c["kind"] == "corridor"]
+    [module] = [it for it in ix.on("LOGIC") if it.kind == "MODULE"]
+    term = place.brake_terminal(ix, "LOGIC", module.refdes)
+    assert rows == [{"kind": "corridor", "name": f"{term}-{module.refdes}-BRAKE",
+                     "ends": [term, module.refdes],
+                     "parts": list(place.i2c_pullups(ix, "LOGIC")),
+                     "clear_mm": place.CORRIDOR_CLEAR,
+                     "reason": rows[0]["reason"]}]
+    assert rows[0]["parts"]
+
+
 def test_a_constraint_naming_a_part_the_project_does_not_place_is_refused(
         tmp_path_factory, template, design, ix):  # noqa: F811
     path = _project(tmp_path_factory, template, design, ix, omit=("U404",))

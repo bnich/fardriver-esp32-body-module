@@ -20,15 +20,19 @@ read from where it already lives, and each block says where:
                check 20 binds
   nets         every netlist net, in the class `route.net_class` gives it on
                each board it is on; `supply` from `place.Index`'s grounds and
-               `rules.rails` (the nets that feed a part's SUPPLY pin)
+               `rules.rails` (the nets that feed a part's SUPPLY pin); `order`,
+               the netlist's own order of the net's pins, wherever it is not
+               the parts' order -- which member a tie meets first
   parts        `netlist.checked()`: board, side, kind, height, body, and the
-               pin map padmap already made the footprint's own pad names
+               pin map padmap already made the footprint's own pad names --
+               in the netlist's order, which pcbl breaks its ties by
   constraints  the edge groups from `board_fit.edge_budget`; clusters from
                `place.served_contacts`; the HV region from `layout_rules`'
                HV nets; pairs from `board_params.layer_gaps`, the cable from
                `model.is_cabled`; reaches from `place.decoupler_hosts`, the
                ADC filters, the CAN transceiver and the programming land; the
-               heavy path from `place.v12_output`; the V12 pour from
+               brake corridor from `place.brake_terminal` / `place.i2c_pullups`;
+               the heavy path from `place.v12_output`; the V12 pour from
                `route.v12_line` / `place.v12_bus`; the antenna and service
                keep-outs from `place`'s zones
   stack        `board_params.STACK_ORDER`, `layer_gaps`, `AVAIL_H`
@@ -212,21 +216,26 @@ def _net_classes(ix) -> dict:
     (`V12` is PWR12 where it carries the loads, RAIL where it is one trace to
     a converter).  A net on no placed part is {}."""
     out = {}
-    for n in sorted(ix.members):
+    for n in ix.members:                    # the netlist's order: it is stated order
         boards = sorted({ix.items[r].board for r, _ in ix.members[n] if r in ix.items})
         out[n] = {b: route.net_class(ix, b, n).name for b in boards}
     return out
 
 
-def _net_rows(ix, classes) -> list:
+def _net_rows(ix, classes, part_order) -> list:
     """The `nets` block.  `net_class` is the strongest of the net's classes;
     a board where it is another class is named under `class_by_board`.
     `supply` is the circuit's statement of a supply or a return: a ground
     (`ix.gnd`) or a net feeding a part's SUPPLY pin (`ix.rails`) -- what
-    check 20 does not measure (`place.routed_nets`)."""
+    check 20 does not measure (`place.routed_nets`).  `order` is the
+    netlist's order of the net's members (`ix.members`), stated wherever it
+    differs from `part_order`: a band is lent by the first rail member met
+    with the most pins (`place.bands`), and the netlist lists a net's pins in
+    its own order, not its parts'."""
     rank = {c.name: i for i, c in enumerate(CLASSES)}
+    at = {r: i for i, r in enumerate(part_order)}
     rows = []
-    for n in sorted(classes):
+    for n in classes:                       # the netlist's order, as `_net_classes` keeps it
         per = classes[n]
         base = min(per.values(), key=rank.__getitem__) if per else route.DEFAULT.name
         row = {"name": n, "net_class": base}
@@ -235,6 +244,9 @@ def _net_rows(ix, classes) -> list:
             row["class_by_board"] = other
         if n in ix.gnd or n in ix.rails:
             row["supply"] = True
+        met = list(dict.fromkeys(r for r, _ in ix.members[n] if r in at))
+        if met != sorted(met, key=at.__getitem__):
+            row["order"] = met
         rows.append(row)
     return rows
 
@@ -312,38 +324,43 @@ def _boards(project, ix, notes) -> list:
 
 
 def _parts(d, ix, project, footprints, notes) -> list:
+    """The `parts` block, in the NETLIST's order -- `place.Index.items`, the
+    parts then the connectors, each pin in the order the netlist lands it.
+    ⚠️ The order is a fact of the design: pcbl breaks a tie by stated order,
+    and legacy meets the parts in this one, so a sorted list would place tied
+    parts differently from the placer it is held to."""
     out = []
-    for board in bp.STACK_ORDER:
+    for it in ix.items.values():
+        board = it.board
         pcb = project.pcbs.get(board)
         if pcb is None:
             continue
-        for it in sorted(ix.on(board), key=lambda i: _ref_key(i.refdes)):
-            comp = pcb.components.get(it.refdes)
-            if comp is None:
-                notes.append(f"part: {board} {it.refdes} is not in the project; not exported")
-                continue
-            fp = footprints[comp.footprint]
-            pads = {p["number"] for p in fp["pads"]}
-            pins = {}
-            for pin, net in sorted(it.pin_net.items(), key=lambda kv: _ref_key(kv[0])):
-                if pin in pads:
-                    pins[pin] = net
-                elif net:
-                    notes.append(f"part: {board} {it.refdes} pin {pin} ({net}) has no pad of "
-                                 f"that name on footprint {comp.footprint}; dropped")
-            row = {"refdes": it.refdes, "footprint": comp.footprint, "board": board,
-                   "kind": "CONNECTOR" if it.kind == "CONN" else it.kind}
-            if it.side == "bottom":
-                row["side"] = "bottom"
-            row["pins"] = pins
-            body = _stated_body(project.footprints[comp.footprint], it.body)
-            if body is not None:
-                row["body_mm"] = body
-            if it.height is not None:
-                row["height_mm"] = float(it.height)
-            if it.harness:
-                row["attrs"] = {"harness": True}
-            out.append(row)
+        comp = pcb.components.get(it.refdes)
+        if comp is None:
+            notes.append(f"part: {board} {it.refdes} is not in the project; not exported")
+            continue
+        fp = footprints[comp.footprint]
+        pads = {p["number"] for p in fp["pads"]}
+        pins = {}
+        for pin, net in it.pin_net.items():
+            if pin in pads:
+                pins[pin] = net
+            elif net:
+                notes.append(f"part: {board} {it.refdes} pin {pin} ({net}) has no pad of "
+                             f"that name on footprint {comp.footprint}; dropped")
+        row = {"refdes": it.refdes, "footprint": comp.footprint, "board": board,
+               "kind": "CONNECTOR" if it.kind == "CONN" else it.kind}
+        if it.side == "bottom":
+            row["side"] = "bottom"
+        row["pins"] = pins
+        body = _stated_body(project.footprints[comp.footprint], it.body)
+        if body is not None:
+            row["body_mm"] = body
+        if it.height is not None:
+            row["height_mm"] = float(it.height)
+        if it.harness:
+            row["attrs"] = {"harness": True}
+        out.append(row)
     return out
 
 
@@ -500,6 +517,28 @@ def _heavy_paths(ix) -> list:
     return out
 
 
+def _corridors(ix) -> list:
+    """Check 14's brake clause: the I2C pull-ups keep `CORRIDOR_CLEAR` off
+    the straight path the brake nets take from their harness terminal to the
+    module -- the path `place.brake_terminal` finds and `place.i2c_pullups`'
+    resistors keep clear of."""
+    out = []
+    for board in bp.STACK_ORDER:
+        module = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
+        if module is None:
+            continue
+        term = place.brake_terminal(ix, board, module.refdes)
+        pullups = place.i2c_pullups(ix, board)
+        if term is None or not pullups:
+            continue
+        out.append({"kind": "corridor", "name": f"{term}-{module.refdes}-BRAKE",
+                    "ends": [term, module.refdes], "parts": list(pullups),
+                    "clear_mm": place.CORRIDOR_CLEAR,
+                    "reason": "the brake nets' way to the module; the I2C bus's edges "
+                              "stay off it (check 14)"})
+    return out
+
+
 def _pour_spans(ix, boards) -> list:
     """Check 11: the V12 pour covers the driver line's bus pins and the feed's
     own contacts, fed from inside."""
@@ -583,7 +622,7 @@ def export(project, d=None) -> Export:
     exported = {p["refdes"] for p in parts}
     constraints = (_edge_groups(d, boards) + _clusters(ix, classes) + _regions(d, ix, boards)
                    + _keep_outs(ix, project) + _interfaces(d, ix) + _reaches(ix, notes)
-                   + _heavy_paths(ix) + _pour_spans(ix, boards))
+                   + _corridors(ix) + _heavy_paths(ix) + _pour_spans(ix, boards))
     for c in constraints:
         refs = ([c.get("host"), c.get("satellite"), c.get("part"), c.get("lower"),
                  c.get("upper")] + list(c.get("parts", ())) + list(c.get("serves", ()))
@@ -598,7 +637,7 @@ def export(project, d=None) -> Export:
         "boards": boards,
         "footprints": list(footprints.values()),
         "netclasses": _netclasses(_used_classes(classes)),
-        "nets": _net_rows(ix, classes),
+        "nets": _net_rows(ix, classes, [p["refdes"] for p in parts]),
         "parts": parts,
         "constraints": constraints,
         "stack": _stack(d, boards),
