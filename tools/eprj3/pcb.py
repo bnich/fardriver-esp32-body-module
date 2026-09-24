@@ -503,11 +503,14 @@ class Pcb:
     The envelope defaults to `board_params.BOARD_W` x `board_params.BOARD_L`
     so that a board generated here is, by construction, the board the fit
     budget proved.  Pass `width_mm`/`length_mm` only to make a board that is
-    deliberately not the standard card.
+    deliberately not the standard card.  `hole_span_mm` is the width the
+    mounting holes are laid out across (default: the board's own width); a
+    board wider than the common card -- POWER, `board_params.POWER_W` -- keeps
+    its holes on the common pattern by passing `BOARD_W` here.
     """
 
     def __init__(self, title, uuid, board_uuid, client,
-                 epoch_ms, *, width_mm=None, length_mm=None,
+                 epoch_ms, *, width_mm=None, length_mm=None, hole_span_mm=None,
                  hole_diameter_mm=M3_CLEARANCE_MM, hole_inset_mm=M3_INSET_MM,
                  stackup=None, rules=None, edit_version=EDIT_VERSION):
         self.title = title
@@ -517,6 +520,11 @@ class Pcb:
         self.epoch_ms = epoch_ms
         self.width_mm = BOARD_W if width_mm is None else width_mm
         self.length_mm = BOARD_L if length_mm is None else length_mm
+        self.hole_span_mm = self.width_mm if hole_span_mm is None else hole_span_mm
+        if self.hole_span_mm > self.width_mm:
+            raise ValueError(
+                f"holes laid out across {self.hole_span_mm} mm do not fit a "
+                f"{self.width_mm} mm wide board")
         self.hole_diameter_mm = hole_diameter_mm
         self.hole_inset_mm = hole_inset_mm
         self.stackup = stackup or Stackup()
@@ -558,7 +566,7 @@ class Pcb:
         which is the rounded value, not the unrounded ideal.
         """
         inset = _u(self.hole_inset_mm)
-        far_x = round(self.width_units - inset, 4)
+        far_x = round(_u(self.hole_span_mm) - inset, 4)
         far_y = round(self.length_units - inset, 4)
         return [(inset, inset), (far_x, inset),
                 (inset, far_y), (far_x, far_y)]

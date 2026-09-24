@@ -55,7 +55,7 @@ from .model import Connector, Design, Part, Standoff, is_cabled
 #: FACT that requirement is judged against, and the caps the envelope search
 #: works within.
 CAVITY_L = 260.0   # mm, along the bike
-CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 1.51 mm spare today
+CAVITY_W = 70.0    # mm, across -- ⚠️ the scarce axis: 1.05 mm spare today
 CAVITY_H = 100.0   # mm, floor to the underside of the battery tray
 CAVITY_MEASURED = True    # ✅ M18, measured by the owner 2026-09-20
 
@@ -116,7 +116,7 @@ END_ALLOWANCE = 4.0
 #: the cavity was a 200 x 50 ESTIMATE the design already overran by 33.0 mm
 #: along and 24.7 mm across: buying length to save width would have made the
 #: worse of the two problems worse. The MEASUREMENT is 260 x 70, and at every
-#: envelope since, WIDTH has been the axis that runs out first -- 1.51 mm of
+#: envelope since, WIDTH has been the axis that runs out first -- 1.05 mm of
 #: cavity spare across today against 4.00 mm along -- so length is the axis to
 #: spend and width the one to protect. ⛔ Do not restore the old order,
 #: and do not re-derive it from the old reason: it is written down here so
@@ -170,10 +170,10 @@ END_ALLOWANCE = 4.0
 #:   bought then. 242.0 puts it at 2.26 mm, on the axis with room to spend.
 #:
 #:   WHAT IT COSTS AND BUYS: 41.84 x 242.0 = 10125.28 mm², three boards 304 cm².
-#:   The cavity it requires is 256.00 along (4.00 mm spare) x 68.49 across
-#:   (1.51 mm spare). ⚠️ WIDTH IS WHAT IT SPENT: 1.84 mm of the 3.35 mm of
-#:   across-slack the 40.0 mm board had, and there is 1.51 mm left before the
-#:   design stops fitting the box M18 measured. Of the 68.49, 19.65 is the
+#:   The common card alone would require 256.00 along (4.00 mm spare) x 68.49
+#:   across; POWER's deeper outline (POWER_W, below) makes it 68.95 across
+#:   (1.05 mm spare). ⚠️ WIDTH IS WHAT IT SPENT, and there is 1.05 mm left
+#:   before the design stops fitting the box M18 measured. Of the 68.95, 19.65 is the
 #:   plug-and-bend room in front of the connector face and 6.0 the two walls, so
 #:   a thinner wall or a shallower plug is where the next millimetre comes from
 #:   -- not from the board. Margins: row 18.6 %, pack 10.9 %, density 16.2 %.
@@ -195,6 +195,28 @@ BOARD_W = 41.84
 BOARD_L = 242.0
 BOARD_AREA = BOARD_W * BOARD_L
 
+#: ⭐ POWER alone is DEEPER than the common card (owner decision, 2026-09-24):
+#: 42.30 mm across against BOARD_W's 41.84. Its four M3 holes stay where every
+#: other board's are -- the standoffs join it to OUTPUTS -- so the extra
+#: 0.46 mm is outline only, on the far side from the holes' origin edge.
+#: WHY: at 41.84 the layout tools cannot place the Y-capacitors C205/C206 clear
+#: of the POWER-HV region's edge band, and the pack-voltage hold path
+#: HV_C2_HOLD stays open. A POWER-only sweep (place, route copper and stitch)
+#: left it open at 41.84 and 42.0 and closed it at 42.3, 42.6, 43.0 and 43.35;
+#: 42.3 is the least width that closes it with every wider width tested
+#: closing it too. ⛔ The owner's ceiling is 43.35 -- the across cap above,
+#: where the cavity has nothing left -- so never raise this past it.
+#: The plan budgets in `board_fit` stay on BOARD_W: POWER's extra depth only
+#: loosens its own, and the cavity requirement takes the wider of the two.
+POWER_W = 42.3
+#: Per-board width, for the few places that need POWER's own outline.
+BOARD_WIDTHS = {"POWER": POWER_W}
+
+
+def board_width(name: str) -> float:
+    """The outline width of one board: POWER_W for POWER, BOARD_W otherwise."""
+    return BOARD_WIDTHS.get(name, BOARD_W)
+
 #: Internal height the stack may use. Cut from a MEASUREMENT since M18:
 #: 100.0 - 3.0 - 3.0 = 94.0 mm, against a derived stack of 67.3 -- 26.7 mm
 #: spare. ⚠️ It was 64.0 against the old estimate, where the stack sat 1.6 mm
@@ -213,11 +235,13 @@ AVAIL_H = CAVITY_H - FLOOR - LID
 #: stack is a property of the design).
 #: ⚠️ They are CHECKED, not merely stated: M18 is measured, so `cavity_problems`
 #: FAILS the design on either plan axis the cavity cannot hold. Today they fit
-#: -- 256.00 of 260.0 along, 68.49 of 70.0 across -- with 4.00 and 1.51 mm to
-#: spare. ⬜ Still not FINAL: WALL is an allowance, so both figures move when the
-#: enclosure's model lands. `tests/test_board_params.py` pins all three against
-#: drift, because nothing else bounds what the design may ask of the enclosure.
-CAVITY_REQUIRED_W = BOARD_W + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM   # 68.49
+#: -- 256.00 of 260.0 along, 68.95 of 70.0 across -- with 4.00 and 1.05 mm to
+#: spare. Across is sized by the WIDEST board, POWER (POWER_W). ⬜ Still not
+#: FINAL: WALL is an allowance, so both figures move when the enclosure's model
+#: lands. `tests/test_board_params.py` pins all three against drift, because
+#: nothing else bounds what the design may ask of the enclosure.
+CAVITY_REQUIRED_W = (max(BOARD_W, POWER_W)
+                     + 2 * WALL + SIDE_CLEARANCE + FACE_ROOM)          # 68.95
 CAVITY_REQUIRED_L = BOARD_L + 2 * WALL + 2 * END_ALLOWANCE            # 256.0
 
 # --- stack parameters --------------------------------------------------------

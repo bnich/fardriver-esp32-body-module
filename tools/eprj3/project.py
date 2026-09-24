@@ -34,7 +34,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..board_params import STACK_ORDER
+from ..board_params import BOARD_W, STACK_ORDER, board_width
 from .pcb import EDIT_VERSION, Pcb
 from .records import join_records, serialize_record
 
@@ -236,12 +236,15 @@ class Project:
     def for_stack(cls, name, layers=STACK_ORDER, **kwargs):
         """One board per layer of the physical stack, bottom to top.
 
+        Each board takes its own width (`board_params.board_width`: POWER is
+        deeper) with its holes on the common BOARD_W pattern.
         The stack order is `board_params.STACK_ORDER`, its one home, so the
         project cannot list a board the enclosure budget does not know about.
         """
         project = cls(name, **kwargs)
         for layer in layers:
-            project.add_board(layer)
+            project.add_board(layer, width_mm=board_width(layer),
+                              hole_span_mm=BOARD_W)
         return project
 
     # -- the index -----------------------------------------------------------

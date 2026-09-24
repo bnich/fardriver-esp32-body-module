@@ -187,6 +187,8 @@ def _footprint(uuid: str, records) -> dict:
             if (hole.get("width") or 0) > 0 or (hole.get("height") or 0) > 0:
                 pad["crosses_board"] = True
             pad["shape"] = _pad_shape(dp)
+            if number in facts.EXPOSED_PADS:
+                pad["vias_in_pad"] = True
             pads.append(pad)
         elif h["type"] in ("POLY", "FILL", "LINE"):
             o = json.loads(p)
@@ -610,8 +612,19 @@ def _boards(project, ix, notes) -> list:
                              f"({layers}); R1 plans four")
         third, kind = _third_layer_net(ix, b)
         f = pcb.frame
+        # The outline's width is the design's (`board_params.board_width`:
+        # POWER_W for POWER, BOARD_W otherwise), not the project's: the holes
+        # stay where the project has them, on the common pattern, and
+        # `pcbl board` moves the drawn outline to this width.
+        width = bp.board_width(b)
+        if abs(f.width - width) > facts.TOL:
+            notes.append(f"board: {b} is drawn {f.width:.2f} mm wide in the project; "
+                         f"the design's width is {width:g} mm -- `pcbl board` redraws it")
+        else:
+            width = _exact(f.width)
         out.append({
-            "name": b, "length_mm": _exact(f.length), "width_mm": _exact(f.width),
+            "name": b, "length_mm": _exact(f.length), "width_mm": width,
+            "filled_vias_in_pad": True,
             "portrait": bool(f.portrait), "thickness_mm": bp.PCB_T,
             "layers": [{"name": layers[0], "kind": "signal"},
                        {"name": layers[1], "kind": "plane", "net": _ground(ix, b)},

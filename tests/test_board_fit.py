@@ -288,12 +288,12 @@ def test_an_unknown_height_fails_instead_of_vanishing():
 
 
 # --- the cavity the design REQUIRES (IO-14, M18) ---------------------------------------
-# ⚠️ M18 is MEASURED: 260 x 70 x 100, and the design's 256.0 x 68.49 goes inside
+# ⚠️ M18 is MEASURED: 260 x 70 x 100, and the design's 256.0 x 68.95 goes inside
 # it. So the tests that need a FAILURE drive `measured_cavity` to supply a box
 # that cannot hold the design; the real flags are left alone in the two that
 # prove the pass and the gate.
 def test_the_cavity_m18_measured_holds_the_design_and_the_tool_passes(capsys):
-    """The real flags. The design requires 256.0 along x 68.49 across of the
+    """The real flags. The design requires 256.0 along x 68.95 across of the
     260 x 70 x 100 that was measured, so the report states the measurement and
     the tool passes -- on the arithmetic, not on a missing gate."""
     code, out = run(capsys, good())
@@ -335,28 +335,28 @@ def test_a_measured_cavity_too_short_for_the_design_fails(capsys, measured_cavit
 
 
 def test_a_measured_cavity_too_narrow_for_the_design_fails(capsys, measured_cavity):
-    """68.49 mm of board, walls, drop-in and plug room into a 61 mm box."""
+    """68.95 mm of board, walls, drop-in and plug room into a 61 mm box."""
     measured_cavity(270.0, 61.0)
     code, out = run(capsys, good())
     assert code == 1 and "⛔ FAIL" in out and "✅ PASS" not in out
     (problem,) = [p for p in bf.problems(good()) if p.startswith("cavity ")]
     assert problem.startswith("cavity across:")
-    assert "requires 68.49 mm" in problem and "gives 61.00 mm" in problem
-    assert "OVER by 7.49 mm" in problem
-    assert "the requirement EXCEEDS it across by 7.5 mm" in out
+    assert "requires 68.95 mm" in problem and "gives 61.00 mm" in problem
+    assert "OVER by 7.95 mm" in problem
+    assert "the requirement EXCEEDS it across by 7.9 mm" in out
 
 
 def test_a_measured_cavity_short_on_both_axes_names_both(capsys, measured_cavity):
     measured_cavity(250.0, 61.0)
     axes = [p.split(":")[0] for p in bf.problems(good()) if p.startswith("cavity ")]
     assert axes == ["cavity along", "cavity across"]
-    assert "EXCEEDS it along by 6.0 mm, across by 7.5 mm" in run(capsys, good())[1]
+    assert "EXCEEDS it along by 6.0 mm, across by 7.9 mm" in run(capsys, good())[1]
 
 
 def test_the_same_overrun_would_be_a_finding_against_a_cavity_nobody_measured(
         capsys, measured_cavity, monkeypatch):
     """The pre-M18 world, which monkeypatching is the only way back into: the
-    same 250 x 61 box, the same 6.0 and 7.5 mm of overrun, and the design still
+    same 250 x 61 box, the same 6.0 and 7.9 mm of overrun, and the design still
     PASSES because nothing may fail against a guess. What the flag changes is
     the gate, not the arithmetic -- a tool that reported the same paragraph
     either way was the defect that put this pair of tests here."""
@@ -365,7 +365,7 @@ def test_the_same_overrun_would_be_a_finding_against_a_cavity_nobody_measured(
     code, out = run(capsys, good())
     assert code == 0 and "✅ PASS" in out
     assert "⬜ NOT MEASURED -- M18's estimate is 250 x 61 x 100 mm" in out
-    assert "the requirement EXCEEDS it along by 6.0 mm, across by 7.5 mm" in out
+    assert "the requirement EXCEEDS it along by 6.0 mm, across by 7.9 mm" in out
     assert "finding for M18, not a failure of the design" in out
     assert not any(p.startswith("cavity ") for p in bf.problems(good()))
 

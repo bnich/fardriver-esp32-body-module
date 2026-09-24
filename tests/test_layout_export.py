@@ -134,6 +134,20 @@ def test_every_board_states_the_fab_copper(exported):
         {(35.0, 18.0)}
 
 
+
+def test_every_board_states_its_design_width_and_the_filled_via_allowance(exported):
+    """The outline width is `board_params.board_width` -- POWER deeper than
+    the rest (owner, 2026-09-24) -- and every board allows a filled via in a
+    pad (POFV, owner, 2026-09-24), which pcbl uses only where neither a via
+    beside the pad nor a short escape fits, and names each pad it uses."""
+    from tools import board_params as bp
+    widths = {b["name"]: b["width_mm"] for b in exported.doc["boards"]}
+    assert widths["POWER"] == bp.POWER_W
+    assert all(w == pytest.approx(bp.BOARD_W, abs=1e-6)
+               for n, w in widths.items() if n != "POWER")
+    assert all(b["filled_vias_in_pad"] is True for b in exported.doc["boards"])
+    assert any("POWER is drawn 41.84 mm wide" in n for n in exported.notes)
+
 def test_a_channel_with_no_derivable_limit_is_refused(design, ix, monkeypatch):  # noqa: F811
     from tools import power_budget
     monkeypatch.setattr(power_budget, "_channel_limit_a",
@@ -485,6 +499,25 @@ def test_the_export_turns_a_pad_as_pcbl_reads_it(angle):
     pad = layout_export._footprint("u", [_pad_record(angle, w=2.0, h=0.6)])["pads"][0]
     want = read._turned(1.0, 0.3, angle)
     assert (pad["hw"], pad["hh"]) == pytest.approx(want)
+
+
+def test_vias_in_pad_is_stated_on_the_exposed_pads_and_no_other(exported):
+    """The thermal pads' via arrays are a per-pad allowance: every PAD/EPAD
+    pad states it (the drivers', the buck's, the LDO's and the module's), and
+    no other pad does -- a via anywhere else wicks the joint's solder."""
+    stated = [(f["name"], p["number"]) for f in exported.doc["footprints"]
+              for p in f["pads"] if p.get("vias_in_pad")]
+    exposed = [(f["name"], p["number"]) for f in exported.doc["footprints"]
+               for p in f["pads"] if p["number"] in facts.EXPOSED_PADS]
+    assert stated and stated == exposed
+    assert {n for _, n in stated} == {"PAD", "EPAD"}
+    rows = {p["refdes"]: p["footprint"] for p in exported.doc["parts"]}
+    for ref in ("U301", "U302", "U303", "U305", "U405", "U401"):
+        assert any(f == rows[ref] for f, _ in stated), ref
+
+
+def test_a_pad_named_otherwise_states_no_vias_in_pad():
+    assert "vias_in_pad" not in layout_export._footprint("u", [_pad_record(0)])["pads"][0]
 
 
 def test_the_export_validates_with_pcblayouts_loader(exported):

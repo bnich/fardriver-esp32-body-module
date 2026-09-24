@@ -308,6 +308,25 @@ def test_for_stack_makes_one_board_per_layer_of_the_physical_stack():
     assert project.index()["pcb_count"] == len(STACK_ORDER)
 
 
+
+def test_power_is_deeper_with_its_holes_on_the_common_pattern():
+    """POWER alone is POWER_W deep (owner, 2026-09-24); every board's four M3
+    holes sit where OUTPUTS' do, because the standoffs join them. A POWER
+    whose holes followed its own width would miss the posts by 0.46 mm."""
+    from tools import board_params as bp
+    project = Project.for_stack("esp32-body-module")
+    pcbs = {b.title: b.pcb for b in project.boards}
+    assert pcbs["POWER"].width_mm == bp.POWER_W > bp.BOARD_W
+    assert {pcbs[b].width_mm for b in STACK_ORDER if b != "POWER"} == {bp.BOARD_W}
+    holes = {b: pcbs[b].hole_centres() for b in STACK_ORDER}
+    assert all(h == holes["OUTPUTS"] for h in holes.values())
+
+
+def test_holes_laid_out_wider_than_the_board_are_refused():
+    project = Project("guard")
+    with pytest.raises(ValueError, match="do not fit"):
+        project.add_board("POWER", width_mm=40.0, hole_span_mm=41.84)
+
 def test_board_z_index_follows_the_stack_order():
     project = Project.for_stack("esp32-body-module")
     boards = project.index()["profile"]["boards"].values()

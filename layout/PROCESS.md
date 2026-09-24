@@ -1,6 +1,6 @@
 # PCB layout — the process
 
-Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.3.0**). The
+Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.4.0**). The
 procedure — every step, what it writes, what its exit codes mean, and why the order is what it is —
 is that repository's **`docs/process.md`**. This file holds only what is particular to this board
 set: where its constraints come from, and the order its copper is laid in.
@@ -18,16 +18,27 @@ from `pcbl prove` onwards. The owner's project is `~/Documents/EasyEDA-Pro/proje
 (📄 `README.md` in this directory); ⛔ every `pcbl` write refuses while the editor is running.
 
 `tools/gate.sh` exports `layout.yaml` from the owner's project and runs `pcbl stack` on it, and
-refuses with a clear message when `pcbl` v0.3.0 is not installed. `pcbl check` is the layout's own
+refuses with a clear message when `pcbl` v0.4.0 is not installed. `pcbl check` is the layout's own
 bar (`docs/process.md`), not the gate's.
+
+**POWER is deeper than the other three** (`board_params.POWER_W`, owner 2026-09-24), with its
+holes on the common pattern. `layout.yaml` states each board's width from `board_params`, not from
+the project, and `pcbl board` redraws a project's outlines to it — run it before placing whenever
+the export notes that a board is drawn at another width.
+
+Every board allows a **filled via in a pad** (POFV, `filled_vias_in_pad`, owner 2026-09-24), which
+`pcbl route stitch` uses only where neither a via beside the pad nor a short surface escape fits,
+and names every pad it uses (`FILLED VIA-IN-PAD`). 📄 `docs/bom.md` has what that means for the
+order.
 
 ## The order the copper goes down
 
 Power first, because it needs the room; signals last, because they can go around anything.
 `pcbl route copper` lays the class copper (1–4) where the placement leaves a run and refuses by name
 where it does not; `pcbl route stitch` joins each surface pad of a poured net down to its sheet with
-a via; `pcbl route signals` lays the rest. What any of them refuses is drawn by hand and then
-locked.
+a via; `pcbl route signals` lays the rest. There is no hand-routing path: what any of them refuses
+stays open, `pcbl check` names it, and it is closed by a change to the placement, the board or the
+design and a re-run — never by copper drawn in the editor.
 
 1. **The 84 V chain on POWER** (HV). `J101.B+ → FH201 → Q101 → HV_SW → L101`/`L102` →
    `C201`/`C202` → `U201`/`U202` `+Vin`, and the negative twin on `HV_C1_N` / `HV_C2_N`. 0.5 mm

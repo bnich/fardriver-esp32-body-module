@@ -7,7 +7,7 @@ classes and the rules that assign them, the decouplers and the hosts they
 serve, the HV node voltages -- and the reader that takes a part's envelope
 from the project's footprints.  They are project knowledge, so they stay in
 the project.  Placing, routing and checking a layout are `pcb-layout-tools`'
-(`pcbl`, tag v0.3.0): it reads these facts from the exported yaml and never
+(`pcbl`, tag v0.4.0): it reads these facts from the exported yaml and never
 imports this module.
 
 ⛔ Nothing here places or routes.  A function that grows a placement or a
@@ -167,6 +167,14 @@ ADC1_PINS = frozenset(f"IO{n}" for n in range(1, 11))
 
 #: Layers a footprint's outline is drawn on: top silk and the component shape.
 OUTLINE_LAYERS = (3, 48)
+
+#: The pad names an exposed thermal pad carries (`padmap`'s `_LIB_ALIASES`:
+#: the TPS4H160's and LM73605's and TLV767's PAD, the S3 module's EPAD).  Each
+#: datasheet takes the die's heat into the ground planes through a via array
+#: under that pad, so the export states `vias_in_pad` on these pads and on no
+#: other: pcbl lays its stitch vias inside them and accepts a via in a pad
+#: nowhere else.  Plain tented vias -- no fab option.
+EXPOSED_PADS = frozenset({"PAD", "EPAD"})
 
 #: A micrometre.  The file holds mils to four decimals (2.5 nm), so a
 #: coordinate written and read back can move by a few nanometres; every

@@ -84,7 +84,7 @@ single part.
 - ESP-IDF **v5.5**.
 
 Construction path: breadboard → FR4 plated perfboard → custom PCB. The custom build is **four
-stacked 4-layer boards, 41.84 × 242 mm** — **POWER** (84 V entry, the soft-start, both converters
+stacked 4-layer boards, 41.84 × 242 mm, POWER 42.3 × 242** — **POWER** (84 V entry, the soft-start, both converters
 and the pack plug) · **OUTPUTS** (the 12 V drivers) · **LOGIC** (the S3, every input and all three
 expanders) · **CTRL** (every FarDriver connector, the 5 V aux supply and its switches) — joined at
 three junctions: POWER ↔ OUTPUTS by one cable, OUTPUTS ↔ LOGIC and LOGIC ↔ CTRL by mated 2.54 mm
@@ -151,14 +151,14 @@ EasyEDA Pro project. No board is laid out yet.
   order, which took least length first because length was the axis further over the *estimate*: the
   measured cavity allows a board **246.0 mm long but only 43.35 mm wide**, so the rule is now to take
   the narrowest board that still clears every budget by 10 % and spend the abundant length. **IO-18**
-  then stands the width clear of a packing discontinuity. The result is **41.84 × 242.0 mm**:
+  then stands the width clear of a packing discontinuity. The result is **41.84 × 242.0 mm** (POWER alone 42.3 mm deep, for its pack-voltage routing):
   `python3 -m tools.board_fit` closes every area, pack and row budget on it (pack 32 % and density
   44 % of margin; every row is inside the 90 % line except OUTPUTS' 12 V row, which stands at
   **96.6 %** of the 228 mm edge — the one stated exception, D27/IO-24, bought to give every 12 V
   terminal its own size) and derives
   the stack at **81.0 mm of 94.0 available** across four boards. The cavity that
-  implies is **256.0 mm along × 68.49 across × 87.0 tall**, inside the measurement by **4.00, 1.51
-  and 13.0 mm**. ⚠️ **Width is the axis with least room** — 1.51 mm, and 19.65 mm of the 68.49 is the
+  implies is **256.0 mm along × 68.95 across × 87.0 tall**, inside the measurement by **4.00, 1.05
+  and 13.0 mm**. ⚠️ **Width is the axis with least room** — 1.05 mm, and 19.65 mm of the 68.95 is the
   plug-and-bend room in front of the connector face, so anything that deepens a harness plug spends
   it. ⭐ **The gate is live**: `board_fit` and the rules gate now compare a real measurement, so an
   envelope that outgrows the cavity **FAILS**. The requirement itself is not final — the wall, floor
@@ -166,7 +166,7 @@ EasyEDA Pro project. No board is laid out yet.
   are laid out, not before** — the pack and density budgets predict that a board can be routed;
   layout proves it, and proves the size the box has to hold. Layout has room to grow the boards to
   **43.35 × 246 mm** before the cavity gate fails. ⚠️ The wall is the exception to that order: it is
-  an input to the board width, and today's 41.84 mm board tolerates a wall up to **3.75 mm**.
+  an input to the board width, and today's 42.3 mm POWER board tolerates a wall up to **3.52 mm**.
 - ⛔ **The EasyEDA project is NOT proven against this netlist.** IO-26 and IO-27 re-partitioned the
   design on 2026-09-22 — CTRL is a fourth board, the CTRL ribbon is gone, the 5 V aux block and
   expander #3 moved, and all three mated pairs changed size — which voids every proof taken before

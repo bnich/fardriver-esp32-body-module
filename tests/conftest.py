@@ -80,7 +80,8 @@ def board_width(monkeypatch):
         monkeypatch.setattr(bp, "BOARD_W", mm)
         monkeypatch.setattr(bp, "BOARD_AREA", mm * bp.BOARD_L)
         monkeypatch.setattr(bp, "CAVITY_REQUIRED_W",
-                            mm + 2 * bp.WALL + bp.SIDE_CLEARANCE + bp.FACE_ROOM)
+                            max(mm, bp.POWER_W)
+                            + 2 * bp.WALL + bp.SIDE_CLEARANCE + bp.FACE_ROOM)
     return set_width
 
 

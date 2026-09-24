@@ -205,7 +205,7 @@ def test_the_worst_pack_keeps_the_10_percent_the_envelope_was_chosen_for():
     bought on 2026-09-20. Length is the abundant axis (4.00 mm of cavity spare
     even at 242.0). ⛔ What a body that grows must NOT be answered by is a wider
     board: the pack cliff is at 40.84 mm and the board stands 1.00 mm above it,
-    with only 1.51 mm of cavity width left (see the cliff tests below).
+    with only 1.05 mm of cavity width left (see the cliff tests below).
 
     Protects: that margin. board_fit only fails a pack at 242 mm, so without
     this a body could grow 26 mm and nothing would say the envelope had stopped
@@ -451,7 +451,7 @@ def test_the_board_stands_clear_of_the_cliff():
     top face and that step stopped binding, so the nearest edge fell to the
     brick's 38.20 mm wall and the same 41.84 mm board now stands 3.64 mm above
     it. ⬜ That is 2.64 mm of width the envelope search could hand back to the
-    cavity, which has only 1.51 mm of slack across -- an OWNER decision and a
+    cavity, which has only 1.05 mm of slack across -- an OWNER decision and a
     re-run of the search in `board_params`, not something to nudge here.
     ⛔ Do NOT narrow the board to 39.20 to "restore" the millimetre: the wall
     is the brick, and 1.0 mm above a body that fits in neither orientation
@@ -621,17 +621,17 @@ def test_a_carryable_window_below_the_step_does_not_hide_it():
 
 def test_the_cavity_the_envelope_requires_is_stated_against_m18():
     """A requirement on the enclosure, not a measurement of the bike.
-    Across: 41.84 board + 2 x 3 wall + 1 drop-in on the far side + 19.65 in
-    front of the connector face = 68.49. Along: 242 + 2 x 3 + 2 x 4 = 256.0.
+    Across: the widest board -- POWER, 42.3 -- + 2 x 3 wall + 1 drop-in on the
+    far side + 19.65 in front of the connector face = 68.95. Along: 242 + 2 x 3 + 2 x 4 = 256.0.
     Tall: the DERIVED stack + 3 floor + 3 lid."""
-    assert bp.CAVITY_REQUIRED_W == pytest.approx(68.49)
+    assert bp.CAVITY_REQUIRED_W == pytest.approx(68.95)
     assert bp.CAVITY_REQUIRED_L == pytest.approx(256.0)
     d = three_boards()                                   # 52.0 mm of stack
-    assert bp.cavity_required(d) == pytest.approx((256.0, 68.49, 52.0 + 6.0))
+    assert bp.cavity_required(d) == pytest.approx((256.0, 68.95, 52.0 + 6.0))
     # ...and it goes inside the cavity M18 measured, with the spare stated:
-    # 260.0 - 256.0 = 4.00 mm along, 70.0 - 68.49 = 1.51 mm across.
+    # 260.0 - 256.0 = 4.00 mm along, 70.0 - 68.95 = 1.05 mm across.
     assert bp.CAVITY_L - bp.CAVITY_REQUIRED_L == pytest.approx(4.00)
-    assert bp.CAVITY_W - bp.CAVITY_REQUIRED_W == pytest.approx(1.51)
+    assert bp.CAVITY_W - bp.CAVITY_REQUIRED_W == pytest.approx(1.05)
 
 
 def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number():
@@ -640,8 +640,8 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
     CAVITY_REQUIRED_* is an OUTPUT and nothing bounds it from below. Since M18
     `cavity_problems` does bound it from above -- a requirement past 260.0 or
     70.0 now FAILS -- but the whole distance to that bound is only 4.00 mm along
-    and 1.51 mm across, and every millimetre of it can be spent with every gate
-    green. A body or a terminal that walks the width from 68.49 to 69.9 leaves
+    and 1.05 mm across, and every millimetre of it can be spent with every gate
+    green. A body or a terminal that walks the width from 68.95 to 69.9 leaves
     the design fitting by 0.1 mm and nobody told. The per-wall plug-room verdict
     that used to push back was removed with IO-6's connector face.
 
@@ -652,7 +652,7 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
 
     THE ARITHMETIC, by hand:
       along   242.0 board + 2 x 3.0 wall + 2 x 4.0 end allowance   = 256.00
-      across  41.84 board + 2 x 3.0 wall + 1.0 drop-in + 19.65 face =  68.49
+      across  42.30 POWER + 2 x 3.0 wall + 1.0 drop-in + 19.65 face =  68.95
       tall    the DERIVED stack + 3.0 floor + 3.0 lid, and the stack is
               13.20 FLOOR->POWER (U201's 12.7 brick on its 0.5 pad)
             + 30.00 POWER->OUTPUTS (the Shuntian M3X30 standoff, which SETS it)
@@ -671,7 +671,7 @@ def test_the_required_cavity_cannot_grow_without_someone_typing_the_new_number()
     LOGIC->LID it replaced. The plan axes did not move a micron for either."""
     from tools import netlist
     along, across, tall = bp.cavity_required(netlist.current())
-    assert (along, across) == pytest.approx((256.0, 68.49))
+    assert (along, across) == pytest.approx((256.0, 68.95))
     assert tall == pytest.approx(86.98, abs=0.01)
     # ...and the measurement they are judged against, so a drift in EITHER bites.
     assert (bp.CAVITY_L, bp.CAVITY_W, bp.CAVITY_H) == (260.0, 70.0, 100.0)
@@ -734,13 +734,13 @@ def test_a_board_too_wide_for_the_measured_cavity_fails(wider_board):
 
 
 def test_a_measured_cavity_that_cannot_hold_the_design_is_a_failure(measured_cavity):
-    """256.0 x 68.49 required; a 250 x 61 box holds neither axis, and each
+    """256.0 x 68.95 required; a 250 x 61 box holds neither axis, and each
     problem names its axis and the overrun."""
     d = three_boards()
     measured_cavity(250.0, 61.0)
     along, across = bp.cavity_problems(d)
     assert along.startswith("cavity along:") and "OVER by 6.00 mm" in along
-    assert across.startswith("cavity across:") and "OVER by 7.49 mm" in across
+    assert across.startswith("cavity across:") and "OVER by 7.95 mm" in across
     assert "measured cavity gives 250.00 mm" in along
 
 
@@ -1521,3 +1521,19 @@ def test_rules_fail_on_that_same_overrun_now_the_cavity_is_measured():
     assert not any(w.startswith("HT-STACK-PROVISIONAL") for w in rules.warnings(d))
     assert any(e.startswith("HT-STACK") and "OVER by 4.0" in e
                for e in rules.check_all(d))
+
+
+def test_power_is_deeper_than_the_card_and_inside_the_owners_ceiling():
+    """⭐ POWER_W (owner, 2026-09-24): POWER may grow past BOARD_W up to the
+    across cap the measured cavity leaves -- 70.0 - 2 x 3.0 - 1.0 - 19.65 =
+    43.35 -- and no further. The chosen 42.3 is the least width at which the
+    layout closes POWER's pack-voltage hold path. Only POWER is wider."""
+    cap = bp.CAVITY_W - 2 * bp.WALL - bp.SIDE_CLEARANCE - bp.FACE_ROOM
+    assert cap == pytest.approx(43.35)
+    assert bp.BOARD_W < bp.POWER_W <= cap
+    assert bp.POWER_W == pytest.approx(42.3)
+    assert bp.board_width("POWER") == bp.POWER_W
+    assert {bp.board_width(b) for b in bp.STACK_ORDER if b != "POWER"} == {bp.BOARD_W}
+    # the cavity requirement follows the widest board
+    assert bp.CAVITY_REQUIRED_W == pytest.approx(
+        bp.POWER_W + 2 * bp.WALL + bp.SIDE_CLEARANCE + bp.FACE_ROOM)
