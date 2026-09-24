@@ -17,7 +17,7 @@ read from where it already lives, and each block says where:
                (`_footprint`), so the design and the layout see one geometry
   netclasses   `layout_facts`' class table, with `facts.CHANNEL_REACH` /
                `facts.SIGNAL_REACH` as the routability reach of the classes
-               check 20 binds, and `class_copper` on `facts.heavy_classes`;
+               `routability_span` binds, and `class_copper` on `facts.heavy_classes`;
                each current class's ONE current from `power_budget` (its
                width and via count are pcbl's to derive), and the boards'
                copper, `COPPER_UM` / `VIA_PLATING_UM`
@@ -97,9 +97,9 @@ HV_CLASSES = (facts.HV, HV_SIGNAL)
 CLASSES = (facts.HV, HV_SIGNAL, facts.PWR12, facts.PWR5AUX, facts.CH12, facts.CH5,
            facts.DIFF, facts.SENSE, facts.RAIL, facts.DEFAULT)
 
-#: The routability reach of each class check 20 binds:
-#: a channel may run `CHANNEL_REACH` behind its terminal, anything else check
-#: 20 measures `SIGNAL_REACH`.  HV, PWR12 and RAIL are not bound -- check 20
+#: The routability reach of each class `routability_span` binds:
+#: a channel may run `CHANNEL_REACH` behind its terminal, anything else it
+#: measures `SIGNAL_REACH`.  HV, PWR12 and RAIL are not bound -- the check
 #: exempts HV nets and does not measure rails.
 REACH = {facts.CH12.name: facts.CHANNEL_REACH, facts.CH5.name: facts.CHANNEL_REACH,
          facts.PWR5AUX.name: facts.SIGNAL_REACH, facts.DIFF.name: facts.SIGNAL_REACH,
@@ -329,7 +329,7 @@ def _net_rows(ix, classes, part_order) -> list:
     a board where it is another class is named under `class_by_board`.
     `supply` is the circuit's statement of a supply or a return: a ground
     (`ix.gnd`) or a net feeding a part's SUPPLY pin (`ix.rails`) -- what
-    check 20 does not measure.  `order` is the
+    `routability_span` does not measure.  `order` is the
     netlist's order of the net's members (`ix.members`), stated wherever it
     differs from `part_order`: a band is lent by the first rail member met
     with the most pins, and the netlist lists a net's pins in
@@ -398,11 +398,14 @@ RISE_C = {facts.HV.name: 10.0, facts.PWR12.name: 20.0, facts.PWR5AUX.name: 20.0,
 
 #: The classes that state a via.  ⛔ No HV via: a pack-voltage barrel through
 #: the inner GND planes needs a 1.25 mm antipad in each, and HV stays on the
-#: faces (`facts.HV`).  PWR12 is a bus carried by a pour, CH5 has room on its
-#: face.  The signal classes -- DIFF, SENSE and default, which pcbl's signal
-#: router lays -- take the same standard via: a board with parts on both
-#: faces cannot join a top pad to a bottom one without it.
-VIA_CLASSES = ("PWR5AUX", "CH12", "DIFF", "SENSE", "default")
+#: faces (`facts.HV`).  CH5 has room on its face.  PWR12 and RAIL are carried
+#: by an inner sheet where the board has one (the 12 V pour, the 3.3 V
+#: plane), and a surface pad reaches an inner sheet only through a via -- so
+#: they state one, sized by pcbl from the class current like every other.
+#: The signal classes -- DIFF, SENSE and default, which pcbl's signal router
+#: lays -- take the same standard via: a board with parts on both faces
+#: cannot join a top pad to a bottom one without it.
+VIA_CLASSES = ("PWR12", "RAIL", "PWR5AUX", "CH12", "DIFF", "SENSE", "default")
 
 
 def _class_current_a(d, ix) -> dict:
@@ -582,9 +585,9 @@ def _edge_groups(d, boards) -> list:
             continue
         out.append({"kind": "edge_group", "name": f"{e.board}-ROW", "board": e.board,
                     "edge": "v0", "parts": list(e.headers),
-                    # check 6: inside the board end less the M3 inset
+                    # `edge_strip`: inside the board end less the M3 inset
                     "span_mm": [M3_INSET_MM, length[e.board] - M3_INSET_MM],
-                    # between two headers in the row (check 2)
+                    # between two headers in the row (`body_clearance`)
                     "gap_mm": board_fit.HEADER_GAP})
     return out
 
@@ -609,7 +612,7 @@ def _clusters(ix, classes) -> list:
 
 
 def _regions(d, ix, boards) -> list:
-    """POWER's HV/LV partition (check 18).  Its neutral nets are every
+    """POWER's HV/LV partition (the `region_*` checks).  Its neutral nets are every
     GND-domain net (ground is on both sides by definition)
     that is not already the board's plane -- `BASEPLATE`, which `C203`/`C204`
     tie to the pack-voltage input, is ground and no plane carries it."""
@@ -658,11 +661,11 @@ def _reaches(ix, notes) -> list:
                                 key=lambda kv: _ref_key(kv[0])):
             out.append({"kind": "reach", "name": f"{cap}-DECOUPLE", "host": host,
                         "satellite": cap, "within_mm": facts.DECOUPLE_REACH,
-                        "reason": "a 100 nF decoupler beside the IC on its rail (check 15)"})
+                        "reason": "a 100 nF decoupler beside the IC on its rail"})
         module = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
         if module is None:
             continue
-        # check 14: an ADC input's RC beside the module
+        # `reach`: an ADC input's RC beside the module
         seen = set()
         for n in sorted(ix.classes["SENSE"]):
             if not any(r == module.refdes for r, _ in ix.members[n]):
@@ -674,9 +677,8 @@ def _reaches(ix, notes) -> list:
                 seen.add(r)
                 out.append({"kind": "reach", "name": f"{r}-ADC", "host": module.refdes,
                             "satellite": r, "within_mm": facts.ADC_REACH,
-                            "reason": f"the filter on {n}, an ADC1 input, sits at the pin "
-                                      f"(check 14)"})
-        # check 14: the CAN transceiver by the stack contacts its pair leaves on
+                            "reason": f"the filter on {n}, an ADC1 input, sits at the pin"})
+        # `reach`: the CAN transceiver by the stack contacts its pair leaves on
         for it in sorted(ix.on(board), key=lambda i: _ref_key(i.refdes)):
             if it.kind != "IC" or not any(n.startswith("CAN") for n in it.nets):
                 continue
@@ -689,12 +691,11 @@ def _reaches(ix, notes) -> list:
                 out.append({"kind": "reach", "name": f"{it.refdes}-{conn.refdes}-CAN",
                             "host": it.refdes, "satellite": conn.refdes,
                             "within_mm": facts.CAN_REACH, "measure": "shared_pins",
-                            "reason": "the CAN pair stays short to the stack contacts "
-                                      "(check 14)"})
+                            "reason": "the CAN pair stays short to the stack contacts"})
                 notes.append(f"reach: {it.refdes}-{conn.refdes}-CAN is measured pin to pin "
-                             f"(worst shared pin); check 14 measures the transceiver's box "
-                             f"centre to the centroid of the connector's CAN contacts")
-        # check 20(b): the programming land by the module whose pins it carries
+                             f"(worst shared pin), not from the transceiver's box centre to "
+                             f"the centroid of the connector's CAN contacts")
+        # `reach`: the programming land by the module whose pins it carries
         land = next((it for it in ix.on(board) if it.kind == "CONN" and it.land), None)
         if land is not None:
             out.append({"kind": "reach", "name": f"{land.refdes}-PROG", "host": module.refdes,
@@ -706,10 +707,9 @@ def _reaches(ix, notes) -> list:
 
 
 def _heavy_paths(ix) -> list:
-    """Check 19(a): the converter's 12 V output pins to the contact the bus
-    leaves by.  One chain per (output pin, contact) pair, because check 19
-    takes the WORST of them; pcbl measures each as a straight line between
-    the pins, where check 19 measures u only."""
+    """`heavy_path`: the converter's 12 V output pins to the contact the bus
+    leaves by.  One chain per (output pin, contact) pair, so the WORST of
+    them binds; pcbl measures each as a straight line between the pins."""
     out = []
     pwr12 = ix.classes["PWR12"]
     for board in bp.STACK_ORDER:
@@ -747,7 +747,7 @@ def _twins(ix) -> list:
 
 
 def _corridors(ix) -> list:
-    """Check 14's brake clause: the I2C pull-ups keep `CORRIDOR_CLEAR` off
+    """`corridor`, the brake clause: the I2C pull-ups keep `CORRIDOR_CLEAR` off
     the straight path the brake nets take from their harness terminal to the
     module -- the path `facts.brake_terminal` finds and `facts.i2c_pullups`'
     resistors keep clear of."""
@@ -764,12 +764,12 @@ def _corridors(ix) -> list:
                     "ends": [term, module.refdes], "parts": list(pullups),
                     "clear_mm": facts.CORRIDOR_CLEAR,
                     "reason": "the brake nets' way to the module; the I2C bus's edges "
-                              "stay off it (check 14)"})
+                              "stay off it"})
     return out
 
 
 def _pour_spans(ix, boards) -> list:
-    """Check 11: the V12 pour covers the driver line's bus pins and the feed's
+    """`pour_span`: the V12 pour covers the driver line's bus pins and the feed's
     own contacts, fed from inside."""
     out = []
     pwr12 = ix.classes["PWR12"]
@@ -803,15 +803,15 @@ def _keep_outs(ix, project) -> list:
                 continue
             env = facts.envelope(project.footprints[comp.footprint], it.body)
             if it.kind == "MODULE":
-                # check 8: the zone beyond the antenna end -- the module's
+                # `keep_out`: the zone beyond the antenna end -- the module's
                 # padless end, its footprint's +Y
                 out.append({"kind": "keep_out", "name": f"{it.refdes}-ANTENNA", "board": board,
                             "box": [env.x0, env.y1, env.x1, env.y1 + facts.ANTENNA_ZONE_D],
-                            "reason": "the antenna end: nothing in the zone beyond it (check 8)",
+                            "reason": "the antenna end: nothing in the zone beyond it",
                             "side": "both", "part": it.refdes,
                             "at_edge_mm": facts.ANTENNA_EDGE})
             if it.kind == "CONN" and it.land:
-                # check 16: the programming cable's plug at each end of the land
+                # `keep_out`: the programming cable's plug at each end of the land
                 w, dd, c = env.x1 - env.x0, env.y1 - env.y0, facts.SERVICE_CLEAR
                 zones = ([[env.x0 - c, env.y0, env.x0, env.y1], [env.x1, env.y0, env.x1 + c, env.y1]]
                          if w >= dd else
@@ -819,8 +819,7 @@ def _keep_outs(ix, project) -> list:
                 for tag, box in zip(("LO", "HI"), zones):
                     out.append({"kind": "keep_out", "name": f"{it.refdes}-SERVICE-{tag}",
                                 "board": board, "box": box,
-                                "reason": "the programming cable's plug at the land's end "
-                                          "(check 16)",
+                                "reason": "the programming cable's plug at the land's end",
                                 "side": "top", "part": it.refdes})
     return out
 

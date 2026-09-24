@@ -81,7 +81,7 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 | **1** | ✅ **Sourcing and first order** — orders placed 2026-09-10; most lines received 2026-09-18. Remaining lines are estimates — **`bom.md`** owns parts, prices and order state | Longest lead time. ⚠️ A 25% tariff appeared on the Mouser line (BOM). ⛔ Block F is not in this order — it parks with D11 |
 | **2** | ◐ **Bench session M2 · M3 · M8 · M9 · M10**, plus ohming out the new switch sets — ✅ **left pod done 2026-09-11** (identified, harnessed, 9-pin connector fitted, all controls tested working); ✅ **right pod in hand 2026-09-12 — its lighting slider measured `OFF / A / A+B`, which is what D21's decode needs (§2.0)** — procedure: **`inputs-bench-session.md`** | Gates the input conditioning (**block C**) and the firmware's input map. Needs the *bike*, not the parts. ⚠️ **M3** (unpowered lever-type check) gates `J306`: a three-wire Hall lever adds a supply pin to the terminal |
 | **3** | ⬜ **Firmware** — lighting lookup (§7), read-the-slider-at-boot, the **≤300 ms** watchdog, the brake function (cut, lamp, kill), the **key-off aux shed** (D27/IO-16), boost HOLD/TOGGLE, the **WiFi status page** | The brake cut and the brake lamp are firmware (D23), and `Q101`'s key-off SOA margin depends on the shed (§3.2.5). The WiFi page is the only readout for temps, bus current, boost mode and lamp-out |
-| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ✅ **M18 measured the cavity at 260 × 70 × 100** (2026-09-20) and the boards are shaped to it, **41.84 × 242 mm** (§9.2). ⬜ **Layout is next, and it is what settles the size** — placed and routed with pcb-layout-tools v0.1.0 (`layout/PROCESS.md`); the enclosure is drawn after it, by owner decision; layout may grow the boards to **43.35 × 246 mm** before the cavity gate fails |
+| **4** | ⬜ Breadboard → perfboard prototype (§9.6) → the three-board custom set (§9.2, §9.8) | Needs 1–3. ✅ **M18 measured the cavity at 260 × 70 × 100** (2026-09-20) and the boards are shaped to it, **41.84 × 242 mm** (§9.2). ⬜ **Layout is next, and it is what settles the size** — placed and routed with pcb-layout-tools v0.2.0 (`layout/PROCESS.md`); the enclosure is drawn after it, by owner decision; layout may grow the boards to **43.35 × 246 mm** before the cavity gate fails |
 
 ## Contents
 
@@ -2192,7 +2192,7 @@ series modules operate at –40 ~ 65 °C ambient temperature, and other module v
 - ✅ **84 V creepage** — proper clearances and a slotted high-voltage section, instead of §9.6.2's ~0.7 mm.
   The build writes a net class **HV, 1.25 mm to every other net** (IPC-2221B B2, the 151–300 V band,
   for the 160 V do-not-exceed) over POWER's pack-voltage nets to
-  `build-eprj3/layout-rules.txt`, and `pcbl route rules` (pcb-layout-tools v0.1.0,
+  `build-eprj3/layout-rules.txt`, and `pcbl route rules` (pcb-layout-tools v0.2.0,
   `layout/PROCESS.md`) writes it into the project before routing — the generated PCB carries only a
   board-wide 0.2 mm.
 - ✅ **A ground plane** — the big one: §3.2.4's concern is 3.3 V TTL serial taps beside 80 A of chopped

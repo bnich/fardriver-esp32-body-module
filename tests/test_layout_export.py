@@ -277,7 +277,7 @@ def test_a_net_one_class_everywhere_names_no_board(exported):
 
 
 def test_supply_marks_the_grounds_and_the_rails_and_nothing_else(exported, ix):  # noqa: F811
-    """`supply` is what check 20 does not measure: the
+    """`supply` is what `routability_span` does not measure: the
     grounds and every net feeding a part's SUPPLY pin."""
     marked = {n["name"] for n in exported.doc["nets"] if n.get("supply")}
     assert marked == (ix.gnd | ix.rails) & set(ix.members)
@@ -314,7 +314,7 @@ def test_a_nets_order_is_stated_only_where_it_differs_from_the_parts(exported, i
 
 
 def test_the_brake_corridor_is_stated_from_legacys_own_rule(exported, ix):  # noqa: F811
-    """Check 14's brake clause, as a generic `corridor`: the path from the
+    """The brake clause, as a generic `corridor`: the path from the
     brake terminal to the module, the I2C pull-ups kept `CORRIDOR_CLEAR` off
     it -- every figure read from `layout_facts`, never typed here."""
     rows = [c for c in exported.doc["constraints"] if c["kind"] == "corridor"]
