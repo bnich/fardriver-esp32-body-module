@@ -222,6 +222,52 @@ def test_no_eprj2_alone_is_incomplete(tmp_path, monkeypatch, capsys):
     assert (tmp_path / f"{NAME}.zip").is_file(), "the folder and zip are still written"
 
 
+def _saved_layout_present(tmp_path, monkeypatch):
+    """The editor folder holds the owner's SAVED layout: `write_eprj2` refuses
+    it for real, and `convert` must never be reached."""
+    saved = tmp_path / "projects" / f"{NAME}.eprj2"
+    saved.parent.mkdir()
+    saved.write_bytes(b"the owner's layout")
+    monkeypatch.setattr(bp, "EDITOR_PROJECTS", saved.parent)
+    monkeypatch.setattr(bp, "_is_generated", lambda path: False)
+    monkeypatch.setattr(bp.eprj2, "convert",
+                        lambda *a, **k: pytest.fail("a saved layout must never be overwritten"))
+    return saved
+
+
+def test_a_saved_layout_is_incomplete_without_the_flag(tmp_path, monkeypatch, capsys):
+    """Bare, the build still says INCOMPLETE over a saved layout: a person
+    running it by hand is told no .eprj2 was written, and why."""
+    _every_item_bound(monkeypatch)
+    saved = _saved_layout_present(tmp_path, monkeypatch)
+    assert bp.main(["--out", str(tmp_path / "out"),
+                    "--template", str(tmp_path / "t.eprj2")]) == bp.EXIT_INCOMPLETE
+    out, err = capsys.readouterr()
+    assert "SAVED layout" in out and "--keep-saved-layout" in out
+    assert saved.read_bytes() == b"the owner's layout"
+
+
+def test_keep_saved_layout_leaves_it_and_exits_zero(tmp_path, monkeypatch, capsys):
+    """With the flag, the saved layout is the project to open: untouched, exit 0."""
+    _every_item_bound(monkeypatch)
+    saved = _saved_layout_present(tmp_path, monkeypatch)
+    assert bp.main(["--out", str(tmp_path / "out"), "--keep-saved-layout",
+                    "--template", str(tmp_path / "t.eprj2")]) == 0
+    out, err = capsys.readouterr()
+    assert "left untouched" in out and "INCOMPLETE" not in err
+    assert saved.read_bytes() == b"the owner's layout"
+
+
+def test_keep_saved_layout_does_not_excuse_a_missing_eprj2(tmp_path, monkeypatch, capsys):
+    """The flag is narrow: with NO saved layout there and no .eprj2 written,
+    the build is still INCOMPLETE."""
+    _every_item_bound(monkeypatch)
+    monkeypatch.setattr(bp, "EDITOR_PROJECTS", tmp_path / "projects")
+    monkeypatch.setattr(bp, "write_eprj2", lambda root, template: (None, "no template"))
+    assert bp.main(["--out", str(tmp_path / "out"), "--keep-saved-layout"]) == bp.EXIT_INCOMPLETE
+    assert "no .eprj2 was written" in capsys.readouterr().err
+
+
 def test_the_exit_codes_are_distinct_and_non_zero():
     assert bp.EXIT_REFUSED != bp.EXIT_INCOMPLETE
     assert bp.EXIT_REFUSED and bp.EXIT_INCOMPLETE

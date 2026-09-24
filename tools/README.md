@@ -25,7 +25,9 @@ tools/gate.sh
 It removes every `__pycache__` first — CPython validates a `.pyc` by second and size, so a
 same-second, same-size edit (`1.25` → `9.25`) is otherwise read as the OLD constant, and `-B` /
 `PYTHONDONTWRITEBYTECODE` stop writing one, not reading it — checks that `pytest`, `cryptography`,
-`~/tools/lcsc-search` and an editor-saved `.eprj2` template are present, then runs these, in this
+`~/tools/lcsc-search`, an editor-saved `.eprj2` template and **pcb-layout-tools v0.1.0** (`pcbl` on
+`PATH`, or `PCBL` set to it; the gate names the version it needs and the one it found) are present,
+then runs these, in this
 order, each **bare**, and exits at the first non-zero exit code naming the tool:
 
 ```bash
@@ -36,10 +38,17 @@ python3 -m tools.gpio_budget      # pin budget                        exit 1 on 
 python3 -m tools.power_budget     # the 12 V load, choke and tap fuse exit 1 on FAIL
 python3 -m tools.soft_start       # D13 soft start                    exit 1 on FAIL
 python3 -m tools.board_fit        # area, height and connector rows   exit 1 on FAIL (2: see below)
-python3 tools/build_project.py    # the EasyEDA project and build-eprj3/layout-rules.txt — refused while EasyEDA Pro is open
+python3 tools/build_project.py --keep-saved-layout
+                                  # the EasyEDA project and build-eprj3/layout-rules.txt — refused while EasyEDA Pro is open
                                   #   exit 1 REFUSED (previous build renamed .stale) · 2 INCOMPLETE (an item without a footprint, or no .eprj2)
+                                  #   the owner's saved layout is left untouched and counts as the project (0, not 2)
 python3 -m tools.jlc_bom          # JLC's BOM, the loose parts, the hand-soldered parts
+python3 -m tools.layout_export PROJECT -o layout.yaml   # the design described to pcbl, in a temporary directory
+pcbl stack --constraints layout.yaml                    # the stack's height budget, as pcbl reads the constraints
 ```
+
+`pcbl check` is not in the gate: it is the layout's own bar (📄 `layout/PROCESS.md`), and a layout
+still being routed fails it by design.
 
 ⛔ **`python3 -m tools.X | tail -1` returns `tail`'s exit code, not the tool's.** Every tool exits
 non-zero on failure; a pipeline hides it. When the exit code matters, run the tool bare or run the
@@ -66,7 +75,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `board_fit.py` | Area, height and connector-row budget, and the cavity the design requires (`board-fit.py` is a two-line shim for it) |
 | `gpio_budget.py` | ESP32-S3-WROOM-1 pin facts, and the design's demand on the pool |
 | `power_budget.py` | The 12 V load against the parts that carry it: the converter, its input choke and the B+ tap fuse, at the LVC. It states which case it models |
-| `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in — and the DC voltage of every 84 V node, walked from the netlist for `route.py`'s pairwise clearances |
+| `soft_start.py` | The D13 main-switch gate network, simulated — key-on, the key-off decay, and the plug-in — and the DC voltage of every 84 V node, walked from the netlist for the pairwise clearances `pcbl` routes and checks to |
 | `layout_rules.py` | The HV net class and the land keep-outs the generated PCBs cannot carry |
 | `build_project.py` | Generates the EasyEDA Pro project for the four boards. Gated on integrity, rules and a read-back of its own output |
 | `eprj2.py` | Reads and writes EasyEDA Pro's native `.eprj2`, and wraps the generated folder as one: the file the editor opens |
@@ -77,8 +86,9 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `lcsc_fixture.py` | Refreshes `tests/fixtures/lcsc.json`: what LCSC says each ordered code is |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
-| `place.py` | Places the four boards in the owner's saved `.eprj2` — the face row, then bands by net adjacency — checks the rules of `layout/PROCESS.md`, and writes the file back through `eprj2`'s round trip (`--stack`); `--check` re-reads a save and reports, never writes |
-| `route.py` | Part 2 of `layout/PROCESS.md`, a sibling of `place.py` that reads the design through it and owns the copper: `--rules` writes the net classes and design rules into every PCB document, `--pours` the planes (GND on layer 2 everywhere, cut back at POWER's partition), `--heavy` the runs whose width and path the rules decide — refusing by name rather than routing round an obstacle — plus each pack-voltage board's `layout/<BOARD>-drc-exceptions.md`, `--check-routing` the DRC by those classes (never writes, exits 1), `--strip-routing` takes a bad autoroute off, `--draw` draws the copper. ⭐ Two 84 V nets are held to their own voltage difference on IPC-2221B B2 and not to the class's 1.25 mm (IO-29); the node voltages come from `soft_start.py` |
+| `layout_export.py` | Describes the design to **pcb-layout-tools** (`pcbl`, tag v0.1.0), which places, routes and checks the boards: `python3 -m tools.layout_export PROJECT.eprj2 -o layout.yaml`. Every figure is read from where it already lives in this repo (📄 `layout/PROCESS.md`) |
+| `layout_hooks.py` | Goes beside `layout.yaml`: the pack-voltage nets' operating points, from `soft_start.py` — code, not data |
+| `layout_facts.py` | The layout facts the two above read: the board frame, the net classes and the rules that assign them, the decoupler hosts, the heavy path, the ground twin |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |
 
 ### `board_params.py` — parameters typed, geometry derived
@@ -267,7 +277,7 @@ off their own resistor values. The points are pack 43 · 60 · 84 · 160 V (`pac
 lowest input rating among the fitted converters, not a typed 160) × key on · key off · the
 hold-up's **ride-out**, at both ends of the rectifier's drop. ⛔ One value per node per point, not
 a band: a band would make the two ends of F201 — the same copper — read a diode drop apart.
-`route.pair_clearance` takes the differences; nothing here knows which pairs exist on the board.
+`pcbl` takes the differences (through `tools/layout_hooks.py`); nothing here knows which pairs exist on the board.
 
 ### `layout_rules.py` — the HV net class and the land keep-outs
 
@@ -289,7 +299,7 @@ rule applied to `HV`.
 
 ⭐ **1.25 mm is the figure against LOW-VOLTAGE copper.** IPC-2221B sets clearance by the voltage
 *between* two conductors, so between two of these nets it is their own difference (IO-29), which
-`route.py` routes and checks to. The editor's rule deliberately stays at 1.25 mm to everything —
+`pcbl` routes and checks to. The editor's rule deliberately stays at 1.25 mm to everything —
 it is what keeps the autorouter's low-voltage copper away from pack voltage — and the joins it
 will flag as a result are listed in `layout/POWER-drc-exceptions.md`.
 

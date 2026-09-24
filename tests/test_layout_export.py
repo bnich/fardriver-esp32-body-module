@@ -14,8 +14,9 @@ import shutil
 
 import pytest
 
-from tools import eprj2, layout_export, layout_hooks, place, route, soft_start
-from tests.test_place import OWNER, _stream, design, ix, template  # noqa: F401 (fixtures)
+from tools import eprj2, layout_export, layout_hooks, soft_start
+from tools import layout_facts as facts
+from tests.synthetic_project import OWNER, _stream, design, ix, template  # noqa: F401 (fixtures)
 
 #: The copper layer table the editor writes on a four-layer board, plus one
 #: layer that is not copper -- which the export must leave out -- and one
@@ -56,12 +57,12 @@ def project_path(tmp_path_factory, template, design, ix):  # noqa: F811
 
 @pytest.fixture(scope="module")
 def exported(project_path, design):  # noqa: F811
-    return layout_export.export(place.load(project_path), design)
+    return layout_export.export(facts.load(project_path), design)
 
 
 # --- the export ---------------------------------------------------------------------
 def test_the_export_is_deterministic(project_path, design, exported):  # noqa: F811
-    again = layout_export.export(place.load(project_path), design)
+    again = layout_export.export(facts.load(project_path), design)
     assert again.text() == exported.text()
     assert again.notes == exported.notes
 
@@ -73,8 +74,8 @@ def test_every_board_has_its_four_copper_layers_in_stack_order(exported):
 
 def test_every_netclass_figure_is_routes(exported):
     """One fact, one home: a width or a clearance typed a second time here
-    would drift from the figure `tools/route.py` writes into the editor.
-    EVERY class states `route`'s width -- a current class too, whose stated
+    would drift from the figure the build's net classes state.
+    EVERY class states `layout_facts`' width -- a current class too, whose stated
     width pcbl widens where IPC-2221 says more and never narrows."""
     table = {c.name: c for c in layout_export.CLASSES}
     for row in exported.doc["netclasses"]:
@@ -93,11 +94,11 @@ def test_the_current_classes_state_their_route_widths(exported):
 
 
 def test_class_copper_is_on_the_heavy_classes_and_no_other(exported):
-    """`pcbl route copper` lays the classes `route.py --heavy` lays -- the list
-    is `route.heavy_classes`, never typed here."""
+    """`pcbl route copper` lays the classes the build lays by rule -- the list
+    is `facts.heavy_classes`, never typed here."""
     laid = {row["name"] for row in exported.doc["netclasses"] if row.get("class_copper")}
     used = {row["name"] for row in exported.doc["netclasses"]}
-    assert laid == ({c.name for c in route.heavy_classes()} | {"HVSIG"}) & used
+    assert laid == ({c.name for c in facts.heavy_classes()} | {"HVSIG"}) & used
     assert laid, "no class is laid by rule"
 
 
@@ -119,7 +120,7 @@ def test_vias_are_stated_on_ch12_pwr5aux_and_the_signal_classes_only(exported):
 def test_each_current_class_states_one_current_and_its_rise(exported):
     """CH12 / CH5 at their strongest channel's limit, PWR5AUX at four 5 V
     limiters together, PWR12 at the limited 12 V load, HV at the pack tap in
-    that case -- each with the rise `route` sized it for."""
+    that case -- each with the rise `layout_facts` sized it for."""
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
     got = {n: (rows[n]["current_a"], rows[n]["rise_c"]) for n in rows if "current_a" in rows[n]}
     assert got == {"HV": (pytest.approx(2.58), 10.0), "PWR12": (pytest.approx(11.386), 20.0),
@@ -162,7 +163,7 @@ def test_the_class_currents_are_read_off_the_circuit(design, ix):  # noqa: F811
 
 
 def test_every_board_states_routes_pour_inset(exported):
-    assert {b["pour_inset_mm"] for b in exported.doc["boards"]} == {route.POUR_INSET}
+    assert {b["pour_inset_mm"] for b in exported.doc["boards"]} == {facts.POUR_INSET}
 
 
 def test_the_cable_states_no_gap(exported):
@@ -172,13 +173,13 @@ def test_the_cable_states_no_gap(exported):
 
 
 def test_the_twin_is_routes_return_rule(exported, ix):  # noqa: F811
-    """The ground twin is stated where `route._return_twin` would lay one: the
+    """The ground twin is stated where the 12 V run needs one: the
     board that makes the bus, each ground reaching the converter and the
     contact it leaves by, over those and the bus parts on that ground."""
     twins = [c for c in exported.doc["constraints"] if c["kind"] == "twin"]
     assert [(t["board"], t["net"], t["beside"]) for t in twins] == [
-        ("POWER", "GND", route.PWR12.name)]
-    src, away, parts = place.v12_output(ix, "POWER")
+        ("POWER", "GND", facts.PWR12.name)]
+    src, away, parts = facts.v12_output(ix, "POWER")
     [t] = twins
     assert t["parts"][:2] == [src, away]
     assert set(t["parts"][2:]) == {r for r in parts if "GND" in ix.items[r].nets} - {away}
@@ -187,7 +188,7 @@ def test_the_twin_is_routes_return_rule(exported, ix):  # noqa: F811
 
 
 def test_the_hv_region_takes_the_non_plane_grounds_as_neutral(exported, ix):  # noqa: F811
-    """Ground is on both sides of POWER's partition (`place.hv_pins`); a ground
+    """Ground is on both sides of POWER's partition; a ground
     no plane carries -- `BASEPLATE` -- must be named, or C203/C204 read as
     straddlers and are turned round."""
     [region] = [c for c in exported.doc["constraints"] if c["kind"] == "region"]
@@ -237,7 +238,7 @@ def test_both_hv_classes_are_pairwise_and_keep_one_clearance(exported):
     rows = {row["name"]: row for row in exported.doc["netclasses"]}
     for n in ("HV", "HVSIG"):
         assert rows[n]["pairwise_by_voltage"] is True
-        assert rows[n]["clearance_mm"] == {"default": route.HV.clearance_mm}
+        assert rows[n]["clearance_mm"] == {"default": facts.HV.clearance_mm}
     assert not any(r.get("pairwise_by_voltage") for n, r in rows.items()
                    if n not in ("HV", "HVSIG"))
 
@@ -247,7 +248,7 @@ def test_a_board_whose_hv_nets_feed_no_supply_is_refused(design, monkeypatch):  
     be laid at the low-current width, the tap current through copper nobody
     sized.  Refused, not exported."""
     from tools import rules
-    fresh = place.Index(design)
+    fresh = facts.Index(design)
     monkeypatch.setattr(rules, "rails", lambda d: frozenset({"V12"}))
     with pytest.raises(SystemExit, match="power HV class would be empty"):
         layout_export._net_classes(fresh)
@@ -260,11 +261,11 @@ def _net_row(exported, name):
 def test_a_net_two_classes_on_two_boards_states_each(exported, ix):  # noqa: F811
     """`V12` is PWR12 where the brick and the driver line carry it and RAIL
     where it is one trace to a converter.  The row states every board's class
-    as `route.net_class` gives it -- never one class everywhere, and never a
+    as `facts.net_class` gives it -- never one class everywhere, and never a
     note in place of the statement."""
     row = _net_row(exported, "V12")
     boards = sorted({ix.items[r].board for r, _ in ix.members["V12"] if r in ix.items})
-    per = {b: route.net_class(ix, b, "V12").name for b in boards}
+    per = {b: facts.net_class(ix, b, "V12").name for b in boards}
     assert len(set(per.values())) > 1           # the case is real on this netlist
     stated = {b: row.get("class_by_board", {}).get(b, row["net_class"]) for b in boards}
     assert stated == per
@@ -276,7 +277,7 @@ def test_a_net_one_class_everywhere_names_no_board(exported):
 
 
 def test_supply_marks_the_grounds_and_the_rails_and_nothing_else(exported, ix):  # noqa: F811
-    """`supply` is what check 20 does not measure (`place.routed_nets`): the
+    """`supply` is what check 20 does not measure: the
     grounds and every net feeding a part's SUPPLY pin."""
     marked = {n["name"] for n in exported.doc["nets"] if n.get("supply")}
     assert marked == (ix.gnd | ix.rails) & set(ix.members)
@@ -315,14 +316,14 @@ def test_a_nets_order_is_stated_only_where_it_differs_from_the_parts(exported, i
 def test_the_brake_corridor_is_stated_from_legacys_own_rule(exported, ix):  # noqa: F811
     """Check 14's brake clause, as a generic `corridor`: the path from the
     brake terminal to the module, the I2C pull-ups kept `CORRIDOR_CLEAR` off
-    it -- every figure read from `place`, never typed here."""
+    it -- every figure read from `layout_facts`, never typed here."""
     rows = [c for c in exported.doc["constraints"] if c["kind"] == "corridor"]
     [module] = [it for it in ix.on("LOGIC") if it.kind == "MODULE"]
-    term = place.brake_terminal(ix, "LOGIC", module.refdes)
+    term = facts.brake_terminal(ix, "LOGIC", module.refdes)
     assert rows == [{"kind": "corridor", "name": f"{term}-{module.refdes}-BRAKE",
                      "ends": [term, module.refdes],
-                     "parts": list(place.i2c_pullups(ix, "LOGIC")),
-                     "clear_mm": place.CORRIDOR_CLEAR,
+                     "parts": list(facts.i2c_pullups(ix, "LOGIC")),
+                     "clear_mm": facts.CORRIDOR_CLEAR,
                      "reason": rows[0]["reason"]}]
     assert rows[0]["parts"]
 
@@ -331,7 +332,7 @@ def test_a_constraint_naming_a_part_the_project_does_not_place_is_refused(
         tmp_path_factory, template, design, ix):  # noqa: F811
     path = _project(tmp_path_factory, template, design, ix, omit=("U404",))
     with pytest.raises(SystemExit, match="U404"):
-        layout_export.export(place.load(path), design)
+        layout_export.export(facts.load(path), design)
 
 
 def test_the_stack_states_what_sets_each_gap_and_no_gap(exported, design):  # noqa: F811
@@ -424,9 +425,9 @@ def test_one_operating_point_per_soft_start_world_and_one_per_fuse(design):  # n
     assert names[:len(worlds)] == [layout_hooks._name(w) for w in worlds]
     ceiling = soft_start.pack_ceiling_v(design)
     assert names[len(worlds):] == [f"{ceiling:g}V-on-{f}-open" for f in _fuses(design)]
-    assert all(row.keys() == route.hv_node_voltages(design).keys() for row in points.values())
+    assert all(row.keys() == facts.hv_node_voltages(design).keys() for row in points.values())
     # the soft-start worlds are exactly soft_start's figures
-    ranges = route.hv_node_voltages(design)
+    ranges = facts.hv_node_voltages(design)
     for i, name in enumerate(names[:len(worlds)]):
         assert all(points[name][n] == v[i] for n, v in ranges.items())
 

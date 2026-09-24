@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate the EasyEDA Pro project for the three-board set.
 
-    python3 tools/build_project.py [--out DIR]          (default: build-eprj3/)
+    python3 tools/build_project.py [--out DIR] [--keep-saved-layout]
+                                                        (default: build-eprj3/)
 
 Writes `<out>/revv1-module/`, an `.eprj3` folder project with one board per
 `board_params.STACK_ORDER` layer -- POWER, OUTPUTS, LOGIC -- each with:
@@ -32,7 +33,9 @@ than no project.
 
 The exit code is a COMPLETENESS gate, not only a refusal:
   0                  every placed item carries a footprint and the .eprj2 the
-                     editor opens was written;
+                     editor opens was written -- or, with `--keep-saved-layout`,
+                     the one there is the owner's saved layout and was left
+                     untouched;
   EXIT_REFUSED   (1) a gate failed; nothing new was written; the previous
                      build is renamed .stale;
   EXIT_INCOMPLETE (2) the project was written but cannot yet be laid out: a
@@ -254,7 +257,8 @@ def write_eprj2(root, template):
         return None, (f"{target} is the owner's SAVED layout, not a generated "
                       f"project -- refusing to overwrite it. Layout absorbs a "
                       f"netlist change through Import Changes (layout/README.md), "
-                      f"never by regenerating over it. Pass --out to write elsewhere")
+                      f"never by regenerating over it. --keep-saved-layout leaves it "
+                      f"and counts it as the project to open")
     try:
         EDITOR_PROJECTS.mkdir(parents=True, exist_ok=True)
         return eprj2.convert(root, target, template), None
@@ -266,6 +270,16 @@ def write_eprj2(root, template):
 #: (`eprj2._head` / `from_eprj3`), so a project the editor has saved carries a
 #: real one instead. That is how a generated .eprj2 is told from a laid-out one.
 GENERATED_STAMP = "1788000000000"
+
+
+def saved_layout(name=PROJECT_NAME):
+    """The editor folder's `<name>.eprj2` if it is the owner's SAVED layout,
+    else None.  `--keep-saved-layout` counts that file as the project to open:
+    it was written from this netlist and laid out since, and a netlist change
+    reaches it through Import Changes (layout/README.md), never through a
+    regenerated file."""
+    path = EDITOR_PROJECTS / f"{name}.eprj2"
+    return path if path.exists() and not _is_generated(path) else None
 
 
 def _is_generated(path) -> bool:
@@ -316,6 +330,11 @@ def main(argv=None):
                         help="bind no library footprint (default: bind them "
                              "through ~/tools/lcsc-search when it is here); "
                              f"the build then exits {EXIT_INCOMPLETE}, INCOMPLETE")
+    parser.add_argument("--keep-saved-layout", action="store_true",
+                        help="when the editor folder's .eprj2 is the owner's SAVED "
+                             "layout, leave it untouched and exit 0 rather than "
+                             f"{EXIT_INCOMPLETE}: the saved layout is the project to "
+                             "open.  It never overwrites it; tools/gate.sh passes it")
     parser.add_argument("--template",
                         help="an .eprj2 EasyEDA Pro saved, for the .eprj2 "
                              "output (default: found in the editor's folders)")
@@ -336,14 +355,19 @@ def main(argv=None):
     root, zip_path = write(project, args.out)
     print(summary(project, sheets, root, zip_path))
     eprj2_path, why = write_eprj2(root, args.template)
-    print(eprj2_line(eprj2_path, why))
+    kept = saved_layout(root.name) if eprj2_path is None and args.keep_saved_layout else None
+    if kept is not None:
+        print(f"  the owner's saved layout is the project to open, left untouched "
+              f"(--keep-saved-layout): {kept}")
+    else:
+        print(eprj2_line(eprj2_path, why))
     # The HV clearance the PCB documents cannot carry: set it up before routing.
     rules_path = Path(args.out) / "layout-rules.txt"
     rules_path.write_text(layout_rules.text(design) + "\n", encoding="utf-8")
     print(f"  layout rules to set up in the editor before routing: {rules_path}")
 
     unbound = [r for s in sheets for r in s.footprints_unbound]
-    return incomplete(unbound, eprj2_path is not None)
+    return incomplete(unbound, eprj2_path is not None or kept is not None)
 
 
 def refuse(headline, problems, out):

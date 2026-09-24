@@ -4,7 +4,7 @@
 
 A generated PCB document carries one board-wide clearance (0.2 mm, JLC's
 capability). Copper at pack voltage needs more, so the class is derived here.
-`tools/route.py --rules` writes it into the project (PROCESS.md Part 2 R0), and
+`pcbl route rules` writes it into the project (layout/PROCESS.md), and
 this text is what the owner enters by hand instead: PCB -> Design -> Net Class,
 a class named HV with the nets below; Design Rules -> Safe Spacing, a rule at
 HV_CLEARANCE_MM, applied to that class.
@@ -57,7 +57,7 @@ def keepouts(d) -> list[str]:
 
 def text(d=None) -> str:
     d = d or netlist.current()
-    out = [f"Before routing POWER: `tools/route.py --rules` writes this class into "
+    out = [f"Before routing POWER: `pcbl route rules` writes this class into "
            f"the project. By hand in the editor instead: PCB -> Design -> Net "
            f"Class, a class named {HV_CLASS} holding the nets below; then Design "
            f"Rules -> Safe Spacing, a rule of {HV_CLEARANCE_MM} mm applied to "

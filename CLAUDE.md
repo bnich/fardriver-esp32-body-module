@@ -26,9 +26,10 @@ owner decision (2026-09-18), and an exception to the workspace's CC BY-SA defaul
 
 ## The `tools/` workflow
 
-Stdlib Python, no virtualenv, with three exceptions: `pytest` runs the tests, `cryptography` writes
-the `.eprj2` (`tools/eprj2.py`), and `~/tools/lcsc-search` serves the library footprints. The gate
-checks all three by name before running anything, and stops at the one that is missing. After any
+Stdlib Python, no virtualenv, with four exceptions: `pytest` runs the tests, `cryptography` writes
+the `.eprj2` (`tools/eprj2.py`), `~/tools/lcsc-search` serves the library footprints, and
+pcb-layout-tools v0.1.0 (`pcbl`, installed on its own) lays the boards out. The gate checks all
+four by name before running anything, and stops at the one that is missing. After any
 change to the netlist or the model, run the gate from the repo root:
 
 ```bash
@@ -37,7 +38,8 @@ tools/gate.sh   # every check, in order, each run bare; stops at the first non-z
 
 The individual commands are inside it, in the order they run — integrity, pytest, rules,
 gpio_budget, power_budget, soft_start, board_fit, then the build (refused while EasyEDA Pro is
-open; there is no override) and jlc_bom — and `tools/README.md` has one line per tool. Its step 0
+open; there is no override; the owner's saved layout is left untouched), jlc_bom, and the layout
+constraints read by `pcbl stack` (pcb-layout-tools v0.1.0, which the gate requires by version) — and `tools/README.md` has one line per tool. Its step 0
 removes every `__pycache__`: a same-second, same-size edit is otherwise read as the OLD constant,
 and `-B` / `PYTHONDONTWRITEBYTECODE` do not prevent that. ⛔ **Never judge a tool through
 `| tail -1`** — the pipeline returns `tail`'s 0, not the tool's exit code. Run it bare.
@@ -50,14 +52,15 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   library where reachable, so a code pointing at the wrong part, or a stale fixture, fails.
 - **The generated PCBs carry only the board-wide 0.2 mm** (JLC's capability template), and
   `build-eprj3/layout-rules.txt` states the HV net class (1.25 mm, IPC-2221B B2) over POWER's
-  pack-voltage nets. ⭐ **`tools/route.py --rules` now writes every class INTO the project** — a
-  named `RULE` per category plus one `RULE_SELECTOR` per member net, the form the editor's own
-  `Example_3D Shell Design.eprj2` carries. 📄 `layout/PROCESS.md` Part 2 R0.
+  pack-voltage nets. ⭐ **`pcbl route rules` writes every class INTO the project** — a named `RULE`
+  per category plus one `RULE_SELECTOR` per member net. Placement, routing and the layout checks are
+  **pcb-layout-tools** (`pcbl`, tag v0.1.0); this repo describes the design to it through
+  `tools/layout_export.py` and `tools/layout_hooks.py`. 📄 `layout/PROCESS.md`.
   ⭐ **The 1.25 mm is what pack voltage keeps from LOW-VOLTAGE copper; between two 84 V nets the
   clearance is their own voltage difference** on the same IPC-2221B B2 table (IO-29). The editor
-  binds a clearance to a net and not to a pair, so `tools/route.py` is the authority: it routes and
-  checks pairwise, its rule to the editor stays 1.25 mm to everything, and `--heavy` writes the
-  joins the editor's DRC will flag and the decision accepts to `layout/POWER-drc-exceptions.md`.
+  binds a clearance to a net and not to a pair, so `pcbl` is the authority: it routes and checks
+  pairwise, its rule to the editor stays 1.25 mm to everything, and `pcbl route exceptions` writes
+  the joins the editor's DRC will flag and the decision accepts to `layout/POWER-drc-exceptions.md`.
   ⛔ **A DRC hit that is not on that list is a defect.** The node voltages are derived by
   `tools/soft_start.py` from the netlist, never typed.
 - After the owner exports a board's netlist from EasyEDA (to `~/Downloads`), prove it:
@@ -79,12 +82,10 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   not when a comment says so.
 - ⛔ **A through-hole part occupies BOTH faces of its board.** Its pads are copper on both sides and
   its pins stand proud of the far face, so a bottom-face terminal or brick takes the same plan area
-  as a top-face one — the two faces are NOT independent. `board_fit` and `place.py` both assumed
-  they were (2026-09-22): the first placement passed 16 checks with `J314`'s pins inside `J303`'s
-  body and `J101`'s inside the brick's case, and only the picture showed it. `board_fit` now measures
-  ONE strip per board edge (`edge_budget`, 228 mm between the M3 corners) and counts an underside
-  through-hole body too deep to sit behind the row; `place.py` check 17 forbids a through-hole pad
-  under any body on the other face. ✅ **Look at `--draw`'s picture after every placement** — a
+  as a top-face one — the two faces are NOT independent. `board_fit` measures ONE strip per board
+  edge (`edge_budget`, 228 mm between the M3 corners) and counts an underside through-hole body too
+  deep to sit behind the row; `pcbl`'s `tht_both_faces` check forbids a through-hole pad under any
+  body on the other face. ✅ **Look at `pcbl place --draw`'s picture after every placement** — a
   number proves parts do not collide on the axis it measured; a picture proves they are where you
   think.
 - A height or rating is "confirmed" only if it was read in a manufacturer PDF — say which.

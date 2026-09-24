@@ -11,19 +11,19 @@ pack-voltage nets' operating points, which are code (`soft_start`), not data.
 read from where it already lives, and each block says where:
 
   boards       the project's own outline, holes and layer table; the inner
-               layers' nets by `route.pour_plan`'s rule (R1); `place.M3_KEEPOUT`,
-               `route.POUR_INSET` and `board_params.PCB_T`
+               layers' nets by R1's rule (`_third_layer_net`); `facts.M3_KEEPOUT`,
+               `facts.POUR_INSET` and `board_params.PCB_T`
   footprints   the project's FOOTPRINT documents, read the way pcbl reads them
                (`_footprint`), so the design and the layout see one geometry
-  netclasses   `route`'s class table, with `place.CHANNEL_REACH` /
-               `place.SIGNAL_REACH` as the routability reach of the classes
-               check 20 binds, and `class_copper` on `route.heavy_classes`;
+  netclasses   `layout_facts`' class table, with `facts.CHANNEL_REACH` /
+               `facts.SIGNAL_REACH` as the routability reach of the classes
+               check 20 binds, and `class_copper` on `facts.heavy_classes`;
                each current class's ONE current from `power_budget` (its
                width and via count are pcbl's to derive), and the boards'
                copper, `COPPER_UM` / `VIA_PLATING_UM`
-  nets         every netlist net, in the class `route.net_class` gives it on
+  nets         every netlist net, in the class `facts.net_class` gives it on
                each board it is on, HV split by the current the circuit puts
-               through it (`_hv_power_nets`); `supply` from `place.Index`'s grounds and
+               through it (`_hv_power_nets`); `supply` from `facts.Index`'s grounds and
                `rules.rails` (the nets that feed a part's SUPPLY pin); `order`,
                the netlist's own order of the net's pins, wherever it is not
                the parts' order -- which member a tie meets first
@@ -31,18 +31,18 @@ read from where it already lives, and each block says where:
                pin map padmap already made the footprint's own pad names --
                in the netlist's order, which pcbl breaks its ties by
   constraints  the edge groups from `board_fit.edge_budget`; clusters from
-               `place.served_contacts`; the HV region from `layout_rules`'
+               `facts.served_contacts`; the HV region from `layout_rules`'
                HV nets; pairs from `board_params.layer_gaps`, the cable from
-               `model.is_cabled`; reaches from `place.decoupler_hosts`, the
+               `model.is_cabled`; reaches from `facts.decoupler_hosts`, the
                ADC filters, the CAN transceiver and the programming land; the
-               brake corridor from `place.brake_terminal` / `place.i2c_pullups`;
-               the heavy path from `place.v12_output`; the V12 pour from
-               `route.v12_line` / `place.v12_bus`; the ground twin from
-               `route._return_twin`'s rule; the antenna and service
-               keep-outs from `place`'s zones
+               brake corridor from `facts.brake_terminal` / `facts.i2c_pullups`;
+               the heavy path from `facts.v12_output`; the V12 pour from
+               `facts.v12_line` / `facts.v12_bus`; the ground twin from
+               `_twins`; the antenna and service keep-outs from
+               `layout_facts`' zones
   stack        `board_params.STACK_ORDER`, `layer_gaps`, `AVAIL_H`
 
-Where the model cannot say what the legacy tools say, the exporter says so on
+Where the model cannot say what the project's facts say, the exporter says so on
 stderr (`Export.notes`) rather than choosing silently: those lines are the
 adapter's findings.
 
@@ -60,12 +60,13 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from tools import board_fit, eprj2, layout_rules, netlist, place, route, rules, soft_start
+from tools import board_fit, eprj2, layout_rules, netlist, rules, soft_start
+from tools import layout_facts as facts
 from tools import board_params as bp
 from tools.eprj3.pcb import M3_INSET_MM
 from tools.model import is_cabled
 
-#: Mils per millimetre, EXACTLY.  ⚠️ Not `place.MIL_PER_MM` (39.3701, a
+#: Mils per millimetre, EXACTLY.  ⚠️ Not `facts.MIL_PER_MM` (39.3701, a
 #: rounding): pcbl reads the same file at 1000 / 25.4, and a footprint drawn
 #: here at the rounded figure would sit 0.3 um off the pads pcbl places --
 #: enough to turn an exact-edge comparison the other way.
@@ -79,44 +80,44 @@ LAYER_TOP, LAYER_BOTTOM = 1, 2
 #: The LOW-CURRENT pack-voltage class: a pack-voltage net the load and
 #: pre-charge current do not flow through (the switch's gate drive, the key
 #: sense, the level shifter's string -- `_hv_power_nets` says which).
-#: Spacing and width are different facts: it keeps `route.HV`'s clearance and
-#: its pairwise-by-voltage rule, and its stated width is `route.HV`'s 0.5 mm,
-#: which no current widens.  Both figures are `route.HV`'s, never typed here.
-HV_SIGNAL = route.NetClass("HVSIG", route.HV.width_mm, route.HV.clearance_mm,
-                           "route.HV's clearance and stated width, carrying no load current")
+#: Spacing and width are different facts: it keeps `facts.HV`'s clearance and
+#: its pairwise-by-voltage rule, and its stated width is `facts.HV`'s 0.5 mm,
+#: which no current widens.  Both figures are `facts.HV`'s, never typed here.
+HV_SIGNAL = facts.NetClass("HVSIG", facts.HV.width_mm, facts.HV.clearance_mm,
+                           "facts.HV's clearance and stated width, carrying no load current")
 
 #: The pack-voltage classes: pairwise by voltage with each other and within
 #: each, laid by rule, and the classes POWER's HV partition holds.
-HV_CLASSES = (route.HV, HV_SIGNAL)
+HV_CLASSES = (facts.HV, HV_SIGNAL)
 
-#: `route`'s class table, strongest first -- the order `route._net_class`
+#: `layout_facts`' class table, strongest first -- the order `facts._net_class`
 #: tries them in, with HV split by current (`HV_SIGNAL`).  A net that is two
 #: classes on two boards states the strongest as its `net_class` and the
 #: others under `class_by_board`.
-CLASSES = (route.HV, HV_SIGNAL, route.PWR12, route.PWR5AUX, route.CH12, route.CH5,
-           route.DIFF, route.SENSE, route.RAIL, route.DEFAULT)
+CLASSES = (facts.HV, HV_SIGNAL, facts.PWR12, facts.PWR5AUX, facts.CH12, facts.CH5,
+           facts.DIFF, facts.SENSE, facts.RAIL, facts.DEFAULT)
 
-#: The routability reach of each class check 20 binds (`place.net_limit`):
+#: The routability reach of each class check 20 binds:
 #: a channel may run `CHANNEL_REACH` behind its terminal, anything else check
 #: 20 measures `SIGNAL_REACH`.  HV, PWR12 and RAIL are not bound -- check 20
 #: exempts HV nets and does not measure rails.
-REACH = {route.CH12.name: place.CHANNEL_REACH, route.CH5.name: place.CHANNEL_REACH,
-         route.PWR5AUX.name: place.SIGNAL_REACH, route.DIFF.name: place.SIGNAL_REACH,
-         route.SENSE.name: place.SIGNAL_REACH, route.DEFAULT.name: place.SIGNAL_REACH}
+REACH = {facts.CH12.name: facts.CHANNEL_REACH, facts.CH5.name: facts.CHANNEL_REACH,
+         facts.PWR5AUX.name: facts.SIGNAL_REACH, facts.DIFF.name: facts.SIGNAL_REACH,
+         facts.SENSE.name: facts.SIGNAL_REACH, facts.DEFAULT.name: facts.SIGNAL_REACH}
 
 
 def _mm(mil: float) -> float:
     return mil / MIL_PER_MM
 
 
-def _exact(legacy_mm: float) -> float:
-    """A length `place` read at its rounded conversion, re-read at the exact
+def _exact(facts_mm: float) -> float:
+    """A length `layout_facts` reads at its rounded conversion, re-read at the exact
     one: back to the file's mils, then to mm."""
-    return _mm(legacy_mm * place.MIL_PER_MM)
+    return _mm(facts_mm * facts.MIL_PER_MM)
 
 
 def _ref_key(ref: str):
-    return place._ref_key(ref)
+    return facts._ref_key(ref)
 
 
 @dataclass
@@ -147,7 +148,7 @@ def _turned(hw: float, hh: float, angle) -> tuple[float, float]:
     one pad.
 
     ⚠️ `padAngle` turns the PAD; `relativeAngle` and `padOffsetX/Y` turn and
-    move the drill inside it and are not read (`route.pad_shapes`).  Unturned,
+    move the drill inside it and are not read.  Unturned,
     `U305`'s exposed pad (1.8 x 4.5 mm at 270) lies across both pin rows and
     covers `CBOOT`, `VCC` and the `SW` and `PVIN` pins with ground copper, so no
     track can leave them.  A turn off the quarter is read as the box that holds
@@ -164,7 +165,7 @@ def _turned(hw: float, hh: float, angle) -> tuple[float, float]:
 def _footprint(uuid: str, records) -> dict:
     """A FOOTPRINT document as `layout.yaml` states one: every pad at
     `max(defaultPad, hole)` turned by its `padAngle` (`_turned`), and the body the union of the pads and what is
-    drawn on the outline layers (`place.envelope`'s rule, at the exact mm).
+    drawn on the outline layers (`facts.envelope`'s rule, at the exact mm).
 
     A pad with no number carries no pin -- a mounting or thermal land -- and is
     named `#<record id>`, which is how pcbl names it when it reads the file."""
@@ -187,9 +188,9 @@ def _footprint(uuid: str, records) -> dict:
             pads.append(pad)
         elif h["type"] in ("POLY", "FILL", "LINE"):
             o = json.loads(p)
-            if o.get("layerId") in place.OUTLINE_LAYERS:
+            if o.get("layerId") in facts.OUTLINE_LAYERS:
                 if "path" in o:
-                    place._path_points(o["path"], pts)
+                    facts._path_points(o["path"], pts)
                 elif "startX" in o:
                     pts += [(o["startX"], o["startY"]), (o["endX"], o["endY"])]
     if pts:
@@ -202,13 +203,13 @@ def _footprint(uuid: str, records) -> dict:
 
 def _stated_body(records, body_mm):
     """The netlist's `footprint_mm` as pcbl's `body_mm` (w along the
-    footprint's X, l along its Y), turned the way `place.envelope` turns it:
+    footprint's X, l along its Y), turned the way `facts.envelope` turns it:
     laid along the drawing's own long axis when the two disagree.  None where
     the netlist states no body."""
     w, l = body_mm
     if not (w and l):
         return None
-    drawn = place.envelope(records, (0.0, 0.0))
+    drawn = facts.envelope(records, (0.0, 0.0))
     gw, gl = drawn.x1 - drawn.x0, drawn.y1 - drawn.y0
     if (gw > 1.2 * gl and l > 1.2 * w) or (gl > 1.2 * gw and w > 1.2 * l):
         w, l = l, w
@@ -293,10 +294,10 @@ def _hv_power_nets(d, hv) -> set:
 
 def _net_classes(ix) -> dict:
     """{net: {board: class name}} for every board the net is on, by
-    `route.net_class` -- the class differs by board where the copper does
+    `facts.net_class` -- the class differs by board where the copper does
     (`V12` is PWR12 where it carries the loads, RAIL where it is one trace to
     a converter).  A pack-voltage net the load current does not flow through
-    (`_hv_power_nets`) is `HV_SIGNAL` where `route` says HV.  A net on no
+    (`_hv_power_nets`) is `HV_SIGNAL` where `facts.net_class` says HV.  A net on no
     placed part is {}.
 
     ⛔ A board with pack-voltage nets and not ONE on the load's path is
@@ -315,8 +316,8 @@ def _net_classes(ix) -> dict:
         boards = sorted({ix.items[r].board for r, _ in ix.members[n] if r in ix.items})
         per = {}
         for b in boards:
-            c = route.net_class(ix, b, n)
-            if c is route.HV and n not in power.get(b, ()):
+            c = facts.net_class(ix, b, n)
+            if c is facts.HV and n not in power.get(b, ()):
                 c = HV_SIGNAL
             per[b] = c.name
         out[n] = per
@@ -328,17 +329,17 @@ def _net_rows(ix, classes, part_order) -> list:
     a board where it is another class is named under `class_by_board`.
     `supply` is the circuit's statement of a supply or a return: a ground
     (`ix.gnd`) or a net feeding a part's SUPPLY pin (`ix.rails`) -- what
-    check 20 does not measure (`place.routed_nets`).  `order` is the
+    check 20 does not measure.  `order` is the
     netlist's order of the net's members (`ix.members`), stated wherever it
     differs from `part_order`: a band is lent by the first rail member met
-    with the most pins (`place.bands`), and the netlist lists a net's pins in
+    with the most pins, and the netlist lists a net's pins in
     its own order, not its parts'."""
     rank = {c.name: i for i, c in enumerate(CLASSES)}
     at = {r: i for i, r in enumerate(part_order)}
     rows = []
     for n in classes:                       # the netlist's order, as `_net_classes` keeps it
         per = classes[n]
-        base = min(per.values(), key=rank.__getitem__) if per else route.DEFAULT.name
+        base = min(per.values(), key=rank.__getitem__) if per else facts.DEFAULT.name
         row = {"name": n, "net_class": base}
         other = {b: c for b, c in per.items() if c != base}
         if other:
@@ -356,7 +357,7 @@ def _used_classes(classes) -> set:
     """Every class a net row names: a net on no placed part is DEFAULT."""
     used = {c for per in classes.values() for c in per.values()}
     if any(not per for per in classes.values()):
-        used.add(route.DEFAULT.name)
+        used.add(facts.DEFAULT.name)
     return used
 
 
@@ -374,15 +375,15 @@ COPPER_UM = 35.0
 VIA_PLATING_UM = 18.0
 
 #: The temperature rise each current class's copper may take carrying its
-#: current -- `route`'s own derivations (`route.HV`, `PWR12`, `PWR5AUX`,
+#: current -- `layout_facts`' own derivations (`facts.HV`, `PWR12`, `PWR5AUX`,
 #: `CH12`, `CH5`): the buses at 20 degC, which run once and are never shorted
 #: at a terminal; the channels and the pack tap at 10 degC, the margin a run
 #: that may be shorted at its far end needs.  A via takes the class's rise,
 #: so a layer change runs no hotter than its tracks.
-RISE_C = {route.HV.name: 10.0, route.PWR12.name: 20.0, route.PWR5AUX.name: 20.0,
-          route.CH12.name: 10.0, route.CH5.name: 10.0}
+RISE_C = {facts.HV.name: 10.0, facts.PWR12.name: 20.0, facts.PWR5AUX.name: 20.0,
+          facts.CH12.name: 10.0, facts.CH5.name: 10.0}
 
-#: ⭐ Every class states `route`'s width as its `min_width_mm`: that width is
+#: ⭐ Every class states `layout_facts`' width as its `min_width_mm`: that width is
 #: a design decision (CH12 1.00, CH5 0.80, PWR5AUX 2.00, PWR12 5.00, HV 0.50),
 #: and a standard may WIDEN it, never narrow it.  pcbl takes the larger of it
 #: and the width the class's current derives (its `Design.width_mm`), so
@@ -397,7 +398,7 @@ RISE_C = {route.HV.name: 10.0, route.PWR12.name: 20.0, route.PWR5AUX.name: 20.0,
 
 #: The classes that state a via.  ⛔ No HV via: a pack-voltage barrel through
 #: the inner GND planes needs a 1.25 mm antipad in each, and HV stays on the
-#: faces (`route.HV`).  PWR12 is a bus carried by a pour, CH5 has room on its
+#: faces (`facts.HV`).  PWR12 is a bus carried by a pour, CH5 has room on its
 #: face.  The signal classes -- DIFF, SENSE and default, which pcbl's signal
 #: router lays -- take the same standard via: a board with parts on both
 #: faces cannot join a top pad to a bottom one without it.
@@ -420,7 +421,7 @@ def _class_current_a(d, ix) -> dict:
     give is a refusal, not a guess."""
     from tools import power_budget as pb
     out = {}
-    for cls in (route.CH12.name, route.CH5.name):
+    for cls in (facts.CH12.name, facts.CH5.name):
         amps = []
         for net in sorted(ix.classes.get(cls, ())):
             a, why = pb._channel_limit_a(d, net)
@@ -433,12 +434,12 @@ def _class_current_a(d, ix) -> dict:
     if lim.per_5v_a is None or not lim.n5:
         raise SystemExit(f"layout_export: PWR5AUX current: the 5 V channels' limit is "
                          f"not derivable ({'; '.join(lim.problems) or 'no 5 V channel'})")
-    out[route.PWR5AUX.name] = round(lim.n5 * lim.per_5v_a, 3)
+    out[facts.PWR5AUX.name] = round(lim.n5 * lim.per_5v_a, 3)
     if lim.load_12v_a is None or lim.tap_a is None:
         raise SystemExit(f"layout_export: PWR12 / HV current: the limited case is not "
                          f"derivable ({'; '.join(lim.problems) or 'no 12 V load'})")
-    out[route.PWR12.name] = round(lim.load_12v_a, 3)
-    out[route.HV.name] = round(lim.tap_a, 3)
+    out[facts.PWR12.name] = round(lim.load_12v_a, 3)
+    out[facts.HV.name] = round(lim.tap_a, 3)
     return out
 
 
@@ -465,9 +466,9 @@ def _netclasses(used, currents) -> list:
             row["pairwise_by_voltage"] = True
         if c.name in REACH:
             row["reach_mm"] = REACH[c.name]
-        if c in route.heavy_classes() or c is HV_SIGNAL:
-            # the classes `route.py --heavy` lays by rule -- `pcbl route copper`;
-            # HV_SIGNAL is HV's own nets, which `--heavy` lays with HV
+        if c in facts.heavy_classes() or c is HV_SIGNAL:
+            # the classes `pcbl route copper` lays by rule;
+            # HV_SIGNAL is HV's own nets, laid with HV
             row["class_copper"] = True
         if c.name in VIA_CLASSES:
             row["via_mm"] = list(VIA_MM)
@@ -476,13 +477,12 @@ def _netclasses(used, currents) -> list:
 
 
 def _third_layer_net(ix, board) -> tuple[str, str]:
-    """(net, kind) of `board`'s second inner layer, by R1's rule
-    (`route._third_layer`): the 12 V pour where a driver line takes the bus,
-    else the rail with `RAIL_POUR_PINS`, else a second ground.  A rail poured
+    """(net, kind) of `board`'s second inner layer, by R1's rule: the 12 V
+    pour where a driver line takes the bus, else the rail with `RAIL_POUR_PINS`, else a second ground.  A rail poured
     over the whole board is a plane; the 12 V pour covers only the bus."""
-    if route.v12_line(ix, board):
+    if facts.v12_line(ix, board):
         return sorted(ix.classes["PWR12"])[0], "pour"
-    rail = route._rail_pour_net(ix, board)
+    rail = facts._rail_pour_net(ix, board)
     if rail is not None:
         return rail, "plane"
     return _ground(ix, board), "plane"
@@ -515,18 +515,18 @@ def _boards(project, ix, notes) -> list:
                        {"name": layers[2], "kind": kind, "net": third},
                        {"name": layers[3], "kind": "signal"}],
             "holes": sorted([_exact(u), _exact(v)] for u, v in f.holes),
-            "hole_keepout_mm": place.M3_KEEPOUT,
-            "pour_inset_mm": route.POUR_INSET,
+            "hole_keepout_mm": facts.M3_KEEPOUT,
+            "pour_inset_mm": facts.POUR_INSET,
             "copper_um": COPPER_UM, "via_plating_um": VIA_PLATING_UM})
     return out
 
 
 def _parts(d, ix, project, footprints, notes) -> list:
-    """The `parts` block, in the NETLIST's order -- `place.Index.items`, the
+    """The `parts` block, in the NETLIST's order -- `facts.Index.items`, the
     parts then the connectors, each pin in the order the netlist lands it.
     ⚠️ The order is a fact of the design: pcbl breaks a tie by stated order,
-    and legacy meets the parts in this one, so a sorted list would place tied
-    parts differently from the placer it is held to."""
+    so a sorted list would place tied parts differently from the netlist's
+    own statement of the order."""
     leads = {x.refdes: x.lead_mm for x in (*d.parts, *d.connectors)
              if getattr(x, "lead_mm", None) is not None}
     out = []
@@ -593,7 +593,7 @@ def _clusters(ix, classes) -> list:
     out = []
     for board in bp.STACK_ORDER:
         for it in sorted(ix.on(board), key=lambda i: _ref_key(i.refdes)):
-            served = place.served_contacts(ix, board, it.refdes)
+            served = facts.served_contacts(ix, board, it.refdes)
             if not served:
                 continue
             pull = {}
@@ -610,7 +610,7 @@ def _clusters(ix, classes) -> list:
 
 def _regions(d, ix, boards) -> list:
     """POWER's HV/LV partition (check 18).  Its neutral nets are every
-    GND-domain net (`place.hv_pins`: ground is on both sides by definition)
+    GND-domain net (ground is on both sides by definition)
     that is not already the board's plane -- `BASEPLATE`, which `C203`/`C204`
     tie to the pack-voltage input, is ground and no plane carries it."""
     out = []
@@ -619,8 +619,8 @@ def _regions(d, ix, boards) -> list:
             planes = {l["net"] for l in b["layers"] if l["kind"] == "plane"}
             on_board = {n for it in ix.on(b["name"]) for n in it.nets}
             row = {"kind": "region", "name": f"{b['name']}-HV", "board": b["name"],
-                   "classes": [c.name for c in HV_CLASSES], "strip_mm": place.HV_STRIP,
-                   "straddler": "member_pins_in", "edge_mm": place.HV_EDGE}
+                   "classes": [c.name for c in HV_CLASSES], "strip_mm": facts.HV_STRIP,
+                   "straddler": "member_pins_in", "edge_mm": facts.HV_EDGE}
             neutral = sorted((ix.gnd & on_board) - planes)
             if neutral:
                 row["neutral_nets"] = neutral
@@ -654,10 +654,10 @@ def _interfaces(d, ix) -> list:
 def _reaches(ix, notes) -> list:
     out = []
     for board in bp.STACK_ORDER:
-        for cap, host in sorted(place.decoupler_hosts(ix, board).items(),
+        for cap, host in sorted(facts.decoupler_hosts(ix, board).items(),
                                 key=lambda kv: _ref_key(kv[0])):
             out.append({"kind": "reach", "name": f"{cap}-DECOUPLE", "host": host,
-                        "satellite": cap, "within_mm": place.DECOUPLE_REACH,
+                        "satellite": cap, "within_mm": facts.DECOUPLE_REACH,
                         "reason": "a 100 nF decoupler beside the IC on its rail (check 15)"})
         module = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
         if module is None:
@@ -673,7 +673,7 @@ def _reaches(ix, notes) -> list:
                     continue
                 seen.add(r)
                 out.append({"kind": "reach", "name": f"{r}-ADC", "host": module.refdes,
-                            "satellite": r, "within_mm": place.ADC_REACH,
+                            "satellite": r, "within_mm": facts.ADC_REACH,
                             "reason": f"the filter on {n}, an ADC1 input, sits at the pin "
                                       f"(check 14)"})
         # check 14: the CAN transceiver by the stack contacts its pair leaves on
@@ -688,7 +688,7 @@ def _reaches(ix, notes) -> list:
                     continue
                 out.append({"kind": "reach", "name": f"{it.refdes}-{conn.refdes}-CAN",
                             "host": it.refdes, "satellite": conn.refdes,
-                            "within_mm": place.CAN_REACH, "measure": "shared_pins",
+                            "within_mm": facts.CAN_REACH, "measure": "shared_pins",
                             "reason": "the CAN pair stays short to the stack contacts "
                                       "(check 14)"})
                 notes.append(f"reach: {it.refdes}-{conn.refdes}-CAN is measured pin to pin "
@@ -698,7 +698,7 @@ def _reaches(ix, notes) -> list:
         land = next((it for it in ix.on(board) if it.kind == "CONN" and it.land), None)
         if land is not None:
             out.append({"kind": "reach", "name": f"{land.refdes}-PROG", "host": module.refdes,
-                        "satellite": land.refdes, "within_mm": place.PROG_REACH,
+                        "satellite": land.refdes, "within_mm": facts.PROG_REACH,
                         "measure": "shared_pins",
                         "reason": "the land carries the module's own EN, IO0 and UART0 pins "
                                   "(D25)"})
@@ -713,7 +713,7 @@ def _heavy_paths(ix) -> list:
     out = []
     pwr12 = ix.classes["PWR12"]
     for board in bp.STACK_ORDER:
-        src, away, _ = place.v12_output(ix, board)
+        src, away, _ = facts.v12_output(ix, board)
         if src is None or away is None:
             continue
         mine = sorted({p for p, n in ix.items[src].pin_net.items() if n in pwr12}, key=_ref_key)
@@ -722,19 +722,19 @@ def _heavy_paths(ix) -> list:
         for a in mine:
             for b in theirs:
                 out.append({"kind": "heavy_path", "name": f"{src}.{a}-{away}.{b}",
-                            "chain": [[src, a], [away, b]], "max_mm": place.HEAVY_PATH_MM})
+                            "chain": [[src, a], [away, b]], "max_mm": facts.HEAVY_PATH_MM})
     return out
 
 
 def _twins(ix) -> list:
-    """The 12 V run's ground twin (`route._return_twin`): on a board that
+    """The 12 V run's ground twin: on a board that
     carries the bus, each ground that reaches both the converter and the
     contact the bus leaves by, over those two and the bus's other parts on
     that ground, laid beside the run at `PWR12`'s width."""
     out = []
     for board in bp.STACK_ORDER:
-        src, away, parts = place.v12_output(ix, board)
-        if src is None or away is None or not route.carries_bus(ix, board):
+        src, away, parts = facts.v12_output(ix, board)
+        if src is None or away is None or not facts.carries_bus(ix, board):
             continue
         for net in sorted(n for n in ix.gnd
                           if any(r == src for r, _ in ix.members.get(n, ()))
@@ -742,27 +742,27 @@ def _twins(ix) -> list:
             refs = [src, away] + [r for r in parts
                                    if r != away and net in ix.items[r].nets]
             out.append({"kind": "twin", "name": f"{board}-{net}-RETURN", "board": board,
-                        "net": net, "beside": route.PWR12.name, "parts": refs})
+                        "net": net, "beside": facts.PWR12.name, "parts": refs})
     return out
 
 
 def _corridors(ix) -> list:
     """Check 14's brake clause: the I2C pull-ups keep `CORRIDOR_CLEAR` off
     the straight path the brake nets take from their harness terminal to the
-    module -- the path `place.brake_terminal` finds and `place.i2c_pullups`'
+    module -- the path `facts.brake_terminal` finds and `facts.i2c_pullups`'
     resistors keep clear of."""
     out = []
     for board in bp.STACK_ORDER:
         module = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
         if module is None:
             continue
-        term = place.brake_terminal(ix, board, module.refdes)
-        pullups = place.i2c_pullups(ix, board)
+        term = facts.brake_terminal(ix, board, module.refdes)
+        pullups = facts.i2c_pullups(ix, board)
         if term is None or not pullups:
             continue
         out.append({"kind": "corridor", "name": f"{term}-{module.refdes}-BRAKE",
                     "ends": [term, module.refdes], "parts": list(pullups),
-                    "clear_mm": place.CORRIDOR_CLEAR,
+                    "clear_mm": facts.CORRIDOR_CLEAR,
                     "reason": "the brake nets' way to the module; the I2C bus's edges "
                               "stay off it (check 14)"})
     return out
@@ -775,10 +775,10 @@ def _pour_spans(ix, boards) -> list:
     pwr12 = ix.classes["PWR12"]
     for b in boards:
         board = b["name"]
-        drivers = route.v12_line(ix, board)
+        drivers = facts.v12_line(ix, board)
         if not drivers:
             continue
-        _, feed = place.v12_bus(ix, board)
+        _, feed = facts.v12_bus(ix, board)
         layer = next(l for l in b["layers"] if l["kind"] == "pour")
         pads = [[r, p] for r in list(drivers) + ([feed] if feed else [])
                 for p in sorted({p for p, n in ix.items[r].pin_net.items() if n in pwr12},
@@ -801,18 +801,18 @@ def _keep_outs(ix, project) -> list:
             comp = pcb.components.get(it.refdes)
             if comp is None:
                 continue
-            env = place.envelope(project.footprints[comp.footprint], it.body)
+            env = facts.envelope(project.footprints[comp.footprint], it.body)
             if it.kind == "MODULE":
                 # check 8: the zone beyond the antenna end -- the module's
                 # padless end, its footprint's +Y
                 out.append({"kind": "keep_out", "name": f"{it.refdes}-ANTENNA", "board": board,
-                            "box": [env.x0, env.y1, env.x1, env.y1 + place.ANTENNA_ZONE_D],
+                            "box": [env.x0, env.y1, env.x1, env.y1 + facts.ANTENNA_ZONE_D],
                             "reason": "the antenna end: nothing in the zone beyond it (check 8)",
                             "side": "both", "part": it.refdes,
-                            "at_edge_mm": place.ANTENNA_EDGE})
+                            "at_edge_mm": facts.ANTENNA_EDGE})
             if it.kind == "CONN" and it.land:
                 # check 16: the programming cable's plug at each end of the land
-                w, dd, c = env.x1 - env.x0, env.y1 - env.y0, place.SERVICE_CLEAR
+                w, dd, c = env.x1 - env.x0, env.y1 - env.y0, facts.SERVICE_CLEAR
                 zones = ([[env.x0 - c, env.y0, env.x0, env.y1], [env.x1, env.y0, env.x1 + c, env.y1]]
                          if w >= dd else
                          [[env.x0, env.y0 - c, env.x1, env.y0], [env.x0, env.y1, env.x1, env.y1 + c]])
@@ -861,9 +861,9 @@ def _stack(d, boards, notes) -> dict:
 
 
 def export(project, d=None) -> Export:
-    """The `layout.yaml` document for `project`, a `place.load` result."""
+    """The `layout.yaml` document for `project`, a `facts.load` result."""
     d = d or netlist.checked()
-    ix = place.Index(d)
+    ix = facts.Index(d)
     notes: list[str] = []
     used = set()
     for board in bp.STACK_ORDER:
@@ -907,7 +907,7 @@ def main(argv=None) -> int:
     ap.add_argument("project", help="the .eprj2 whose parts and footprints to describe")
     ap.add_argument("-o", "--output", help="where to write layout.yaml (default stdout)")
     args = ap.parse_args(argv)
-    got = export(place.load(args.project))
+    got = export(facts.load(args.project))
     text = got.text()
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:

@@ -433,13 +433,14 @@ def enable_delay_s(v_pack: float, en=SPEC_ENABLE) -> float:
 
 # ── IO-29: what voltage each node of the 84 V section sits at ──────────────
 # The routing clearance between two 84 V nets is the voltage BETWEEN THEM on
-# IPC-2221B Table 6-1 (`tools/route.py`), so the router needs each node's DC
-# voltage referred to GND. It is derived here, where the gate network already
-# lives, and never typed into `route.py`: a resistor changed in the netlist
-# moves the node, the IPC band it lands in and the clearance with it.
+# IPC-2221B Table 6-1 (pcb-layout-tools, through `tools/layout_hooks.py`), so
+# the router needs each node's DC voltage referred to GND. It is derived here,
+# where the gate network already lives, and never typed into the layout
+# constraints: a resistor changed in the netlist moves the node, the IPC band it
+# lands in and the clearance with it.
 #
-# ⛔ DERIVED PER NODE, never per pair. `route.pair_clearance` takes the
-# difference; nothing here knows which pairs exist on the board.
+# ⛔ DERIVED PER NODE, never per pair. `pcbl` takes the difference; nothing
+# here knows which pairs exist on the board.
 
 #: A plain silicon rectifier's forward drop in the 84 V section, volts, as an
 #: upper bound. D201 is the SMA 1N4007 (`M7`, netlist): V_FM 1.1 V at the full

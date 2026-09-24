@@ -13,9 +13,9 @@ one side of it and nothing on the other.
 
 ⛔ Nothing here is typed.  `soft_start.operating_points` names the worlds a
 clearance is judged in (pack volts x key state x diode drop) and
-`route.hv_node_voltages` walks the netlist for each node's voltage in each of
-them -- the same figures `tools/route.py` judges its pairwise HV clearance by
-(IO-29), so the tool and the legacy check cannot disagree about a voltage.
+`layout_facts.hv_node_voltages` walks the netlist for each node's voltage in
+each of them -- the same figures the exported HV class is judged by (IO-29), so
+the yaml and the hook cannot disagree about a voltage.
 """
 from __future__ import annotations
 
@@ -33,8 +33,8 @@ def _tools():
                           f"module's tools/ -- symlink it beside layout.yaml, do not copy it")
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
-    from tools import netlist, route, rules, soft_start
-    return netlist, route, soft_start, rules
+    from tools import layout_facts, netlist, rules, soft_start
+    return netlist, layout_facts, soft_start, rules
 
 
 def _name(point) -> str:
@@ -46,10 +46,10 @@ def _name(point) -> str:
 def operating_points() -> dict:
     """{operating point name: {net: volts}}, one entry per world
     `soft_start.operating_points` walks, in its order."""
-    netlist, route, soft_start, rules = _tools()
+    netlist, facts, soft_start, rules = _tools()
     d = netlist.checked()
     points = soft_start.operating_points(d)
-    volts = route.hv_node_voltages(d)
+    volts = facts.hv_node_voltages(d)
     for net, v in volts.items():
         if len(v) != len(points):
             raise ValueError(f"layout_hooks: {net} has {len(v)} voltages for "
