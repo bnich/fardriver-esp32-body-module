@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass, field
 
@@ -140,9 +141,29 @@ def _pad_shape(dp) -> str:
     return "OVAL" if kind == "OVAL" else "RECT"
 
 
+def _turned(hw: float, hh: float, angle) -> tuple[float, float]:
+    """A pad's half-extents once `padAngle` has turned it -- pcbl's reading
+    (`pcblayout.io.easyeda.read._turned`), so the design and the layout see
+    one pad.
+
+    ⚠️ `padAngle` turns the PAD; `relativeAngle` and `padOffsetX/Y` turn and
+    move the drill inside it and are not read (`route.pad_shapes`).  Unturned,
+    `U305`'s exposed pad (1.8 x 4.5 mm at 270) lies across both pin rows and
+    covers `CBOOT`, `VCC` and the `SW` and `PVIN` pins with ground copper, so no
+    track can leave them.  A turn off the quarter is read as the box that holds
+    the turned pad -- the safe direction."""
+    turn = float(angle or 0) % 180
+    if turn < 1e-6 or 180 - turn < 1e-6:
+        return hw, hh
+    if abs(turn - 90) < 1e-6:
+        return hh, hw
+    c, s = abs(math.cos(math.radians(turn))), abs(math.sin(math.radians(turn)))
+    return c * hw + s * hh, s * hw + c * hh
+
+
 def _footprint(uuid: str, records) -> dict:
     """A FOOTPRINT document as `layout.yaml` states one: every pad at
-    `max(defaultPad, hole)`, and the body the union of the pads and what is
+    `max(defaultPad, hole)` turned by its `padAngle` (`_turned`), and the body the union of the pads and what is
     drawn on the outline layers (`place.envelope`'s rule, at the exact mm).
 
     A pad with no number carries no pin -- a mounting or thermal land -- and is
@@ -155,6 +176,7 @@ def _footprint(uuid: str, records) -> dict:
             hole = o.get("hole") or {}
             hw = max((dp.get("width") or 0), (hole.get("width") or 0)) / 2
             hh = max((dp.get("height") or 0), (hole.get("height") or 0)) / 2
+            hw, hh = _turned(hw, hh, o.get("padAngle"))
             cx, cy = o["centerX"], o["centerY"]
             pts += [(cx - hw, cy - hh), (cx + hw, cy + hh)]
             number = str(o.get("num", "")).strip() or f"#{h.get('id')}"

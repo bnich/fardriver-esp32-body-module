@@ -366,6 +366,42 @@ def test_lead_mm_is_stated_only_on_a_through_hole_footprint(exported, design):  
         assert any(f"{ref} states lead_mm" in n for n in exported.notes), ref
 
 
+def _pad_record(angle, w=1.8, h=4.5, x=0.0, y=0.0):
+    mil = layout_export.MIL_PER_MM
+    return ({"type": "PAD", "id": "p"}, json.dumps(
+        {"num": "1", "centerX": x * mil, "centerY": y * mil, "padAngle": angle,
+         "defaultPad": {"padType": "RECT", "width": w * mil, "height": h * mil}}))
+
+
+@pytest.mark.parametrize("angle, half", [(0, (0.9, 2.25)), (180, (0.9, 2.25)),
+                                         (90, (2.25, 0.9)), (270, (2.25, 0.9)),
+                                         (None, (0.9, 2.25))])
+def test_a_pad_is_stated_as_its_pad_angle_turns_it(angle, half):
+    """`U305`'s exposed pad is 1.8 x 4.5 mm drawn at 270: read unturned it
+    lies across both pin rows and grounds `CBOOT` and `VCC`, which no router
+    can then leave."""
+    fp = layout_export._footprint("u", [_pad_record(angle)])
+    pad = fp["pads"][0]
+    assert (round(pad["hw"], 6), round(pad["hh"], 6)) == half
+    assert [round(v, 6) for v in fp["body"]] == [-half[0], -half[1], half[0], half[1]]
+
+
+def test_a_pad_turned_off_the_quarter_is_the_box_that_holds_it():
+    pad = layout_export._footprint("u", [_pad_record(45, w=2.0, h=1.0)])["pads"][0]
+    r = 1.5 / 2 ** 0.5
+    assert (round(pad["hw"], 6), round(pad["hh"], 6)) == (round(r, 6), round(r, 6))
+
+
+@pytest.mark.parametrize("angle", [0, 45, 90, 180, 270, 300, None])
+def test_the_export_turns_a_pad_as_pcbl_reads_it(angle):
+    """One pad, one geometry: the export states a turned pad exactly as
+    pcbl's own reader turns it (`pcblayout.io.easyeda.read._turned`)."""
+    read = pytest.importorskip("pcblayout.io.easyeda.read")
+    pad = layout_export._footprint("u", [_pad_record(angle, w=2.0, h=0.6)])["pads"][0]
+    want = read._turned(1.0, 0.3, angle)
+    assert (pad["hw"], pad["hh"]) == pytest.approx(want)
+
+
 def test_the_export_validates_with_pcblayouts_loader(exported):
     model = pytest.importorskip("pcblayout.model")
     d = model.loads(exported.text())
