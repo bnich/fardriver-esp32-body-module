@@ -5,7 +5,7 @@
 # root.  Exit 0 means every check passed and the EasyEDA project is written,
 # complete, from the source as it is on disk right now -- or is the owner's
 # saved layout, which the build never overwrites -- and pcb-layout-tools
-# (`pcbl`, v0.4.0) accepts the layout constraints this repo writes for it.
+# (`pcbl`, v0.5.0) accepts the layout constraints this repo writes for it.
 #
 # Why a script and not the list of commands it replaces:
 #   * `python3 -m tools.X | tail -1` returns tail's 0, not the tool's 1.  Every
@@ -66,13 +66,13 @@ python3 -c 'import sys; from tools import eprj2; sys.exit(0 if eprj2.find_templa
 # pcb-layout-tools lays the boards out and checks them (layout/PROCESS.md).  It
 # is a separate tool, installed on its own; this repo's layout.yaml is written
 # for the version named here, and another one may read it differently.
-PCBL_NEEDS="pcbl 0.4.0"
+PCBL_NEEDS="pcbl 0.5.0"
 PCBL=${PCBL:-pcbl}
 command -v "$PCBL" >/dev/null 2>&1 \
-    || fail pcbl "not found (looked for '$PCBL'); the layout is checked with pcb-layout-tools v0.4.0 -- install that tag and put 'pcbl' on PATH, or set PCBL to it"
+    || fail pcbl "not found (looked for '$PCBL'); the layout is checked with pcb-layout-tools v0.5.0 -- install that tag and put 'pcbl' on PATH, or set PCBL to it"
 PCBL_HAS=$("$PCBL" --version 2>&1 || true)
 [[ "$PCBL_HAS" == "$PCBL_NEEDS" ]] \
-    || fail pcbl "this repo needs pcb-layout-tools v0.4.0 ('$PCBL_NEEDS'); '$PCBL --version' says '$PCBL_HAS'"
+    || fail pcbl "this repo needs pcb-layout-tools v0.5.0 ('$PCBL_NEEDS'); '$PCBL --version' says '$PCBL_HAS'"
 printf '== dependencies: pytest, cryptography, lcsc-search, eprj2 template, %s -- present\n' "$PCBL_HAS"
 
 

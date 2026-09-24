@@ -6,20 +6,18 @@ The editor's rule for class HV, HVSIG holds its copper **1.25 mm from everything
 
 ⛔ **An editor DRC hit that is NOT on this list is a defect.** Check the report against this file line by line.
 
-13 accepted join(s).
+11 accepted join(s).
 
 | Net A | Net B | Copper A | Copper B | Layer | Gap mm | V between | IPC-2221B B2 |
 |---|---|---|---|---|---|---|---|
-| D13_GATE | D13_PD_MID | trace on Top Layer | R101A.2 | Top Layer | 0.995 | 72.5 | 0.60 mm |
-| D13_GATE | D13_PD_MID | trace on Top Layer | trace on Top Layer | Top Layer | 1.000 | 72.5 | 0.60 mm |
-| D13_GATE | HV_BPLUS | trace on Top Layer | R110.2 | Top Layer | 0.264 | 15.0 | 0.10 mm |
-| D13_GATE | HV_BPLUS | trace on Top Layer | trace on Top Layer | Top Layer | 0.538 | 15.0 | 0.10 mm |
-| D13_GATE | HV_BPLUS | trace on Top Layer | C107.2 | Top Layer | 0.562 | 15.0 | 0.10 mm |
-| D13_GATE | HV_BPLUS | trace on Top Layer | D102.K | Top Layer | 0.583 | 15.0 | 0.10 mm |
-| D13_GATE | HV_BPLUS | R101A.1 | trace on Top Layer | Top Layer | 0.740 | 15.0 | 0.10 mm |
+| D13_EN_MID | KSW | R112A.2 | trace on Top Layer | Top Layer | 0.794 | 75.0 | 0.60 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | trace on Top Layer | Top Layer | 0.180 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | Q101.G | trace on Top Layer | Top Layer | 0.185 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | C105.1 | trace on Top Layer | Top Layer | 0.200 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | D102.A | trace on Top Layer | Top Layer | 0.310 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | D101.K | Top Layer | 0.624 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | D102.K | Top Layer | 0.660 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | R110.1 | trace on Top Layer | Top Layer | 0.837 | 15.0 | 0.10 mm |
 | D13_GATE | HV_BPLUS | R110.1 | R110.2 | Top Layer | 0.867 | 15.0 | 0.10 mm |
-| D13_GATE | HV_BPLUS | R110.1 | trace on Top Layer | Top Layer | 0.874 | 15.0 | 0.10 mm |
-| HV_SW | KEY_SENSE_MID | L102.1 | trace on Top Layer | Top Layer | 1.171 | 77.6 | 0.60 mm |
-| HV_SW | KSW | C105.2 | trace on Top Layer | Top Layer | 0.614 | 0.0 | 0.10 mm |
-| HV_SW | KSW | trace on Top Layer | J101.6 | Top Layer | 0.728 | 0.0 | 0.10 mm |
-| HV_SW | KSW | trace on Top Layer | trace on Top Layer | Top Layer | 0.767 | 0.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | R110.2 | Top Layer | 1.184 | 15.0 | 0.10 mm |
+| D13_PD_MID | HV_BPLUS | R101A.2 | trace on Top Layer | Top Layer | 1.248 | 87.5 | 0.60 mm |

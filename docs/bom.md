@@ -103,8 +103,8 @@ allows a via inside a surface pad, filled and plated over, where neither a via b
 short surface escape fits. `pcbl route stitch` prints one `FILLED VIA-IN-PAD` line per board that
 uses one, naming each pad. ⚠️ **If any board names a pad, order that board with JLC's epoxy-filled,
 copper-capped vias** (*Via Covering: Epoxy Filled & Capped*) — an open via in a pad wicks the solder
-out of the joint. ⚠️ **The current layout names one: `R345.2` (`V12`) on OUTPUTS**, so **OUTPUTS orders with
-Epoxy Filled & Capped**; POWER, LOGIC and CTRL name none and order with ordinary tented vias.
+out of the joint. **The current layout names none**, so every board orders with ordinary tented vias.
+Re-read the `route stitch` output after any re-layout: a pad it names changes that board's order.
 The exposed thermal pads' via arrays (`vias_in_pad`) are ordinary tented vias and need no option.
 
 **Ordered loose with the boards, fitted by you.** JLC inserts through-hole parts upright; the
