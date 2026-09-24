@@ -7,7 +7,7 @@ classes and the rules that assign them, the decouplers and the hosts they
 serve, the HV node voltages -- and the reader that takes a part's envelope
 from the project's footprints.  They are project knowledge, so they stay in
 the project.  Placing, routing and checking a layout are `pcb-layout-tools`'
-(`pcbl`, tag v0.2.0): it reads these facts from the exported yaml and never
+(`pcbl`, tag v0.3.0): it reads these facts from the exported yaml and never
 imports this module.
 
 ⛔ Nothing here places or routes.  A function that grows a placement or a
@@ -82,6 +82,13 @@ CORRIDOR_CLEAR = 5.0
 
 #: A 100 nF decoupler within this (edge to edge) of the IC on its rail.
 DECOUPLE_REACH = 3.0
+
+#: Every other part on a converter's switch node -- its bootstrap capacitor,
+#: its inductor -- within this (edge to edge) of the converter.  The switch
+#: node is the loop that radiates and the net that carries the output current
+#: at the switching edge; a body beside the converter keeps both short.  The
+#: decoupler's figure: the same "against its body, one trace between".
+SW_REACH = 3.0
 
 #: Nothing within this of the Tag-Connect land along its long axis on either
 #: end: the cable plug's body and its exit.  The entry end is not in the
@@ -566,6 +573,34 @@ def power_classes(d):
     for n in d.nets:
         if n.name in adc and any(ref in by and by[ref].kind == "C" for ref, _ in n.pins):
             out["SENSE"].add(n.name)
+    return out
+
+def current_outputs(d):
+    """{(refdes, pin)} a power class's current LEAVES a part by, by the same
+    pins `power_classes` names the classes by: the brick's `+V` (not `+S`,
+    its sense lead), a TPS4H160B's `OUTx`, a TPS2553's `OUT`, an IC's `SW`,
+    and the far pin of the inductor on a switch node.  `layout_export`
+    walks the current from these (`_current_roles`)."""
+    by = {p.refdes: p for p in d.parts}
+    out, sw = set(), set()
+    for n in d.nets:
+        for ref, pin in n.pins:
+            p = by.get(ref)
+            if p is None:
+                continue
+            mpn = p.mpn.upper()
+            if ((ref == bp.FLOOR_SEAT and pin == "+V")
+                    or ("TPS4H160" in mpn and pin.startswith("OUT"))
+                    or ("TPS2553" in mpn and pin == "OUT")
+                    or (p.kind == "IC" and pin == "SW")):
+                out.add((ref, pin))
+            if p.kind == "IC" and pin == "SW":
+                sw.add(n.name)
+    for n in d.nets:
+        if n.name in sw:
+            for ref, pin in n.pins:
+                if ref in by and by[ref].kind == "L":
+                    out |= {(ref, q) for q in by[ref].pins if q != pin}
     return out
 
 def decouplers(ix, board):

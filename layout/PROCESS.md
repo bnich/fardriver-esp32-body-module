@@ -1,6 +1,6 @@
 # PCB layout — the process
 
-Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.2.0**). The
+Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.3.0**). The
 procedure — every step, what it writes, what its exit codes mean, and why the order is what it is —
 is that repository's **`docs/process.md`**. This file holds only what is particular to this board
 set: where its constraints come from, and the order its copper is laid in.
@@ -18,7 +18,7 @@ from `pcbl prove` onwards. The owner's project is `~/Documents/EasyEDA-Pro/proje
 (📄 `README.md` in this directory); ⛔ every `pcbl` write refuses while the editor is running.
 
 `tools/gate.sh` exports `layout.yaml` from the owner's project and runs `pcbl stack` on it, and
-refuses with a clear message when `pcbl` v0.2.0 is not installed. `pcbl check` is the layout's own
+refuses with a clear message when `pcbl` v0.3.0 is not installed. `pcbl check` is the layout's own
 bar (`docs/process.md`), not the gate's.
 
 ## The order the copper goes down
@@ -32,7 +32,9 @@ locked.
 1. **The 84 V chain on POWER** (HV). `J101.B+ → FH201 → Q101 → HV_SW → L101`/`L102` →
    `C201`/`C202` → `U201`/`U202` `+Vin`, and the negative twin on `HV_C1_N` / `HV_C2_N`. 0.5 mm
    minimum, 1.25 mm from low-voltage copper and each pair's own voltage difference between two
-   84 V nets (IO-29), on one layer.
+   84 V nets (IO-29), on one layer. The ground pins inside the pack-voltage end have no plane under
+   them — the planes stop at the partition, and there is no ground pour there — so their ground is
+   a trace too, joined at HV's width under the same pairwise clearances.
 2. **The 12 V bus on POWER** (PWR12). `U201.+V`/`+S` → `C207.+` → `J202.V12` and its ground twin,
    ≥ 5 mm. A trace, not a pour: the inner planes stop at the partition.
 3. **The 12 V bus on OUTPUTS** (PWR12). The pour is the bus; `J311`'s power contacts onto it, each
@@ -42,10 +44,9 @@ locked.
    through `PWR-LOGIC` and `CTRL-STACK`, then `U305`'s input, `L301` and the output caps in a tight
    loop, then `V5AUX` to the four switches. `V5AUX_SW` is the noisiest net on CTRL and is in class
    PWR5AUX, whose rule allows a via. Keeping `U305.SW → C314 → L301` short, wide and on one layer
-   is a placement matter — `L301` and `C314` beside `U305` — and ⚠️ **`layout.yaml` does not yet
-   state it**: no reach holds either part to the buck, and the current placement leaves `L301.1`
-   about 23 mm from `U305.SW`. Until a constraint does, check it by eye on `placement-CTRL.png`
-   and `copper-CTRL.png`, and do not accept a long switch node.
+   is a placement matter — `L301` and `C314` beside `U305`. `layout.yaml` states it: each is a
+   reach (`C314-SW`, `L301-SW`) within `SW_REACH` of the buck (`tools/layout_facts.py`), which the
+   placer honours and `pcbl check` holds.
 5. **The face rows' returns**: every terminal's GND to the plane by its own via, beside the pad.
 6. **The differential pair** (DIFF): `U404` → `J411` on LOGIC and on to `J501` on CTRL. Paired,
    same layer, one via each if a via is needed at all.

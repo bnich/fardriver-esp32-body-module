@@ -175,8 +175,11 @@ def test_the_cable_states_no_gap(exported):
 def test_the_twin_is_routes_return_rule(exported, ix):  # noqa: F811
     """The ground twin is stated where the 12 V run needs one: the
     board that makes the bus, each ground reaching the converter and the
-    contact it leaves by, over those and the bus parts on that ground."""
-    twins = [c for c in exported.doc["constraints"] if c["kind"] == "twin"]
+    contact it leaves by, over those and the bus parts on that ground.  (A
+    region's own ground twin is the next test's.)"""
+    regions = {c["name"] for c in exported.doc["constraints"] if c["kind"] == "region"}
+    twins = [c for c in exported.doc["constraints"] if c["kind"] == "twin"
+             and not any(c["name"].startswith(f"{r}-") for r in regions)]
     assert [(t["board"], t["net"], t["beside"]) for t in twins] == [
         ("POWER", "GND", facts.PWR12.name)]
     src, away, parts = facts.v12_output(ix, "POWER")
@@ -257,6 +260,87 @@ def test_a_board_whose_hv_nets_feed_no_supply_is_refused(design, monkeypatch):  
 def _net_row(exported, name):
     return next(n for n in exported.doc["nets"] if n["name"] == name)
 
+
+def test_the_current_enters_at_the_converter_and_leaves_by_the_parts_it_feeds(exported):
+    """`sources` / `sinks` are read off the copper: the brick's +V makes
+    V12, the drivers that switch it are its sinks, and the buck's SW feeds
+    the inductor.  A pull-up or a decoupler on the net is neither."""
+    v12 = _net_row(exported, "V12")
+    assert "U201" in v12["sources"]
+    assert {"U301", "U302", "U303", "U305", "J202"} <= set(v12["sinks"])
+    assert not {"R301", "C303", "D315"} & set(v12["sources"] + v12["sinks"])
+    sw = _net_row(exported, "V5AUX_SW")
+    assert (sw["sources"], sw["sinks"]) == (["U305"], ["L301"])
+    aux = _net_row(exported, "V5AUX")
+    assert aux["sources"] == ["L301"]
+    assert set(aux["sinks"]) == {"U306", "U307", "U308", "U309"}
+
+
+def test_a_pass_part_sink_is_stated_at_what_it_feeds(exported, design, ix):  # noqa: F811
+    """An equal share of V12 is a fuse under a driver whose four channels
+    all sit at their limiters: each TPS4H160B is stated at its channels'
+    sum, and the buck at its output class's current."""
+    cur = layout_export._class_current_a(design, ix)
+    own = _net_row(exported, "V12")["part_current_a"]
+    for u in ("U301", "U302", "U303"):
+        assert own[u] == pytest.approx(4 * cur["CH12"], abs=1e-3)
+        assert own[u] > cur["PWR12"] / len(_net_row(exported, "V12")["sinks"])
+    assert own["U305"] == pytest.approx(cur["PWR5AUX"], abs=1e-3)
+    assert "J202" not in own                    # a connector takes the equal share
+
+
+def test_the_v12_pour_span_names_every_v12_pad_on_its_board(exported, ix):  # noqa: F811
+    """A surface pad reaches the V12 pour only by a stitch via beside it, so
+    the pour must reach every V12 pad on the board, not only the driver
+    line's: the pull-ups and terminals were left with no sheet in reach."""
+    spans = [c for c in exported.doc["constraints"] if c["kind"] == "pour_span"]
+    assert spans
+    for c in spans:
+        want = {(it.refdes, p) for it in ix.on(c["board"])
+                for p, n in it.pin_net.items() if n == c["net"]}
+        assert {tuple(p) for p in c["pads"]} == want
+        assert c["feed"] in {r for r, _ in want}
+
+
+
+def test_the_region_ground_is_a_twin_across_every_ground_pin_in_the_region(exported, ix):  # noqa: F811
+    """Decision 5: POWER's ground plane stops short of the pack-voltage end,
+    so the ground pins in it are joined as copper -- a twin beside the
+    region's power class.  Every region member with a ground pin is named
+    (read here from the net classes, not from the export's own list), and
+    nothing without a ground pin is."""
+    rows = {n["name"]: n for n in exported.doc["nets"]}
+
+    def cls(net, board):
+        r = rows.get(net)
+        return None if r is None else r.get("class_by_board", {}).get(board, r["net_class"])
+
+    regions = [c for c in exported.doc["constraints"] if c["kind"] == "region"]
+    twins = {c["name"]: c for c in exported.doc["constraints"] if c["kind"] == "twin"}
+    assert regions
+    for r in regions:
+        t = twins[f"{r['name']}-GND-RETURN"]
+        assert (t["board"], t["net"], t["beside"]) == (r["board"], "GND", r["classes"][0])
+        members = {it.refdes for it in ix.on(r["board"]) if "GND" in it.nets
+                   and any(cls(n, r["board"]) in r["classes"] for n in it.nets)}
+        assert members and members <= set(t["parts"])
+        assert all("GND" in ix.items[p].nets for p in t["parts"])
+    assert twins["POWER-HV-GND-RETURN"]["parts"] == [
+        "C212", "D101", "J101", "L101", "L102", "Q105", "U201", "U202"]
+
+
+def test_every_part_on_a_converters_switch_node_stands_beside_it(exported, ix):  # noqa: F811
+    """The buck's bootstrap capacitor and inductor share its `SW` net: each is
+    a reach satellite of the converter at `SW_REACH`, or the placer is free to
+    seat the inductor 23 mm away (it did, and `V5AUX_SW` could not be laid)."""
+    reaches = {(c["host"], c["satellite"]): c for c in exported.doc["constraints"]
+               if c["kind"] == "reach"}
+    want = {(it.refdes, r) for it in ix.items.values() if it.kind == "IC" and "SW" in it.pin_net
+            for r, _ in ix.members[it.pin_net["SW"]]
+            if r != it.refdes and r in ix.items and ix.items[r].board == it.board}
+    assert ("U305", "L301") in want and ("U305", "C314") in want
+    for pair in want:
+        assert reaches[pair]["within_mm"] == facts.SW_REACH
 
 def test_a_net_two_classes_on_two_boards_states_each(exported, ix):  # noqa: F811
     """`V12` is PWR12 where the brick and the driver line carry it and RAIL

@@ -26,7 +26,9 @@ read from where it already lives, and each block says where:
                through it (`_hv_power_nets`); `supply` from `facts.Index`'s grounds and
                `rules.rails` (the nets that feed a part's SUPPLY pin); `order`,
                the netlist's own order of the net's pins, wherever it is not
-               the parts' order -- which member a tie meets first
+               the parts' order -- which member a tie meets first; `sources`
+               and `sinks`, where each current class's amps enter and leave,
+               walked from the brick's +V (`_current_roles`)
   parts        `netlist.checked()`: board, side, kind, height, body, and the
                pin map padmap already made the footprint's own pad names --
                in the netlist's order, which pcbl breaks its ties by
@@ -324,7 +326,96 @@ def _net_classes(ix) -> dict:
     return out
 
 
-def _net_rows(ix, classes, part_order) -> list:
+#: The classes a stitch sizes by the pin's share: those that carry current AND
+#: take a via.  HV and HVSIG carry current too, but never change layer, so no
+#: pin of theirs is ever asked what it carries.
+ROLE_CLASSES = ("PWR12", "PWR5AUX", "CH12", "CH5")
+
+
+def _current_roles(ix, classes, currents) -> dict:
+    """{net: (sources, sinks, {sink: own amps})} for every net in a `ROLE_CLASSES` class on some
+    board -- where its current ENTERS and LEAVES each board, from the COPPER.
+
+    A part is a SOURCE of the net its current-output pin is on
+    (`facts.current_outputs`: the brick's `+V`, a switch's `OUTx`, the buck's
+    `SW`, the inductor's far end).  The nets are ranked by how far the current
+    has come from the brick -- `V12` first, then what a part on it feeds, and
+    so on -- and a part that sources a net FURTHER from the brick is a SINK of
+    each nearer current net it has a pin on: a TPS4H160B of `V12`, the buck
+    of `V12`, the inductor of the switch node, a TPS2553 of `V5AUX`.  (The
+    buck's `BIAS` pin is on `V5AUX`, which is further from the brick than
+    the switch node the buck sources, so the buck is not a sink of it.)  A
+    connector whose mate stands on a board nearer the brick (over the stack's
+    mated pairs and cable, `interface`) brings the current in, and is a
+    source; any other interface connector, and a harness terminal, carries
+    it away, and is a sink.  Everything else on the net -- a decoupler, a
+    divider, an open-load pull-up, a TVS -- carries only its own current.
+
+    A sink that sources further nets is stated at what THEY carry: the sum of
+    their classes' currents on its board (`currents`, `_class_current_a`) --
+    a TPS4H160B at its four channels' limiters, not an equal part of the bus,
+    which would be a fuse under the one whose channels are all at their
+    ceiling.  pcbl caps it at the net's own class current.  A connector
+    takes the equal share."""
+    cur = {n for n, per in classes.items() if set(per.values()) & set(ROLE_CLASSES)}
+    outs = facts.current_outputs(ix.d)
+    sourced: dict = {}                       # refdes -> the current nets it sources
+    for n in cur:
+        for r, pin in ix.members[n]:
+            if (r, pin) in outs:
+                sourced.setdefault(r, []).append(n)
+    depth: dict = {}
+    queue = [n for n in ix.members if n in cur and any(
+        r == bp.FLOOR_SEAT and (r, pin) in outs for r, pin in ix.members[n])]
+    for n in queue:
+        depth[n] = 0
+    while queue:
+        n = queue.pop(0)
+        for r in dict.fromkeys(r for r, _ in ix.members[n]):
+            for m in sourced.get(r, ()):
+                if m not in depth:
+                    depth[m] = depth[n] + 1
+                    queue.append(m)
+    origin = ix.items[bp.FLOOR_SEAT].board
+    links: dict = {}
+    for it in ix.items.values():
+        for o in ix.items.values():
+            if it.interface and o.interface == it.interface and o.board != it.board:
+                links.setdefault(it.board, set()).add(o.board)
+    dist, bq = {origin: 0}, [origin]
+    while bq:
+        b = bq.pop(0)
+        for o in sorted(links.get(b, ())):
+            if o not in dist:
+                dist[o] = dist[b] + 1
+                bq.append(o)
+    roles = {}
+    for n in [n for n in ix.members if n in cur]:
+        src, snk, own = [], [], {}
+        for r in dict.fromkeys(r for r, _ in ix.members[n]):
+            it = ix.items.get(r)
+            if it is None:
+                continue
+            if n in sourced.get(r, ()):
+                src.append(r)
+            elif it.kind == "CONN":
+                mates = [o for o in ix.items.values()
+                         if it.interface and o.interface == it.interface and o.board != it.board]
+                if any(dist.get(o.board, math.inf) < dist.get(it.board, math.inf) for o in mates):
+                    src.append(r)
+                elif mates or it.harness:
+                    snk.append(r)
+            elif n in depth and any(depth.get(m, -1) > depth[n] for m in sourced.get(r, ())):
+                snk.append(r)
+                amps = sum(currents.get(classes[m].get(it.board), 0.0)
+                           for m in sourced[r] if depth.get(m, -1) > depth[n])
+                if amps:
+                    own[r] = round(amps, 3)
+        roles[n] = (src, snk, own)
+    return roles
+
+
+def _net_rows(ix, classes, part_order, currents) -> list:
     """The `nets` block.  `net_class` is the strongest of the net's classes;
     a board where it is another class is named under `class_by_board`.
     `supply` is the circuit's statement of a supply or a return: a ground
@@ -336,6 +427,7 @@ def _net_rows(ix, classes, part_order) -> list:
     its own order, not its parts'."""
     rank = {c.name: i for i, c in enumerate(CLASSES)}
     at = {r: i for i, r in enumerate(part_order)}
+    roles = _current_roles(ix, classes, currents)
     rows = []
     for n in classes:                       # the netlist's order, as `_net_classes` keeps it
         per = classes[n]
@@ -349,6 +441,14 @@ def _net_rows(ix, classes, part_order) -> list:
         met = list(dict.fromkeys(r for r, _ in ix.members[n] if r in at))
         if met != sorted(met, key=at.__getitem__):
             row["order"] = met
+        if n in roles:
+            for key, got in zip(("sources", "sinks"), roles[n][:2]):
+                got = [r for r in got if r in at]
+                if got:
+                    row[key] = got
+            own = {r: a for r, a in roles[n][2].items() if r in at}
+            if own:
+                row["part_current_a"] = own
         rows.append(row)
     return rows
 
@@ -662,6 +762,20 @@ def _reaches(ix, notes) -> list:
             out.append({"kind": "reach", "name": f"{cap}-DECOUPLE", "host": host,
                         "satellite": cap, "within_mm": facts.DECOUPLE_REACH,
                         "reason": "a 100 nF decoupler beside the IC on its rail"})
+        # `reach`: a converter's switch-node parts -- bootstrap cap, inductor --
+        # beside it (the IC's `SW` pin, as `current_outputs` names it)
+        for it in sorted(ix.on(board), key=lambda i: _ref_key(i.refdes)):
+            sw = it.pin_net.get("SW") if it.kind == "IC" else None
+            if not sw:
+                continue
+            for r in sorted({r for r, _ in ix.members[sw]}, key=_ref_key):
+                other = ix.items.get(r)
+                if r == it.refdes or other is None or other.board != board:
+                    continue
+                out.append({"kind": "reach", "name": f"{r}-SW", "host": it.refdes,
+                            "satellite": r, "within_mm": facts.SW_REACH,
+                            "reason": f"on {it.refdes}'s switch node {sw}: the loop that "
+                                      f"radiates, and the output current at the edge"})
         module = next((it for it in ix.on(board) if it.kind == "MODULE"), None)
         if module is None:
             continue
@@ -746,6 +860,45 @@ def _twins(ix) -> list:
     return out
 
 
+def _region_returns(ix, classes, regions, reaches, boards) -> list:
+    """The pack-voltage end's ground, laid as copper. There is no ground pour at that end.
+    The board's ground plane is cut back at the region and its strip (no
+    ground sheet a prepreg from pack voltage), so the ground pins that stand
+    in the region -- the pack's negative contacts, the common-mode chokes'
+    return legs, the clamp's and the pull-down's, the isolated converters'
+    output returns -- have no sheet in a stitch via's reach.  A twin joins
+    them at the region's power class width, under the pairwise clearance
+    `pcbl route copper` keeps: every ground-carrying MEMBER of the region
+    (a part with a pin on one of its classes' nets, a straddler included --
+    whose ground pins stand on the plane side, which is where the twin meets
+    the sheet) and every reach satellite of one that is on the ground (a
+    converter's decoupler)."""
+    out = []
+    by_board = {b["name"]: b for b in boards}
+    for r in regions:
+        board = r["board"]
+        b = by_board.get(board)
+        if b is None:
+            continue
+        planes = {l["net"] for l in b["layers"] if l["kind"] == "plane" and l.get("net")}
+        wanted = set(r["classes"])
+        members = [it.refdes for it in ix.on(board)
+                   if any(classes.get(n, {}).get(board) in wanted for n in it.nets)]
+        heavy = r["classes"][0]
+        for net in sorted(planes & ix.gnd):
+            refs = [m for m in members if net in ix.items[m].nets]
+            host = set(refs)
+            refs += [c["satellite"] for c in reaches
+                     if c["host"] in host and ix.items[c["satellite"]].board == board
+                     and net in ix.items[c["satellite"]].nets and c["satellite"] not in host]
+            refs = sorted(dict.fromkeys(refs), key=_ref_key)
+            if len(refs) < 2:
+                continue
+            out.append({"kind": "twin", "name": f"{r['name']}-{net}-RETURN", "board": board,
+                        "net": net, "beside": heavy, "parts": refs})
+    return out
+
+
 def _corridors(ix) -> list:
     """`corridor`, the brake clause: the I2C pull-ups keep `CORRIDOR_CLEAR` off
     the straight path the brake nets take from their harness terminal to the
@@ -769,10 +922,12 @@ def _corridors(ix) -> list:
 
 
 def _pour_spans(ix, boards) -> list:
-    """`pour_span`: the V12 pour covers the driver line's bus pins and the feed's
-    own contacts, fed from inside."""
+    """`pour_span`: the V12 pour reaches EVERY pad of its net on the board -- the
+    driver line's bus pins, the feed's own contacts, and every other part on
+    the net (the pull-ups, the terminals, the decouplers), because a surface
+    pad reaches a pour only by a stitch via beside it, and a pad with no sheet
+    in reach is left with no copper at all.  Fed from inside."""
     out = []
-    pwr12 = ix.classes["PWR12"]
     for b in boards:
         board = b["name"]
         drivers = facts.v12_line(ix, board)
@@ -780,8 +935,10 @@ def _pour_spans(ix, boards) -> list:
             continue
         _, feed = facts.v12_bus(ix, board)
         layer = next(l for l in b["layers"] if l["kind"] == "pour")
-        pads = [[r, p] for r in list(drivers) + ([feed] if feed else [])
-                for p in sorted({p for p, n in ix.items[r].pin_net.items() if n in pwr12},
+        net = layer["net"]
+        refs = sorted({it.refdes for it in ix.on(board) if net in it.nets}, key=_ref_key)
+        pads = [[r, p] for r in refs
+                for p in sorted({p for p, n in ix.items[r].pin_net.items() if n == net},
                                 key=_ref_key)]
         row = {"kind": "pour_span", "name": f"{board}-{layer['net']}-POUR", "board": board,
                "net": layer["net"], "layer": layer["name"], "pads": pads}
@@ -874,10 +1031,12 @@ def export(project, d=None) -> Export:
     boards = _boards(project, ix, notes)
     parts = _parts(d, ix, project, footprints, notes)
     exported = {p["refdes"] for p in parts}
-    constraints = (_edge_groups(d, boards) + _clusters(ix, classes) + _regions(d, ix, boards)
-                   + _keep_outs(ix, project) + _interfaces(d, ix) + _reaches(ix, notes)
+    regions = _regions(d, ix, boards)
+    reaches = _reaches(ix, notes)
+    constraints = (_edge_groups(d, boards) + _clusters(ix, classes) + regions
+                   + _keep_outs(ix, project) + _interfaces(d, ix) + reaches
                    + _corridors(ix) + _heavy_paths(ix) + _pour_spans(ix, boards)
-                   + _twins(ix))
+                   + _twins(ix) + _region_returns(ix, classes, regions, reaches, boards))
     for c in constraints:
         refs = ([c.get("host"), c.get("satellite"), c.get("part"), c.get("lower"),
                  c.get("upper")] + list(c.get("parts", ())) + list(c.get("serves", ()))
@@ -887,12 +1046,13 @@ def export(project, d=None) -> Export:
         if missing:
             raise SystemExit(f"layout_export: {c['kind']} {c['name']} names {missing}, "
                              f"which the project does not place")
+    currents = _class_current_a(d, ix)
     doc = {
         "version": 1,
         "boards": boards,
         "footprints": list(footprints.values()),
-        "netclasses": _netclasses(_used_classes(classes), _class_current_a(d, ix)),
-        "nets": _net_rows(ix, classes, [p["refdes"] for p in parts]),
+        "netclasses": _netclasses(_used_classes(classes), currents),
+        "nets": _net_rows(ix, classes, [p["refdes"] for p in parts], currents),
         "parts": parts,
         "constraints": constraints,
         "stack": _stack(d, boards, notes),
