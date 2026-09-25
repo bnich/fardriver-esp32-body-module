@@ -132,6 +132,15 @@ def test_hvsig_takes_the_standard_via_only_inside_the_hv_region(exported):
     assert [n for n, row in rows.items() if row.get("via_regions")] == ["HVSIG"]
 
 
+def test_the_bucks_bias_pin_is_a_tap_of_its_output(exported):
+    """U305.BIAS draws the buck's own gate-drive current from V5AUX: a tap,
+    joined by a spur at its pin's width and never passed through by the
+    PWR5AUX run.  It is the only tap."""
+    rows = {row["name"]: row for row in exported.doc["nets"]}
+    assert rows["V5AUX"]["taps"] == [["U305", "BIAS"]]
+    assert [n for n, row in rows.items() if row.get("taps")] == ["V5AUX"]
+
+
 def test_each_current_class_states_one_current_and_its_rise(exported):
     """CH12 / CH5 at their strongest channel's limit, PWR5AUX at four 5 V
     limiters together, PWR12 at the limited 12 V load, HV at the pack tap in
