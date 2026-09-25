@@ -7,7 +7,7 @@ classes and the rules that assign them, the decouplers and the hosts they
 serve, the HV node voltages -- and the reader that takes a part's envelope
 from the project's footprints.  They are project knowledge, so they stay in
 the project.  Placing, routing and checking a layout are `pcb-layout-tools`'
-(`pcbl`, tag v0.7.0): it reads these facts from the exported yaml and never
+(`pcbl`, tag v0.8.0): it reads these facts from the exported yaml and never
 imports this module.
 
 ⛔ Nothing here places or routes.  A function that grows a placement or a

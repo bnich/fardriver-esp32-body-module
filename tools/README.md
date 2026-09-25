@@ -25,7 +25,7 @@ tools/gate.sh
 It removes every `__pycache__` first — CPython validates a `.pyc` by second and size, so a
 same-second, same-size edit (`1.25` → `9.25`) is otherwise read as the OLD constant, and `-B` /
 `PYTHONDONTWRITEBYTECODE` stop writing one, not reading it — checks that `pytest`, `cryptography`,
-`~/tools/lcsc-search`, an editor-saved `.eprj2` template and **pcb-layout-tools v0.7.0** (`pcbl` on
+`~/tools/lcsc-search`, an editor-saved `.eprj2` template and **pcb-layout-tools v0.8.0** (`pcbl` on
 `PATH`, or `PCBL` set to it; the gate names the version it needs and the one it found) are present,
 then runs these, in this
 order, each **bare**, and exits at the first non-zero exit code naming the tool:
@@ -86,7 +86,7 @@ Green rules on a netlist that fails integrity mean nothing: a TVS with one leg l
 | `lcsc_fixture.py` | Refreshes `tests/fixtures/lcsc.json`: what LCSC says each ordered code is |
 | `jlc_bom.py` | The BOM JLC's assembly service reads, one line per LCSC part, plus what is ordered loose and what is hand-soldered |
 | `tel_check.py` | Proves EasyEDA's netlist export (`.tel`) against the netlist, pin by pin and footprint by footprint |
-| `layout_export.py` | Describes the design to **pcb-layout-tools** (`pcbl`, tag v0.7.0), which places, routes and checks the boards: `python3 -m tools.layout_export PROJECT.eprj2 -o layout.yaml`. Every figure is read from where it already lives in this repo (📄 `layout/PROCESS.md`) |
+| `layout_export.py` | Describes the design to **pcb-layout-tools** (`pcbl`, tag v0.8.0), which places, routes and checks the boards: `python3 -m tools.layout_export PROJECT.eprj2 -o layout.yaml`. Every figure is read from where it already lives in this repo (📄 `layout/PROCESS.md`) |
 | `layout_hooks.py` | Goes beside `layout.yaml`: the pack-voltage nets' operating points, from `soft_start.py` — code, not data |
 | `layout_facts.py` | The layout facts the two above read: the board frame, the net classes and the rules that assign them, the decoupler hosts, the heavy path, the ground twin |
 | `gauge.py` | Generates the one-sheet gauge project that proved EasyEDA Pro joins the generated nets |

@@ -329,8 +329,9 @@ def _net_classes(ix) -> dict:
 
 
 #: The classes a stitch sizes by the pin's share: those that carry current AND
-#: take a via.  HV and HVSIG carry current too, but never change layer, so no
-#: pin of theirs is ever asked what it carries.
+#: take a via.  HV carries current too but never changes layer, and HVSIG
+#: states no current (its bounded via is one barrel a change), so no pin of
+#: theirs is ever asked what it carries.
 ROLE_CLASSES = ("PWR12", "PWR5AUX", "CH12", "CH5")
 
 
@@ -498,9 +499,10 @@ RISE_C = {facts.HV.name: 10.0, facts.PWR12.name: 20.0, facts.PWR5AUX.name: 20.0,
 #: review, not a default here.
 
 
-#: The classes that state a via.  ⛔ No HV via: a pack-voltage barrel through
-#: the inner GND planes needs a 1.25 mm antipad in each, and HV stays on the
-#: faces (`facts.HV`).  CH5 has room on its face.  PWR12 and RAIL are carried
+#: The classes that state a via.  ⛔ No HV via: HV is the load path, and a
+#: pack-voltage barrel through the inner GND planes needs a 1.25 mm antipad in
+#: each; HV stays on the faces (`facts.HV`).  HVSIG takes one only where that
+#: reason does not hold (`BOUNDED_VIA_CLASSES`).  CH5 has room on its face.  PWR12 and RAIL are carried
 #: by an inner sheet where the board has one (the 12 V pour, the 3.3 V
 #: plane), and a surface pad reaches an inner sheet only through a via -- so
 #: they state one, sized by pcbl from the class current like every other.
@@ -508,6 +510,18 @@ RISE_C = {facts.HV.name: 10.0, facts.PWR12.name: 20.0, facts.PWR5AUX.name: 20.0,
 #: lays -- take the same standard via: a board with parts on both faces
 #: cannot join a top pad to a bottom one without it.
 VIA_CLASSES = ("PWR12", "RAIL", "PWR5AUX", "CH12", "DIFF", "SENSE", "default")
+
+#: The classes whose via is BOUNDED to the HV regions (pcbl's `via_regions`):
+#: the standard via, but only inside a board's HV region and only where no
+#: plane or pour of another net comes within the class's clearance, on any
+#: layer.  HVSIG carries no load current, and POWER's HV region carries no
+#: inner plane (the GND planes are cut back past its strip), so there the
+#: antipad reason for "no HV via" does not hold: a divider's run may change
+#: face to cross the region.  Every such via keeps the class clearance on
+#: every layer, judged pairwise by voltage as the class is.  pcbl's
+#: `via_region` check fires on one anywhere else.  HV (the load path) stays
+#: via-free.
+BOUNDED_VIA_CLASSES = ("HVSIG",)
 
 
 def _class_current_a(d, ix) -> dict:
@@ -548,7 +562,7 @@ def _class_current_a(d, ix) -> dict:
     return out
 
 
-def _netclasses(used, currents) -> list:
+def _netclasses(used, currents, regions=()) -> list:
     out = []
     for c in CLASSES:
         if c.name not in used:
@@ -577,6 +591,10 @@ def _netclasses(used, currents) -> list:
             row["class_copper"] = True
         if c.name in VIA_CLASSES:
             row["via_mm"] = list(VIA_MM)
+        hv_regions = [r["name"] for r in regions if c.name in r["classes"]]
+        if c.name in BOUNDED_VIA_CLASSES and hv_regions:
+            row["via_mm"] = list(VIA_MM)
+            row["via_regions"] = hv_regions
         out.append(row)
     return out
 
@@ -1064,7 +1082,7 @@ def export(project, d=None) -> Export:
         "version": 1,
         "boards": boards,
         "footprints": list(footprints.values()),
-        "netclasses": _netclasses(_used_classes(classes), currents),
+        "netclasses": _netclasses(_used_classes(classes), currents, regions),
         "nets": _net_rows(ix, classes, [p["refdes"] for p in parts], currents),
         "parts": parts,
         "constraints": constraints,
