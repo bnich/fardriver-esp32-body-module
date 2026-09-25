@@ -933,7 +933,7 @@ this bike**, **a floating reference lies**, and **"it fits so it must be right"*
 | M5 | ✅ **Tail (2026-09-08):** shares a 5-wire connector with the rear signals. **BLACK common · YELLOW running 0.05 A · RED STOP 0.12 A**, 12 V. Running and stop are **separate feeds**, not PWM | DP2031 | ✅ |
 | M6 | ✅ **Rear signals (2026-09-08):** in the tail connector, **BLUE = left · GREEN = right**, 12 V, **0.05 A each**. Front pair: isolated 2-wire each. ⬜ Front currents assumed equal to rear; ⬜ confirm the front pair's return can share the tail common before paralleling | DP2031 | ✅ |
 | M7 | ✅ **Horn (2026-09-08):** **electronic, 12.0 V, 0.10 A** (1.2 W), loud; 3-wire, internal driver PCB `LB001`. ⛔ **Colour trap: `+` = BLUE, `−` = BLACK — red is NOT the positive** (role unconfirmed) | DP2031 | ✅ |
-| M8 | Red button: 2-pin continuity pressed / released; confirm momentary | ohmmeter | ⬜ |
+| M8 | Red button: 2-pin continuity pressed / released; confirm momentary | ohmmeter | ✅ blue + green; open / 0.2 Ω; momentary; dry contact |
 | M9 | FarDriver serial: idle level on brown/blue and red/black, which toggles with the app connected (= controller transmit line); dongle on the 4-pin plug or integrated? | voltmeter / scope | ⬜ |
 | M10 | KEY node voltage and where the module's fused tap lands | voltmeter | ⬜ |
 | M11 | ◐ **Chaojie keys:** the `CJ-V3-01` manual gives **five keys, `M`/`+`/`−` functional, two reserved**, all internal; backend entry is **hold `+` and `−` together within 15 s of power-on**. Software version read: `CJ-YQ25-250418`. ⏸️ Remainder (meter pins 1, 4–9 to pin 3 while pressing each key, to confirm no key drives a wire) parked with the display (D19) | voltmeter | ◐ |

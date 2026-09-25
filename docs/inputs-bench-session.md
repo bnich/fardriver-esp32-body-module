@@ -258,12 +258,12 @@ no inverter) — and it means a broken bar wire reads as OFF.
 
 The one input the whole boost scheme hangs on (**IN-07 → D4**).
 
-1. Find its **2-pin lead** on the FarDriver throttle.
-2. Ohm across the two pins: **released ______ Ω · pressed ______ Ω**
+1. Find its **2-pin lead** on the FarDriver throttle: **blue + green** ✅
+2. Ohm across the two pins: **released open · pressed 0.2 Ω** ✅
 3. ⭐ **Confirm MOMENTARY** — it must return to the released reading when let go. If it latches, D4's
-   HOLD mode is meaningless and the mode scheme needs revisiting.
+   HOLD mode is meaningless and the mode scheme needs revisiting. ✅ **Momentary** (2026-09-25)
 4. Confirm it is a **clean dry contact**: neither pin should show continuity to the throttle's ground,
-   supply or signal wires. **Record: ______**
+   supply or signal wires. **Record: no continuity to red, yellow or black — dry contact** ✅
 
 ### ✔ A4 — M15(a): DevKitC-1 header spacing (2 minutes, do it while the meter is out)
 
