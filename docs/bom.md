@@ -244,5 +244,5 @@ choke), **D13**–**D15** (the 5 V aux block) and a fourth **D1**.
   `U302` channel on GPIO19; `BL` is `Q106`, an open-drain `AO3400A` on POWER with a **fitted 10 kΩ
   gate pull-down** (D3, D9); the levers are two of C1's 27 class-A networks on native pins. **With the
   firmware not running the cut is RELEASED and the lamp is OFF** — the bike drives. Only milliamps
-  flow through the lever switch, so any lever type that passes **M3** works; M3 sets `J306`'s size.
+  flow through the lever switch; the Magura MT5 switches are 2-wire normally open (**M3**), so `J306` stays 3-way.
   ⛔ **The one hardware kill is the key switch** (plan D24).

@@ -26,8 +26,8 @@ has to be *ordered*:**
 | # | What it decides | What is blocked until it lands |
 |---|---|---|
 | **A2** | The new bar-mount switch sets: contact pairs, momentary vs latching, and how the 3-position lighting slider is wired | IN-01…04 and IN-08…11; the **D21** slider decode depends on OFF/A/B vs OFF/A/A+B |
-| **M2** | Which wires in the handlebar loom (connector "1T3 10") are the **brake-lever** wires | IN-05/06, the module's two fast inputs. Nothing in the loom is cut until they are known; the lever pairs are the only part of it that is re-used |
-| **M3** | Brake lever type: two-wire switch (NO or NC) or three-wire sensor (output type), one pair per lever | ⚠️ **`J306`, the lever terminal** (plan §9.2) — a three-wire Hall lever needs a supply pin, which changes its size, and the size has to be right before the boards are ordered. Also **IN-05/06** and the firmware's brake logic |
+| **M2** | ✅ **Not needed** — the brakes are now **Magura MT5**, and each lever's brake switch runs its own 2-wire lead; nothing in the handlebar loom ("1T3 10") is re-used | IN-05/06 take the MT5 switch leads directly |
+| **M3** | ✅ Brake lever type: **Magura MT5, a two-wire normally-open switch per lever** (2026-09-25) | **`J306`, the lever terminal** (plan §9.2) — a three-wire Hall lever needs a supply pin, which changes its size, and the size has to be right before the boards are ordered. Also **IN-05/06** and the firmware's brake logic |
 | **M8** | Red button is a true momentary dry contact | **IN-07** and therefore **D4**, the whole boost scheme |
 | **M9** | Which serial line is the controller's **transmit** — the label is ambiguous | ⚠️ **IN-13/IN-14.** Tapping the wrong one gives a listener that hears nothing. Also settles whether the Bluetooth is a dongle or integrated |
 | **M10** | KEY node voltage, and where the module's fused B+ tap physically lands | **IN-12** and the D13 power tap — plan §3.2.5 |
@@ -281,6 +281,9 @@ the board is bought, not after.
 
 ### ✔ B1 — M2: find the brake-lever wires in the handlebar loom ("1T3 10")
 
+✅ **Not needed on this bike (2026-09-25):** the brakes are Magura MT5, and each lever's switch has
+its own 2-wire lead. The procedure stays for a bike still on its stock levers.
+
 The lever wires **travel in the handlebar loom** (connector "1T3 10"), not the throttle harness. Only
 the lever pairs are re-used — they become IN-05/06 on `J306`; the
 rest of the loom is unused.
@@ -327,8 +330,10 @@ reed or microswitch rating is not a concern.
 
 | Lever | Wires | Colours | Ω released | Ω squeezed | Type · NO / NC |
 |---|---|---|---|---|---|
-| Left | | | | | |
-| Right | | | | | |
+| Left | 2 | ⬜ | open | closed | Magura MT5 switch · **NO** |
+| Right | 2 | ⬜ | open | closed | Magura MT5 switch · **NO** |
+
+✅ **Two wires per lever, normally open: `J306` stays a 3-way** (`LEVER_L` · GND · `LEVER_R`).
 
 → **Results set `J306`'s size** (plan §9.2) **and IN-05/06.**
 
@@ -420,9 +425,9 @@ divider ratio**, and that is already fixed by design: **330 k / 10 k, 84 V → 2
 | # | Measurement | Result | Date | Feeds |
 |---|---|---|---|---|
 | **A2** | Switch sets: wire count, contacts per position, momentary/latching, slider wiring (`OFF/A/B` or `OFF/A/A+B`) | | | IN-01…04, IN-08…11, D21 decode, board C |
-| **M2** | Handlebar loom ("1T3 10"): lever wires identified, NO/NC, one pair per lever or shared | | | IN-05/06 |
-| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | | | ⚠️ **`J306`'s size** (plan §9.2), IN-05/06, the firmware's brake logic |
-| **M8** | Red button: released/pressed Ω, momentary confirmed, clean dry contact | | | IN-07, D4 |
+| **M2** | Handlebar loom ("1T3 10"): lever wires identified, NO/NC, one pair per lever or shared | ✅ not needed — MT5 switches run their own leads | 2026-09-25 | IN-05/06 |
+| **M3** | Lever type: wire count, NO/NC, output type if three-wire, reed or micro | ✅ Magura MT5 switch, 2 wires, NO, one per lever | 2026-09-25 | **`J306`'s size** (plan §9.2) — stays 3-way; IN-05/06, the firmware's brake logic |
+| **M8** | Red button: released/pressed Ω, momentary confirmed, clean dry contact | ✅ blue + green; open / 0.2 Ω; momentary; dry contact | 2026-09-25 | IN-07, D4 |
 | **M9** | Controller TX line identified; bitrate; dongle vs integrated | | | IN-13/14 |
 | C1.5 | Boost wire (PIN17) idle voltage | | | boost FET vs PC817 |
 | **M10(a)** | KEY tap route confirmed | | | D13 |

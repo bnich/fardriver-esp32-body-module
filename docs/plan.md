@@ -60,7 +60,6 @@ pool **28**, **21 native used, 7 spare** (§3.1.3). D18: use an `N8` on the cust
 **⬜ Open:**
 - **Watchdog period (§7)** — a safety figure, ≤300 ms; measure the real reset-to-lamp-on time. With
   the brake cut in firmware (D23) it is also what bounds a lost cut.
-- **M3** — the brake-lever switch type gates `J306`, the lever terminal, and its wire count.
 - **The enclosure model (§9.7)** — an all-metal CNC box, **deliberately not drawn until the boards
   are laid out** (owner, 2026-09-20): the pack and density budgets are *proxies* for whether a board
   can be routed, and layout is what settles the size the box has to hold. Its wall, floor and lid
@@ -189,7 +188,7 @@ the start button; on the **left** pod `blue` is the HIGH-beam signal and `black`
 
 | Item | Where | What it is | Source |
 |---|---|---|---|
-| Brake levers | both | One switch or sensor each. Type, NO/NC and wiring **to be measured (M3)** — it sets `J306`'s size | `inputs-bench-session.md` §6 |
+| Brake levers | both | **Magura MT5**: one **2-wire normally-open** switch per lever (M3 ✅) — `J306` stays 3-way | `inputs-bench-session.md` §6 |
 | Throttle red button | FarDriver throttle (installed, D2) | One momentary button on a **2-pin lead** — a dry contact | checklist Phase 5; FarDriver pinout doc |
 | Chaojie dash keys | 3" display housing | Five keys, `M` / `+` / `−` functional, two reserved, all internal to the display — the 9-pin plug has no key-output position | `CJ-V3-01` manual; M11 |
 | PAS cadence sensor | cranks / bottom bracket | **3-pin connector — +5 V, GND, Hall pulse.** Orphaned: it belonged to the retired stock controller, and **the FarDriver has no PAS input**. Using it for assist would mean the module synthesising a throttle signal, putting firmware in the motor-*control* path — which D10 and the open-drain, default-off boost output exist to avoid. (The firmware may *cut* the motor, D23; it may not command it.) ⬜ **Cap it, or wire it as telemetry only** (the expanders have free input bits; nothing would act on it). ⬜ Confirm it is cadence: ~5 V across two pins, third pulses several times per crank revolution | seen on the bike, 2026-09-11 |
@@ -199,10 +198,10 @@ the start button; on the **left** pod `blue` is the HIGH-beam signal and `black`
 
 ### 2.1 Harness — where the lever and lamp wires run
 
-The **brake-lever wires run in the handlebar loom to connector "1T3 10"**; the **lamp feeds run in the
-"2T4 18" loom**. The lever wires land on `J306` in the INPUTS row (§9.2) and the lamps on the §6
-outputs; the handlebar pods are replaced (D20). **M2** identifies the lever wires in the loom,
-**M3** the lever type.
+The brakes are **Magura MT5**, and each lever's brake switch runs **its own 2-wire lead** (M3 ✅,
+normally open); nothing in the handlebar loom ("1T3 10") is re-used. The **lamp feeds run in the
+"2T4 18" loom**. The switch leads land on `J306` in the INPUTS row (§9.2) and the lamps on the §6
+outputs; the handlebar pods are replaced (D20).
 
 There is no PAS on this build; the power, key and speed functions sit with the key switch (KEY), the
 FarDriver and the Chaojie dash. Speed, battery % and faults show on the Chaojie over the one-line
@@ -927,8 +926,8 @@ this bike**, **a floating reference lies**, and **"it fits so it must be right"*
 | # | Measure | How | Result |
 |---|---|---|---|
 | M1 | **The new switch sets (D20)**, unplugged: each switch's contact pair, momentary or latching, and ⚠️ **how the 3-position slider is wired** (OFF/A/B or OFF/A/A+B — the D21 decode depends on it). Bench session A2 | ohmmeter, new parts on the bench | ✅ **Both pods in hand and ohmed** — left 2026-09-11 (harnessed, working), right 2026-09-12 (measured, rewired; the slider is `OFF / A / A+B`). Maps in [`inputs-bench-session.md`](inputs-bench-session.md) A1 / A2 |
-| M2 | Handlebar loom ("1T3 10"): which wires are the **brake-lever wires** — the only wires in that loom the build re-uses | ohmmeter unplugged | ⬜ |
-| M3 | **Brake levers, unpowered:** wire count per lever; NO/NC by ohmmeter, released vs squeezed; one pair per lever or shared. **Gates `J306`**, the lever terminal — a three-wire Hall lever adds a supply pin and changes its size (§9.2) | ohmmeter unplugged (bench session sitting B) | ⬜ |
+| M2 | Handlebar loom ("1T3 10"): which wires are the **brake-lever wires** | ohmmeter unplugged | ✅ not needed — the MT5 switches run their own leads |
+| M3 | **Brake levers, unpowered:** wire count per lever; NO/NC by ohmmeter, released vs squeezed; one pair per lever or shared. **Gates `J306`**, the lever terminal — a three-wire Hall lever adds a supply pin and changes its size (§9.2) | ohmmeter unplugged (bench session sitting B) | ✅ Magura MT5: 2 wires, NO, one per lever — `J306` stays 3-way |
 | M4 | ✅ **Headlight (2026-09-08):** stamped on the housing (PN `25012001WX`): **LOW 12 V / 8.5 W = 0.71 A · HIGH 12 V / 8.5 W = 0.71 A · DRL 12 V / 6.5 W = 0.54 A.** Wire map: **BLACK = common ground · GREEN = HIGH · BLUE = LOW · YELLOW = DRL · RED = unused.** ⚠️ **Identify LED assemblies by powered sweep, never by ohmmeter** — all 10 pairs read O.L, because a 12 V LED driver + string cannot be forward-biased by a meter | housing + DP2031 | ✅ |
 | M5 | ✅ **Tail (2026-09-08):** shares a 5-wire connector with the rear signals. **BLACK common · YELLOW running 0.05 A · RED STOP 0.12 A**, 12 V. Running and stop are **separate feeds**, not PWM | DP2031 | ✅ |
 | M6 | ✅ **Rear signals (2026-09-08):** in the tail connector, **BLUE = left · GREEN = right**, 12 V, **0.05 A each**. Front pair: isolated 2-wire each. ⬜ Front currents assumed equal to rear; ⬜ confirm the front pair's return can share the tail common before paralleling | DP2031 | ✅ |
@@ -1733,7 +1732,7 @@ through 1 kΩ.
   and both B− stay B−.
 - ⏸️ `J310` and `J405` are parked with D19 but **stay in the design** (D27/IO-15): footprint only,
   header not fitted, no plug ordered.
-- ⬜ **M3 still gates `J306`:** a three-wire Hall lever adds a supply pin to the terminal.
+- ✅ **M3 settles `J306` at 3-way:** the MT5 switches are two-wire, normally open.
 - Headers stand **7.00 mm** (3.50), **7.25 mm** (3.81), **8.30 mm** (5.08) and **8.60 mm** (7.62)
   above the board, and a mated plug reaches 8.8–9.7 mm past the header's face. Each pinout, with its
   wire colours, is in `tools/netlist.py`.
