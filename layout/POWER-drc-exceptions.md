@@ -6,10 +6,16 @@ The editor's rule for class HV, HVSIG holds its copper **1.25 mm from everything
 
 ⛔ **An editor DRC hit that is NOT on this list is a defect.** Check the report against this file line by line.
 
-3 accepted join(s).
+9 accepted join(s).
 
 | Net A | Net B | Copper A | Copper B | Layer | Gap mm | V between | IPC-2221B B2 |
 |---|---|---|---|---|---|---|---|
-| D13_GATE | HV_BPLUS | trace on Top Layer | D101.K | Top Layer | 0.624 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | C105.1 | trace on Top Layer | Top Layer | 0.445 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | trace on Top Layer | Top Layer | 0.652 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | R110.1 | trace on Top Layer | Top Layer | 0.837 | 15.0 | 0.10 mm |
 | D13_GATE | HV_BPLUS | R110.1 | R110.2 | Top Layer | 0.867 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | J101.1 | Top Layer | 1.203 | 15.0 | 0.10 mm |
+| D13_GATE | HV_BPLUS | trace on Top Layer | R110.2 | Top Layer | 1.220 | 15.0 | 0.10 mm |
+| HV_C1_N | HV_C2_N | C204.1 | trace on Bottom Layer | Bottom Layer | 0.749 | 0.0 | 0.10 mm |
+| HV_C2_P | HV_SW | trace on Top Layer | trace on Top Layer | Top Layer | 0.627 | 0.0 | 0.10 mm |
 | KEY_SENSE_MID | KSW | R107.2 | trace on Top Layer | Top Layer | 1.104 | 77.6 | 0.60 mm |

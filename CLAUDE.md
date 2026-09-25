@@ -28,7 +28,7 @@ owner decision (2026-09-18), and an exception to the workspace's CC BY-SA defaul
 
 Stdlib Python, no virtualenv, with four exceptions: `pytest` runs the tests, `cryptography` writes
 the `.eprj2` (`tools/eprj2.py`), `~/tools/lcsc-search` serves the library footprints, and
-pcb-layout-tools v0.6.0 (`pcbl`, installed on its own) lays the boards out. The gate checks all
+pcb-layout-tools v0.7.0 (`pcbl`, installed on its own) lays the boards out. The gate checks all
 four by name before running anything, and stops at the one that is missing. After any
 change to the netlist or the model, run the gate from the repo root:
 
@@ -39,7 +39,7 @@ tools/gate.sh   # every check, in order, each run bare; stops at the first non-z
 The individual commands are inside it, in the order they run — integrity, pytest, rules,
 gpio_budget, power_budget, soft_start, board_fit, then the build (refused while EasyEDA Pro is
 open; there is no override; the owner's saved layout is left untouched), jlc_bom, and the layout
-constraints read by `pcbl stack` (pcb-layout-tools v0.6.0, which the gate requires by version) — and `tools/README.md` has one line per tool. Its step 0
+constraints read by `pcbl stack` (pcb-layout-tools v0.7.0, which the gate requires by version) — and `tools/README.md` has one line per tool. Its step 0
 removes every `__pycache__`: a same-second, same-size edit is otherwise read as the OLD constant,
 and `-B` / `PYTHONDONTWRITEBYTECODE` do not prevent that. ⛔ **Never judge a tool through
 `| tail -1`** — the pipeline returns `tail`'s 0, not the tool's exit code. Run it bare.
@@ -54,7 +54,7 @@ item without a footprint, or no `.eprj2`); only 0 is a project to lay out.
   `build-eprj3/layout-rules.txt` states the HV net class (1.25 mm, IPC-2221B B2) over POWER's
   pack-voltage nets. ⭐ **`pcbl route rules` writes every class INTO the project** — a named `RULE`
   per category plus one `RULE_SELECTOR` per member net. Placement, routing and the layout checks are
-  **pcb-layout-tools** (`pcbl`, tag v0.6.0); this repo describes the design to it through
+  **pcb-layout-tools** (`pcbl`, tag v0.7.0); this repo describes the design to it through
   `tools/layout_export.py` and `tools/layout_hooks.py`. 📄 `layout/PROCESS.md`.
   ⭐ **The 1.25 mm is what pack voltage keeps from LOW-VOLTAGE copper; between two 84 V nets the
   clearance is their own voltage difference** on the same IPC-2221B B2 table (IO-29). The editor
