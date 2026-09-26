@@ -1,6 +1,6 @@
 # PCB layout — the process
 
-Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.9.0**). The
+Placement, routing and the checks are done by **`pcb-layout-tools`** (`pcbl`, tag **v0.10.0**). The
 procedure — every step, what it writes, what its exit codes mean, and why the order is what it is —
 is that repository's **`docs/process.md`**. This file holds only what is particular to this board
 set: where its constraints come from, and the order its copper is laid in.
@@ -18,7 +18,7 @@ from `pcbl prove` onwards. The owner's project is `~/Documents/EasyEDA-Pro/proje
 (📄 `README.md` in this directory); ⛔ every `pcbl` write refuses while the editor is running.
 
 `tools/gate.sh` exports `layout.yaml` from the owner's project and runs `pcbl stack` on it, and
-refuses with a clear message when `pcbl` v0.9.0 is not installed. `pcbl check` is the layout's own
+refuses with a clear message when `pcbl` v0.10.0 is not installed. `pcbl check` is the layout's own
 bar (`docs/process.md`), not the gate's.
 
 **POWER is deeper than the other three** (`board_params.POWER_W`, owner 2026-09-24), with its

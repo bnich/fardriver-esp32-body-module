@@ -132,13 +132,15 @@ def test_hvsig_takes_the_standard_via_only_inside_the_hv_region(exported):
     assert [n for n, row in rows.items() if row.get("via_regions")] == ["HVSIG"]
 
 
-def test_the_bucks_bias_pin_is_a_tap_of_its_output(exported):
-    """U305.BIAS draws the buck's own gate-drive current from V5AUX: a tap,
-    joined by a spur at its pin's width and never passed through by the
-    PWR5AUX run.  It is the only tap."""
+def test_the_bucks_bias_and_enable_pins_are_taps(exported):
+    """U305.BIAS draws the buck's own gate-drive current from V5AUX, and
+    U305.EN only its leakage from V12: each a tap, joined by a spur at its
+    pin's width and never passed through by its net's run.  They are the only
+    taps."""
     rows = {row["name"]: row for row in exported.doc["nets"]}
     assert rows["V5AUX"]["taps"] == [["U305", "BIAS"]]
-    assert [n for n, row in rows.items() if row.get("taps")] == ["V5AUX"]
+    assert rows["V12"]["taps"] == [["U305", "EN"]]
+    assert sorted(n for n, row in rows.items() if row.get("taps")) == ["V12", "V5AUX"]
 
 
 def test_each_current_class_states_one_current_and_its_rise(exported):

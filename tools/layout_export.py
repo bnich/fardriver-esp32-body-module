@@ -459,16 +459,19 @@ def _net_rows(ix, classes, part_order, currents) -> list:
     return rows
 
 
-#: The pins that draw only their own few milliamps from a current class's
-#: net, joined to its run by a spur at the pin's own width (pcbl's `taps`),
-#: never passed through by the run.  U305's BIAS feeds the buck's internal
+#: The pins that draw only their own few milliamps from a net, joined to its
+#: run by a spur at the pin's own width (pcbl's `taps`), never passed through
+#: by the run.  U305's BIAS feeds the buck's internal
 #: VCC regulator from its own output (LM73605 datasheet, SNVSAH5A p.31: tie
 #: BIAS to VOUT for 3.3 V <= VOUT <= 18 V) -- gate-drive current, not the
 #: rail's 5.55 A.  At PWR5AUX's 2.10 mm the run could only enter the 0.25 mm
 #: pin as a 1.35 mm neck, and its full width then stood across the fronts of
 #: CBOOT and VCC beside it on the 0.5 mm-pitch WQFN, so neither could leave
-#: the IC.
-TAPS = {"V5AUX": (("U305", "BIAS"),)}
+#: the IC.  U305's EN is tied to its input, V12 (the buck runs whenever the
+#: rail is up): a logic input that draws only its leakage, on a 0.25 mm pin
+#: with 0.25 mm gaps beside AGND, which V12's 0.6 mm copper cannot leave and
+#: the signal router does not neck.
+TAPS = {"V5AUX": (("U305", "BIAS"),), "V12": (("U305", "EN"),)}
 
 
 def _used_classes(classes) -> set:
